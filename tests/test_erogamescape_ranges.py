@@ -13,11 +13,17 @@ class Remote:
         self.db=sqlite3.connect(":memory:");self.db.row_factory=sqlite3.Row
         self.db.execute("CREATE TABLE source("+",".join(f.quote(c["name"])+" "+f.sqlite_type(c) for c in columns)+")")
         self.db.executemany("INSERT INTO source VALUES("+",".join("?" for _ in columns)+")",rows)
-        self.limit=limit;self.collation=collation;self.queries=[];self.fail_next=False
+        self.limit=limit;self.collation=collation;self.queries=[];self.fail_next=False;self.reject_full_count=False
     def __call__(self,sql):
         self.queries.append(sql)
         if "FROM pg_attribute" in sql:return html([{"id":1,"collation":"default","database_collation":self.collation}])
-        if "'count',count(*)" in sql:return count(self.db.execute("SELECT count(*) FROM source").fetchone()[0])
+        if "'count',count(*)" in sql:
+            if not self.reject_full_count:return count(self.db.execute("SELECT count(*) FROM source").fetchone()[0])
+            if " WHERE " not in sql:return COST
+            predicate=sql.split(" WHERE ",1)[1]
+            predicate=re.sub(r"E'((?:[^']|'')*)'",lambda m:"'"+m[1].replace("\\\\","\\")+"'",predicate)
+            value=self.db.execute("SELECT count(*) FROM source src WHERE "+predicate).fetchone()[0]
+            return COST if value>self.limit else count(value)
         if self.fail_next:
             self.fail_next=False;raise OSError("temporary unavailable")
         inner=re.search(r"FROM \(SELECT src\.\* FROM (.*)\) t$",sql).group(1)
@@ -75,6 +81,19 @@ class RangeExportTests(unittest.TestCase):
         self.assertEqual(db.execute("SELECT status FROM _capture_state").fetchone()[0],"failed")
         self.assertIn("binary text collation",db.execute("SELECT error FROM _capture_state").fetchone()[0])
         self.assertEqual(db.execute("SELECT count(*) FROM source").fetchone()[0],0)
+        db.close();remote.db.close()
+
+    def test_cost_limited_counts_sum_the_complete_key_domain(self):
+        rows=[("",1),("a",1),("b",1),("c",1),("あ",1)]
+        db,table,remote=self.setup_capture([column("cid"),column("date","integer")],["cid","date"],rows)
+        remote.reject_full_count=True
+        f.capture(db,table,remote,delay=0)
+        state=db.execute("SELECT status,rows,source_count FROM _capture_state").fetchone()
+        self.assertEqual(tuple(state),("complete",5,5))
+        proof=json.loads(db.execute("SELECT value FROM _archive_info WHERE key='range_count:source'").fetchone()[0])
+        self.assertEqual(sum(p["count"] for p in proof),5)
+        self.assertEqual(proof[0]["lower"],"")
+        self.assertIsNone(proof[-1]["upper"])
         db.close();remote.db.close()
 
     def test_excluded_tables_are_rejected_before_any_request(self):

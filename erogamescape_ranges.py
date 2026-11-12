@@ -57,6 +57,27 @@ def key_domain(table, request):
     return key,"text","",None
 
 
+def bounded_count(db,table,request,key,kind,lower,upper):
+    """Count the complete key domain if even the broad count is cost-limited."""
+    queue=[(lower,upper,0)];proof=[];total=0
+    while queue:
+        lo,hi,depth=queue.pop()
+        parts=[f.quote(key)+" >= "+f.literal(lo)]
+        if hi is not None:parts.append(f.quote(key)+" < "+f.literal(hi))
+        public=f.public_filter(table)
+        if public:parts.append(public)
+        try:
+            value=f.count_source(table["table_name"],request," AND ".join(parts))
+            total+=value;proof.append({"lower":lo,"upper":hi,"count":value,"checked_at":a.now()})
+        except f.QueryCostExceeded:
+            if depth>=128:raise ValueError("range count split depth exceeded")
+            pivot=split_text(lo,hi) if kind=="text" else (lo+hi)//2
+            if pivot==lo or pivot==hi:raise ValueError("count range cannot be split further")
+            queue.extend([(pivot,hi,depth+1),(lo,pivot,depth+1)])
+    db.execute("INSERT OR REPLACE INTO _archive_info VALUES(?,?)",("range_count:"+table["table_name"],json.dumps(proof,ensure_ascii=False)))
+    return total
+
+
 def initialize(db):
     db.executescript("""
       CREATE TABLE IF NOT EXISTS _range_plans(name TEXT PRIMARY KEY,key_name TEXT,kind TEXT,base_cursor TEXT,created_at TEXT);
@@ -78,12 +99,12 @@ def _capture_ranges(db, table, request=f.e.query, delay=3, max_pages=None):
     offset=state["rows"]
     if db.execute("SELECT count(*) FROM "+f.quote(name)).fetchone()[0]!=offset:
         raise ValueError("local row count differs from capture state")
+    key,kind,domain_lower,domain_upper=key_domain(table,request)
     plan=db.execute("SELECT * FROM _range_plans WHERE name=?",(name,)).fetchone()
     if plan:
-        if plan["key_name"]!=pk[0]:raise ValueError("range key schema changed")
-        key,kind=plan["key_name"],plan["kind"]
+        if plan["key_name"]!=key or plan["kind"]!=kind:raise ValueError("range key schema changed")
     else:
-        key,kind,lower,upper=key_domain(table,request)
+        lower,upper=domain_lower,domain_upper
         if cursor:lower=cursor[0]
         db.execute("INSERT INTO _range_plans VALUES(?,?,?,?,?)",(name,key,kind,json.dumps(cursor),a.now()))
         db.execute("INSERT INTO _capture_ranges VALUES(?,?,?,?,?,?,?)",(name,"",json.dumps(lower),json.dumps(upper),"pending",a.now(),None))
@@ -96,7 +117,9 @@ def _capture_ranges(db, table, request=f.e.query, delay=3, max_pages=None):
         if segment is None:
             try:
                 actual=db.execute("SELECT count(*) FROM "+f.quote(name)).fetchone()[0]
-                source=f.count_source(name,request,f.public_filter(table))
+                try:source=f.count_source(name,request,f.public_filter(table))
+                except f.QueryCostExceeded:
+                    source=bounded_count(db,table,request,key,kind,domain_lower,domain_upper)
                 if actual!=source:raise ValueError(f"count drift: captured {actual}, current source {source}; reconciliation required")
                 db.execute("UPDATE _capture_state SET status='complete',rows=?,source_count=?,updated_at=?,error=NULL WHERE name=?",(actual,source,a.now(),name));db.commit()
                 print("full range metadata complete",name,actual,flush=True)
