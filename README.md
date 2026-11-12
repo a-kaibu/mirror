@@ -130,8 +130,8 @@ HTML and JSON, then deploys the Pages artifact. Neither the DB nor generated sit
 nor JSON is committed. Enable **GitHub Actions** as the Pages source and run the
 workflow after publishing catalog updates. There is no scheduled job. The public HF SQLite snapshot has also been restored into a fresh directory and
 built with the same standard-library-only command as CI. The repository is
-https://github.com/a-kaibu/vn and the Pages deployment target is
-https://a-kaibu.github.io/vn/.
+https://github.com/a-kaibu/mirror and the Pages deployment target is
+https://a-kaibu.github.io/mirror/.
 
 ## Validation
 
