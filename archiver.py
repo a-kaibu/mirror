@@ -804,8 +804,20 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
             error = None
             try:
                 result = transfer(source_fetcher, url, path, record)
-                if not store.update_if_current(row["id"], row["data"], status="verified", path=rel, source_url=url, fetched_at=now(), error=None, remote_sha256=None, **result):
-                    raise ValueError("source metadata changed during transfer; retry against current expectations")
+                acknowledged=store.update_if_current(row["id"], row["data"], status="verified", path=rel, source_url=url, fetched_at=now(), error=None, remote_sha256=None, **result)
+                if not acknowledged:
+                    current=store.db.execute('SELECT data FROM items WHERE id=?',(row['id'],)).fetchone()
+                    fresh=json.loads(current['data']) if current else {}
+                    # Descriptive/source-page changes must not discard a
+                    # completed build independently authenticated by the current
+                    # publisher checksum. Every current constraint is rechecked.
+                    if fresh.get('expected_md5') or fresh.get('expected_sha256'):
+                        try:validated=validate(path,fresh)
+                        except ValueError:validated=None
+                        if validated:
+                            acknowledged=store.update_if_current(row['id'],current['data'],status='verified',path=rel,source_url=url,fetched_at=now(),error=None,remote_sha256=None,**validated)
+                    if not acknowledged:
+                        raise ValueError("source metadata changed during transfer; retry against current expectations")
                 print(f"verified {rel} ({result['size']} bytes)")
             except (OSError, ValueError, http.client.HTTPException) as e:
                 error = str(e)

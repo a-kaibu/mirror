@@ -59,6 +59,25 @@ class ConcurrentCollectionTests(unittest.TestCase):
             self.assertIsNone(row["remote_sha256"])
             store.db.close()
 
+    def test_matching_current_checksum_accepts_descriptive_changes_during_transfer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);record=self.record('a');store.add(record)
+            class ChangingResponse(Response):
+                changed=False
+                def read(inner,*args):
+                    if not inner.changed:
+                        inner.changed=True
+                        store.add(dict(record,page_url='https://example.test/new-capture',fields={'new_source_note':'same build'}))
+                    return super().read(*args)
+            fetch=Fetch([ChangingResponse(PAYLOAD)])
+            try:
+                self.assertEqual(a.download(store,fetch,export=False),0)
+                row=store.rows()[0]
+                self.assertEqual(row['status'],'verified')
+                self.assertEqual(json.loads(row['data'])['fields']['new_source_note'],'same build')
+                self.assertEqual(len(fetch.requests),1)
+            finally:store.db.close()
+
     def test_publish_cannot_acknowledge_changed_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=a.Store(tmp);record=self.record("a");store.add(record)

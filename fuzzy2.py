@@ -2,6 +2,8 @@
 import argparse
 import hashlib
 import http.client
+import inspect
+import json
 import re
 import time
 from pathlib import Path
@@ -9,6 +11,8 @@ from urllib.parse import urlsplit,unquote
 import archiver as a
 import mirror_sources as m
 from archive_lock import exclusive_file
+
+PARSER_SHA=hashlib.sha256(Path(__file__).read_bytes()+inspect.getsource(a.decode_html).encode()).hexdigest()
 
 
 def parse(html,page):
@@ -69,22 +73,33 @@ def checksum(store,fetcher,url):
 
 
 def collect(store,fetcher):
-    store.db.execute('CREATE TABLE IF NOT EXISTS fuzzy2_checksums(item_id TEXT,checksum_url TEXT,checked_at TEXT,status TEXT,error TEXT,PRIMARY KEY(item_id,checksum_url))');store.db.commit()
+    store.db.execute('CREATE TABLE IF NOT EXISTS fuzzy2_checksums(item_id TEXT,checksum_url TEXT,checked_at TEXT,status TEXT,error TEXT,PRIMARY KEY(item_id,checksum_url))')
+    store.db.execute('CREATE TABLE IF NOT EXISTS fuzzy2_scans(page_url TEXT PRIMARY KEY,source_sha256 TEXT,parser_sha256 TEXT,item_ids TEXT,status TEXT,checked_at TEXT)');store.db.commit()
     added=failed=0
     for page in store.db.execute("SELECT url,path FROM pages WHERE site='fuzzy2' AND status='ok'").fetchall():
         parts=urlsplit(a.original(page['url']))
         if parts.path!='/typemoon/index.html':continue
-        for record in parse(a.decode_html((store.root/page['path']).read_bytes()),page['url']):
+        raw=(store.root/page['path']).read_bytes();source_sha=hashlib.sha256(raw).hexdigest()
+        saved=store.db.execute('SELECT * FROM fuzzy2_scans WHERE page_url=?',(page['url'],)).fetchone()
+        if (saved and saved['source_sha256']==source_sha and saved['parser_sha256']==PARSER_SHA
+                and saved['status'] in {'complete','unsupported'}
+                and all(store.db.execute('SELECT 1 FROM items WHERE id=?',(ident,)).fetchone() for ident in json.loads(saved['item_ids']))):continue
+        records=parse(a.decode_html(raw),page['url']);item_ids=[];page_failed=False
+        for record in records:
             url=record['fields']['published_checksum_url']
             try:
                 value,actual,sha=checksum(store,fetcher,url)
                 record['expected_md5']=value;record['fields'].update(checksum_source_url=actual,checksum_document_sha256=sha)
                 m.add_record(store,record)
                 store.db.execute('INSERT OR REPLACE INTO fuzzy2_checksums VALUES(?,?,?,?,?)',(record['id'],url,a.now(),'verified',None));store.db.commit()
+                item_ids.append(record['id'])
                 added+=1;print('fuzzy2 checksum verified',record['filename'],value,flush=True)
             except (OSError,ValueError,http.client.HTTPException) as error:
                 store.db.execute('INSERT OR REPLACE INTO fuzzy2_checksums VALUES(?,?,?,?,?)',(record['id'],url,a.now(),'failed',str(error)));store.db.commit()
+                page_failed=True
                 failed+=1;print('fuzzy2 checksum failed',record['filename'],error,flush=True)
+        status='failed' if page_failed else ('complete' if records else 'unsupported')
+        store.db.execute('INSERT OR REPLACE INTO fuzzy2_scans VALUES(?,?,?,?,?,?)',(page['url'],source_sha,PARSER_SHA,json.dumps(item_ids),status,a.now()));store.db.commit()
     return added,failed
 
 

@@ -53,3 +53,23 @@ class Fuzzy2Tests(unittest.TestCase):
                 self.assertEqual(store.db.execute('select count(*) from items').fetchone()[0],0)
                 self.assertEqual(store.db.execute("select count(*) from fuzzy2_checksums where status='failed'").fetchone()[0],2)
             finally:store.db.close()
+
+    def test_unchanged_capture_pages_do_not_oscillate_item_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                (Path(tmp)/'source.html').write_text(HTML)
+                pages=[PAGE,PAGE.replace('20021004110802','20021207194919')]
+                responses=[]
+                for page in pages:
+                    store.db.execute("insert into pages(url,site,path,status) values(?,'fuzzy2','source.html','ok')",(page,))
+                    for record in parse(HTML,page):responses.append(Response(b'1'*32,url=record['fields']['published_checksum_url']))
+                store.db.commit()
+                self.assertEqual(collect(store,Fetch(responses)),(4,0))
+                before=[r['data'] for r in store.rows()]
+                never=Mock();self.assertEqual(collect(store,never),(0,0));never.open.assert_not_called()
+                self.assertEqual([r['data'] for r in store.rows()],before)
+                # A missing derived row can still be rebuilt from cached proof.
+                store.db.execute('delete from item_catalog');store.db.execute('delete from items');store.db.commit()
+                self.assertEqual(collect(store,never),(2,0));never.open.assert_not_called()
+            finally:store.db.close()
