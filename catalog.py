@@ -133,6 +133,15 @@ def export_manifest(store):
     return data
 
 
+def human_size(size):
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if value < 1000 or unit == "PB":
+            text = str(int(value)) if unit == "B" else f"{value:.1f}".rstrip("0").rstrip(".")
+            return f"{text} {unit}"
+        value /= 1000
+
+
 def build_site(store, output):
     output = Path(output)
     if output.resolve() == store.root.resolve() or store.root.resolve().is_relative_to(output.resolve()):
@@ -169,17 +178,27 @@ def build_site(store, output):
             body += f'<section class="product" id="p-{product["id"]}"><h2>{e(product["title"])}</h2>'
             for file in [f for f in data["files"] if f["product_id"] == product["id"]]:
                 query = " ".join([maker["name"], product["title"], file["name"], *[s["filename"] for s in file["sources"]]])
-                body += f'<article data-entry data-search="{e(query)}" data-kind="{file["kind"]}" data-available="{str(bool(file["download_url"])).lower()}"><h3><span class="kind">{KINDS[file["kind"]]}</span> {e(file["name"])}</h3>'
-                body += f'<p class="filename">{e(file["filename"])}</p><p>' + (f'{file["size"]:,} bytes' if file["size"] is not None else 'サイズ未確認')
-                for key, label in [("version", "バージョン"), ("platform", "対象OS"), ("requirements", "適用条件")]:
-                    if file[key]:
-                        body += f' · {label}: {e(file[key])}'
-                body += '</p>'
+                label = file["name"]
+                if label.startswith(product["title"]):
+                    label = label[len(product["title"]):].strip() or KINDS[file["kind"]]
+                extra = "" if label == KINDS[file["kind"]] else " " + e(label)
+                body += f'<article data-entry data-search="{e(query)}" data-kind="{file["kind"]}" data-available="{str(bool(file["download_url"])).lower()}"><h3><span class="kind">{KINDS[file["kind"]]}</span>{extra}</h3>'
+                size = file["size"]
+                if size is None:
+                    size = next((source["expected_size"] for source in file["sources"] if source.get("expected_size") is not None), None)
+                size_text = human_size(size) if size is not None else next((source["size_text"] for source in file["sources"] if source.get("size_text")), "サイズ不明")
+                body += f'<div class="file-row"><p class="file-info"><span class="filename">{e(file["filename"])}</span><small class="file-size">{e(size_text)}</small></p>'
                 if file["download_url"]:
-                    body += f'<p><a class="download" data-id="{file["id"]}" href="{e(file["download_url"])}">ダウンロード</a></p>'
+                    body += f'<a class="download" data-id="{file["id"]}" href="{e(file["download_url"])}">ダウンロード</a>'
                 else:
-                    body += '<p class="unavailable">未収録</p>'
-                body += '<details><summary>チェックサム・出典</summary>'
+                    body += '<small class="unavailable">未収録</small>'
+                body += '</div><details><summary>チェックサム・出典</summary>'
+                info = []
+                for key, name in [("version", "バージョン"), ("platform", "対象OS"), ("requirements", "適用条件")]:
+                    if file[key]:
+                        info.append(f'{name}: {e(file[key])}')
+                if info:
+                    body += '<p>' + ' · '.join(info) + '</p>'
                 for key in ["sha256", "md5"]:
                     if file[key]:
                         body += f'<p>{key.upper()}: <code>{e(file[key])}</code></p>'
