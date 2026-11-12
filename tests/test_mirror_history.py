@@ -102,3 +102,21 @@ class HistoricalLinkRetentionTests(unittest.TestCase):
                 self.assertEqual(removed['mirrors'],['http://other.test/new.zip'])
                 self.assertNotIn(first['mirrors'][0],removed['mirrors'])
             finally:store.db.close()
+
+
+class HistoricalCrawlOrderTests(unittest.TestCase):
+    def test_observed_catalogue_link_precedes_other_homepage_dates(self):
+        from test_archiver import Fetch,Response
+        source=m.definitions()['magic_mirror']
+        home='http://web.archive.org/web/20090119144537/http://magics.ddo.jp/'
+        detail='http://web.archive.org/web/20090119144537/http://magics.ddo.jp/info/brand/game.html'
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);m.initialize(store)
+            try:
+                for url in [home,detail]:store.db.execute("INSERT INTO mirror_frontier(site,url,mode) VALUES(?,?,'archive')",(source['key'],url))
+                store.db.commit()
+                fetch=Fetch([Response(b'<html>catalogue detail</html>',url=detail)])
+                m.crawl(store,source,fetch,mode='archive',max_pages=1)
+                self.assertEqual(fetch.requests[0][0],detail)
+                self.assertEqual(store.db.execute('select status from mirror_frontier where url=?',(home,)).fetchone()[0],'pending')
+            finally:store.db.close()
