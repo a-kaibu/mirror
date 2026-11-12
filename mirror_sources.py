@@ -251,7 +251,7 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
                     store.db.execute("INSERT OR IGNORE INTO mirror_links VALUES(?,?,?,?,?,?,?)",(source["key"],actual,original,node.text(),"binary" if binary else "page",None,a.now()))
                 if binary:count+=1;continue
                 extension=Path(parts.path).suffix.lower()
-                if allowed(source,original) and navigable(source,original) and extension in {"",".html",".htm",".php",".cgi",".asp",".aspx"}:
+                if allowed(source,original) and navigable(source,original) and extension in {"",".html",".htm",".shtml",".shtm",".php",".phtml",".cgi",".asp",".aspx"}:
                     store.db.execute("INSERT OR IGNORE INTO mirror_frontier(site,url,mode) VALUES(?,?,?)",(source["key"],link if mode=="archive" and a.WAYBACK.match(url) else original,mode));children+=1
             store.db.commit()
             matched=match_records(store,source,html,actual,index) if count else 0

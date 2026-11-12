@@ -20,6 +20,24 @@ class MirrorSourcesTests(unittest.TestCase):
         self.assertEqual(m.clean("https://trial.test/file.zip?token=keep"),"https://trial.test/file.zip?token=keep")
 
 
+    def test_legacy_catalogue_links_are_followed_from_archived_homepage(self):
+        cases=[('multi_inside','http://web.archive.org/web/20260412082127/http://www.pachi.ac/~multi/',
+                '<a href="demo.mirror.shtml">でもみらー</a><a href="old-list.shtm">旧一覧</a>',
+                ['demo.mirror.shtml','old-list.shtm']),
+               ('getchu','http://web.archive.org/web/20220102030405/https://www.getchu.com/',
+                '<a href="soft.phtml?id=123">体験版のある作品</a>',['soft.phtml?id=123'])]
+        for key,home,html,links in cases:
+            with self.subTest(site=key),tempfile.TemporaryDirectory() as folder:
+                source={**m.definitions()[key],'seeds':[a.original(home)],'homes':[]}
+                store=a.Store(folder)
+                try:
+                    m.initialize(store)
+                    store.db.execute("INSERT INTO mirror_frontier(site,url,mode) VALUES(?,?,'archive')",(key,home));store.db.commit()
+                    m.crawl(store,source,Fetch([Response(html.encode(),url=home)]),max_pages=1)
+                    pending={r[0] for r in store.db.execute("SELECT url FROM mirror_frontier WHERE status='pending'")}
+                    self.assertTrue({a.resolve(home,link) for link in links}<=pending)
+                finally:store.db.close()
+
     def test_retired_getchu_service_uses_dated_archive_lookup(self):
         from urllib.parse import parse_qs,urlsplit
         source=m.definitions()["getchu"]
