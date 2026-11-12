@@ -222,7 +222,8 @@ def build_site(store, output):
                 label = file["name"]
                 if label.startswith(product["title"]):
                     label = label[len(product["title"]):].strip() or KINDS[file["kind"]]
-                extra = "" if label == KINDS[file["kind"]] else " " + e(label)
+                label = re.sub(r"^" + re.escape(KINDS[file["kind"]]) + r"(?:\s+|$)", "", label).strip()
+                extra = " " + e(label) if label else ""
                 body += f'<article data-entry data-search="{e(query)}" data-kind="{file["kind"]}" data-available="{str(bool(file["download_url"])).lower()}"><h3><span class="kind">{KINDS[file["kind"]]}</span>{extra}</h3>'
                 size = file["size"]
                 if size is None:
