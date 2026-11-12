@@ -165,3 +165,27 @@ def parse_tsundere(html,page):
                 "expected_md5":digest[1].lower() if digest else None,"expected_size":int(size[1].replace(",", "")) if size else None,
                 "size_text":fields.get("ファイルサイズ"),"published_at":fields.get("当サイト公開日"),"fields":fields})
     return list({r["id"]:r for r in results}.values())
+
+
+def parse_dlsite(html,page):
+    parts=urlsplit(a.original(page))
+    product=re.search(r'/product_id/([A-Z]{2}[0-9]+)\.html',parts.path)
+    if parts.hostname!='www.dlsite.com' or not product:return []
+    root=a.DOM(html).root;fields=a.labels(root);titles=[n.text() for n in root.all({'h1'}) if n.text()]
+    brand=fields.get('サークル名') or fields.get('ブランド名') or fields.get('メーカー名')
+    if not brand or not titles:return []
+    results=[]
+    for link in root.all({'a'}):
+        if '体験版' not in link.text():continue
+        target=a.resolve(page,link.attrs.get('href',''))
+        if not target:continue
+        raw=a.original(target)
+        if urlsplit(raw).hostname!='trial.dlsite.com' or not a.EXT.search(urlsplit(raw).path):continue
+        filename=unquote(Path(urlsplit(raw).path).name);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        ident=hashlib.sha256(('dlsite\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
+        results.append({'id':ident,'site':'dlsite','page_url':page,'original_page_url':a.original(page),
+            'title':titles[0],'brand':brand,'release_name':'体験版','filename':filename,
+            'mirrors':([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+            'expected_md5':None,'expected_size':None,'size_text':None,'published_at':None,
+            'fields':{'dlsite_product_id':product[1],'published_link':target}})
+    return list({r['id']:r for r in results}.values())

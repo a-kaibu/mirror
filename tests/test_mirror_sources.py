@@ -150,3 +150,15 @@ class PlatformContinuationTests(unittest.TestCase):
     def test_stuck_gate_and_external_continuation_fail(self):
         gate='<a href="https://evil.test/item/123/">【すすむ】</a>'.encode()
         with self.assertRaises(ValueError):m.platform_page(m.definitions()["getchu"],Fetch([]),gate,"https://www.getchu.com/php/attestation.html",None)
+
+
+class DlsiteTests(unittest.TestCase):
+    def test_only_published_trial_link_with_product_identity(self):
+        from portals import parse_dlsite
+        html='<h1>作品A</h1><table><tr><th>サークル名</th><td>ブランドA</td></tr></table><a href="//trial.dlsite.com/doujin/RJ01714000/RJ01714047_trial.zip">体験版ダウンロード</a><a href="https://www.dlsite.com/purchase/cart">購入</a><a href="https://evil.test/fake.zip">体験版</a>'
+        rows=parse_dlsite(html,'https://www.dlsite.com/maniax/work/=/product_id/RJ01714047.html')
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['brand'],'ブランドA')
+        self.assertEqual(rows[0]['title'],'作品A')
+        self.assertEqual(rows[0]['mirrors'],['https://trial.dlsite.com/doujin/RJ01714000/RJ01714047_trial.zip'])
+        self.assertEqual(parse_dlsite(html,'https://www.dlsite.com/index.html'),[])
