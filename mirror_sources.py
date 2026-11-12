@@ -215,6 +215,10 @@ def match_records(store,source,html,page,index):
 def page_rank(source,url):
     path=urlsplit(a.original(url)).path
     # These are observed distribution layouts, not generated download URLs.
+    if source['key']=='multi_inside':
+        if path.startswith(('/~multi/demo.','/~multi/mirror','/~multi/download/')):return 0
+        if path.rstrip('/')=='/~multi':return 2
+    if source['key']=='nekoneko' and ('/download/' in path or path.startswith('/mirror-service/')):return 0
     if source['key']=='magic_mirror' and path.startswith('/info/'):return 0
     if source['key']=='xgame' and re.match(r'/demo\d+/g\d+/',path):return 0
     return 2 if path in {'','/'} else 1

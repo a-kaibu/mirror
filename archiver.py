@@ -444,17 +444,17 @@ def open_archive_index(fetcher, url):
 
 
 def open_archive_page(fetcher, url, headers=None):
-    """Fetch catalogue HTML at the same capture if Wayback HTTPS is refused."""
+    """Retry the same Wayback HTML capture on its other public transport."""
     parts=urlsplit(url)
     try:
         return fetcher.open(url, headers)
     except (URLError,ConnectionRefusedError) as error:
         reason=error.reason if isinstance(error,URLError) else error
-        if (parts.scheme!='https' or parts.netloc!='web.archive.org'
+        if (parts.scheme not in {'http','https'} or parts.netloc!='web.archive.org'
                 or not re.match(r'^/web/\d{14}(?:id_|if_|fw_)?/',parts.path)
                 or not isinstance(reason,ConnectionRefusedError)):
             raise
-        return fetcher.open(urlunsplit(('http',parts.netloc,parts.path,parts.query,'')),headers)
+        return fetcher.open(urlunsplit(('http' if parts.scheme=='https' else 'https',parts.netloc,parts.path,parts.query,'')),headers)
 
 
 def read_archive_page(fetcher, url, headers=None):
@@ -870,15 +870,14 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
                 print(f"verified {rel} ({result['size']} bytes)")
             except (OSError, ValueError, http.client.HTTPException) as e:
                 error = str(e)
-                # Some Wayback endpoints currently refuse TCP/443 while their
-                # published HTTP replay remains available. Try the exact same
-                # capture only when an independent expected checksum can still
-                # authenticate the bytes. TLS failures/HTTP denials never trigger it.
+                # Try the exact same capture if one public Wayback port is
+                # refused. Upgrading to HTTPS retains TLS authentication; an
+                # HTTP downgrade additionally requires a publisher checksum.
+                # HTTP denials and certificate errors never trigger this retry.
                 reason = e.reason if isinstance(e, URLError) else e
                 if (isinstance(reason, ConnectionRefusedError) and WAYBACK.match(url)
-                        and urlsplit(url).scheme == "https"
-                        and (record.get("expected_md5") or record.get("expected_sha256"))):
-                    alternate = "http://" + urlsplit(url).netloc + urlsplit(url).path
+                        and (urlsplit(url).scheme == "http" or record.get("expected_md5") or record.get("expected_sha256"))):
+                    alternate = ("https://" if urlsplit(url).scheme == "http" else "http://") + urlsplit(url).netloc + urlsplit(url).path
                     if urlsplit(url).query:alternate += "?" + urlsplit(url).query
                     if alternate not in mirrors:mirrors.insert(mirrors.index(url)+1,alternate)
                 store.update_if_current(row["id"], row["data"], status="failed", error=error)

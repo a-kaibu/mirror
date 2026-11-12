@@ -79,6 +79,13 @@ class ArchivePageTests(unittest.TestCase):
                 self.assertEqual(store.db.execute('SELECT response_url FROM pages').fetchone()[0],inner)
             finally:store.db.close()
 
+    def test_observed_catalogues_are_scheduled_before_historical_homepages(self):
+        source=m.definitions()['multi_inside'];root='http://www.pachi.ac'
+        for path in ['/~multi/demo.mirror.shtml','/~multi/mirror.shtml','/~multi/download/index/game.html']:
+            self.assertLess(m.page_rank(source,root+path),m.page_rank(source,root+'/~multi/'))
+        source=m.definitions()['nekoneko'];root='http://www.nekoneko-web.net'
+        self.assertLess(m.page_rank(source,root+'/mirror-service/index.html'),m.page_rank(source,root+'/'))
+
     def test_multi_inside_navigation_stays_in_distribution_catalogue(self):
         source=m.definitions()['multi_inside'];root='http://www.pachi.ac'
         for path in ['/~multi/','/~multi/index.shtml','/~multi/mirror.shtml','/~multi/demo.info.shtml','/~multi/demo.mirror.shtml','/~multi/download/index/game.html','/~multi/mirror/brand.html','/~multi/left.shtml']:

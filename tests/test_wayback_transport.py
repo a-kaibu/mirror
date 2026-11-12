@@ -22,6 +22,39 @@ class WaybackTransportTests(unittest.TestCase):
             self.assertIsNotNone(attempts[0][1]);self.assertIsNone(attempts[1][1])
             store.db.close()
 
+    def test_refused_http_capture_upgrades_without_requiring_publisher_hash(self):
+        plain='http://web.archive.org/web/20190102030405id_/http://mirror.test/demo.zip?ver=1'
+        secure=plain.replace('http://','https://',1)
+        with tempfile.TemporaryDirectory() as folder:
+            store=a.Store(folder)
+            try:
+                record=a.parse_detail(HTML,'https://source.test/item/1','lathercraft')[0]
+                record['expected_md5']=None;record['mirrors']=[plain];store.add(record)
+                fetch=Fetch([URLError(ConnectionRefusedError(111,'refused')),Response(PAYLOAD,url=secure)])
+                self.assertEqual(a.download(store,fetch,export=False),0)
+                self.assertEqual([url for url,_ in fetch.requests],[plain,secure])
+                row=store.rows()[0];self.assertEqual(row['status'],'verified');self.assertEqual(row['source_url'],secure)
+                self.assertEqual(row['size'],len(PAYLOAD))
+            finally:store.db.close()
+
+    def test_http_denial_does_not_trigger_secure_capture_retry(self):
+        url='http://web.archive.org/web/20190102030405id_/http://mirror.test/demo.zip'
+        with tempfile.TemporaryDirectory() as folder:
+            store=a.Store(folder)
+            try:
+                record=a.parse_detail(HTML,'https://source.test/item/1','lathercraft')[0]
+                record['mirrors']=[url];store.add(record)
+                fetch=Fetch([HTTPError(url,429,'slow down',{},None)])
+                self.assertEqual(a.download(store,fetch,export=False),1);self.assertEqual(len(fetch.requests),1)
+            finally:store.db.close()
+
+    def test_refused_http_html_capture_upgrades_without_changing_headers_or_query(self):
+        url='http://web.archive.org/web/20030622100550/http://www.pachi.ac:80/~multi/demo.mirror.shtml?list=1'
+        headers={'Referer':'https://source.test/'}
+        fetch=Fetch([URLError(ConnectionRefusedError(111,'refused')),Response(b'<html>catalogue</html>')])
+        with a.open_archive_page(fetch,url,headers) as response:self.assertIn(b'catalogue',response.read())
+        self.assertEqual(fetch.requests,[(url,headers),(url.replace('http://','https://',1),headers)])
+
     def test_no_downgrade_for_unknown_bytes_certificate_errors_or_http_denial(self):
         import ssl
         for checksum,error in [(False,URLError(ConnectionRefusedError(111,"refused"))),
