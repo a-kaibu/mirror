@@ -48,6 +48,9 @@ class WaybackRecoveryTests(unittest.TestCase):
             network = Fetch([Response(json.dumps(ROWS).encode())])
             self.assertEqual(discover(store, Mock(), site="holyseal"), (0, 0))
             self.assertEqual(discover(store, network), (1, 2))
+            # Discovery now wakes this item. Simulate a subsequent failed
+            # transfer before checking that the next discovery reuses CDX.
+            store.update(record['id'],status='failed')
             never = Mock()
             self.assertEqual(discover(store, never), (0, 2)); never.open.assert_not_called()
             self.assertEqual(store.db.execute("SELECT count(*) FROM wayback_candidates").fetchone()[0], 2)
@@ -84,6 +87,7 @@ class WaybackRecoveryTests(unittest.TestCase):
             self.assertEqual(discover(store,fetch),(1,2))
             urls=[r[0] for r in store.db.execute('SELECT url FROM wayback_candidates')]
             self.assertTrue(all(u.startswith('http://web.archive.org/web/') for u in urls))
+            store.update(record['id'],status='failed')
             never=Mock();self.assertEqual(discover(store,never),(0,2));never.open.assert_not_called()
             self.assertEqual(store.db.execute('SELECT index_url FROM archive_index_transports WHERE target_url=?',(TARGET,)).fetchone()[0],index)
             store.db.close()
