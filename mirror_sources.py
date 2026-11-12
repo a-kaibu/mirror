@@ -193,13 +193,13 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
                 link=a.resolve(actual,node.attrs.get("href") or node.attrs.get("src", ""))
                 if not link:continue
                 original=clean(link);parts=urlsplit(original)
-                binary=bool(a.EXT.search(parts.path))
+                binary=bool(a.EXT.search(parts.path)) or (source["key"]=="d_station" and parts.path.endswith("/download.php"))
                 if binary or allowed(source,original):
                     store.db.execute("INSERT OR IGNORE INTO mirror_links VALUES(?,?,?,?,?,?,?)",(source["key"],actual,original,node.text(),"binary" if binary else "page",None,a.now()))
                 if binary:count+=1;continue
                 extension=Path(parts.path).suffix.lower()
                 if allowed(source,original) and navigable(source,original) and extension in {"",".html",".htm",".php",".cgi",".asp",".aspx"}:
-                    store.db.execute("INSERT OR IGNORE INTO mirror_frontier(site,url,mode) VALUES(?,?,?)",(source["key"],original,mode));children+=1
+                    store.db.execute("INSERT OR IGNORE INTO mirror_frontier(site,url,mode) VALUES(?,?,?)",(source["key"],link if mode=="archive" and a.WAYBACK.match(url) else original,mode));children+=1
             store.db.commit()
             matched=match_records(store,source,html,actual,index) if count else 0
             if source["key"]=="moepedia":
@@ -235,6 +235,12 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
             if source["key"]=="dlsite":
                 from portals import parse_dlsite
                 for record in parse_dlsite(html,actual):
+                    add_record(store,record);matched+=1
+                    for link in record["mirrors"]:
+                        store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
+            if source["key"]=="d_station":
+                from portals import parse_d_station
+                for record in parse_d_station(html,actual):
                     add_record(store,record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))

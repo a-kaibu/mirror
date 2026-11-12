@@ -189,3 +189,35 @@ def parse_dlsite(html,page):
             'expected_md5':None,'expected_size':None,'size_text':None,'published_at':None,
             'fields':{'dlsite_product_id':product[1],'published_link':target}})
     return list({r['id']:r for r in results}.values())
+
+
+def parse_d_station(html,page):
+    if urlsplit(a.original(page)).hostname!='mirror.studio-ramble.com':return []
+    root=a.DOM(html).root;results=[]
+    for link in root.all({'a'}):
+        target=a.resolve(page,link.attrs.get('href',''))
+        if not target or not urlsplit(a.original(target)).path.endswith('/download.php'):continue
+        context=link.parent
+        while context.parent and context.tag!='table':context=context.parent
+        text=context.text();digest=re.search(r'MD5[：:]\s*([a-fA-F0-9]{32})',text)
+        size=re.search(r'ファイルサイズ[：:]\s*([\d,]+)\s*バイト',text)
+        if not digest or not size:continue
+        headers=list(context.all({'tr'}))
+        if len(headers)<2:continue
+        makers=list(headers[1].all({'a'}))
+        if not makers:continue
+        brand=re.sub(r'^[（(][ＣC©][)）]\s*','',makers[0].text()).strip()
+        combined=link.text();split=re.search(r'(CMデモムービー|デモムービー|体験版|修正パッチ|パッチ|ムービー)',combined)
+        if not brand or not split:continue
+        title=combined[:split.start()].strip();release=combined[split.start():].strip()
+        if not title:continue
+        raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        ident=hashlib.sha256(('d_station\n'+raw+'\n'+digest[1].lower()).encode()).hexdigest()
+        date=re.search(r'\b(\d{4})/(\d{1,2})/(\d{1,2})\b',text)
+        results.append({'id':ident,'site':'d_station','page_url':page,'original_page_url':a.original(page),
+            'title':title,'brand':brand,'release_name':release,'filename':None,
+            'mirrors':([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+            'expected_md5':digest[1].lower(),'expected_size':int(size[1].replace(',','')),'size_text':size[0],
+            'published_at':f'{date[1]}-{int(date[2]):02}-{int(date[3]):02}' if date else None,
+            'fields':{'parser':'d_station','download_endpoint':raw}})
+    return list({r['id']:r for r in results}.values())

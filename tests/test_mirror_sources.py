@@ -162,3 +162,19 @@ class DlsiteTests(unittest.TestCase):
         self.assertEqual(rows[0]['title'],'作品A')
         self.assertEqual(rows[0]['mirrors'],['https://trial.dlsite.com/doujin/RJ01714000/RJ01714047_trial.zip'])
         self.assertEqual(parse_dlsite(html,'https://www.dlsite.com/index.html'),[])
+
+
+class DStationTests(unittest.TestCase):
+    def test_php_downloads_are_not_lost_and_versions_are_separate(self):
+        from portals import parse_d_station
+        html=Path('tests/fixtures/d-station-2004.html').read_text()
+        rows=parse_d_station(html,'https://web.archive.org/web/20040419092336/http://mirror.studio-ramble.com/')
+        self.assertEqual(len(rows),5)
+        self.assertEqual(rows[0]['title'],'CARNIVAL')
+        self.assertEqual(rows[0]['brand'],'S.M.L')
+        self.assertEqual(rows[0]['expected_size'],48547013)
+        self.assertEqual(rows[0]['expected_md5'],'6928f09c8966cbd9adf4d50205e799b3')
+        self.assertIsNone(rows[0]['filename'])
+        self.assertEqual(rows[3]['release_name'],'体験版')
+        self.assertEqual(rows[1]['title'],rows[2]['title'])
+        self.assertNotEqual(rows[1]['id'],rows[2]['id'])
