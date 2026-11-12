@@ -109,6 +109,23 @@ class CatalogTests(unittest.TestCase):
         other_row = self.store.db.execute("SELECT * FROM items WHERE id='other'").fetchone()
         self.assertEqual(a.matching_mirrors(self.store, other_row, other), [])
 
+    def test_repaired_movies_are_not_game_patches(self):
+        record = self.record("movie")
+        record["filename"] = "opening_movie.zip"
+        for label in ["オープニングムービー 修正版", "ティザームービー 修正版", "Opening Movie update"]:
+            record["release_name"] = label
+            self.assertEqual(c.release_info(record)[0], "movie")
+        record["release_name"] = "体験版 修正版"
+        self.assertEqual(c.release_info(record)[0], "trial")
+        record["release_name"] = "デモニオン 修正パッチ"
+        self.assertEqual(c.release_info(record)[0], "patch")
+        record["release_name"] = "オープニングムービー 修正版"
+        self.store.add(record)
+        self.store.db.execute("UPDATE item_catalog SET kind='patch' WHERE item_id='movie'")
+        self.store.db.commit()
+        c.initialize(self.store)
+        self.assertEqual(self.store.db.execute("SELECT kind FROM item_catalog WHERE item_id='movie'").fetchone()[0], "movie")
+
     def test_cross_site_merge_only_after_matching_bytes(self):
         self.store.add(self.record("a"))
         self.store.add(self.record("b", "Ｂｒａｎｄ", "holyseal"))

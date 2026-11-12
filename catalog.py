@@ -27,6 +27,9 @@ def release_info(record):
     # A repaired trial remains a trial, not a patch for the commercial game.
     if re.search(r"体験|trial|(?:^|[ _])taiken", label + " " + (record["filename"] or ""), re.I):
         kind = "trial"
+    elif re.search(r"ムービー|movie|動画|(?:^|[ _])PV(?:$|[ _])", label, re.I):
+        # A corrected movie is still a movie, rather than a game patch.
+        kind = "movie"
     elif re.search(r"パッチ|修正|アップデート|patch|update", label, re.I):
         kind = "patch"
     elif re.search(r"ムービー|movie|動画|PV|デモ", label, re.I):
@@ -57,6 +60,12 @@ def initialize(store):
         db.execute("ALTER TABLE attempts ADD COLUMN tls_pin TEXT")
     for row in db.execute("SELECT data FROM items WHERE id NOT IN (SELECT item_id FROM item_catalog)").fetchall():
         index_record(store, json.loads(row[0]))
+    # Refresh derived classification when parser rules change; SQLite remains
+    # authoritative and source records are never rewritten by this migration.
+    for row in db.execute("SELECT i.id,i.data,c.kind FROM items i JOIN item_catalog c ON c.item_id=i.id").fetchall():
+        kind = release_info(json.loads(row[1]))[0]
+        if kind != row[2]:
+            db.execute("UPDATE item_catalog SET kind=? WHERE item_id=?", (kind, row[0]))
     db.commit()
 
 
