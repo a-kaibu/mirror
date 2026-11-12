@@ -31,3 +31,22 @@ class NativeModImportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'differ from native'):ingest(store,entry,folder,url,receipt={'url':url,'files':{'patch.zip':expected}})
             self.assertEqual(store.rows(),[])
             self.assertTrue(file.exists());store.db.close()
+
+    def test_native_resume_accepts_only_receipted_existing_files(self):
+        from hanny_mods import download_native
+        import os,subprocess
+        if os.name=='nt':self.skipTest('POSIX fixture client')
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);staging=root/'staging';staging.mkdir();file=staging/'patch.zip';file.write_bytes(b'unverified old file')
+            client=root/'native-client'
+            client.write_text("#!/usr/bin/env python3\nimport pathlib,sys\np=pathlib.Path(sys.argv[sys.argv.index('--path')+1])/'patch.zip'\nif p.exists():\n print('ERROR: File already exists at '+str(p),file=sys.stderr);sys.exit(1)\np.write_bytes(b'native verified bytes')\nprint(p)\n")
+            client.chmod(0o755);receipt=staging/'.native-complete.json';url='https://mega.nz/folder/published#publickey'
+            first=download_native(str(client),staging,url,receipt)
+            self.assertTrue(first['complete'])
+            self.assertEqual(file.read_bytes(),b'native verified bytes')
+            second=download_native(str(client),staging,url,receipt)
+            self.assertEqual(second['files'],first['files'])
+            client.write_text("#!/usr/bin/env python3\nimport sys\nprint('ERROR: transfer quota',file=sys.stderr)\nsys.exit(1)\n")
+            with self.assertRaises(subprocess.CalledProcessError):download_native(str(client),staging,url,receipt)
+            import json
+            self.assertFalse(json.loads(receipt.read_text())['complete'])

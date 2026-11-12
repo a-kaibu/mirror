@@ -80,6 +80,68 @@ def ingest(store,entry,folder,url,upload=True,receipt=None):
     store.export();return count
 
 
+def write_receipt(path,receipt):
+    temporary=path.with_suffix('.pending.json')
+    temporary.write_text(json.dumps(receipt,ensure_ascii=False))
+    temporary.replace(path)
+
+
+def download_native(client,staging,url,receipt_path):
+    import tempfile
+    staging=Path(staging).resolve();receipt_path=Path(receipt_path)
+    receipt=json.loads(receipt_path.read_text()) if receipt_path.exists() else {'url':url,'files':{}}
+    if receipt['url']!=url:raise ValueError('public folder changed; preserve prior staging separately')
+    # Completed files without a receipt are quarantined, so native verification
+    # is performed rather than trusting an arbitrary existing filename.
+    for path in list(staging.rglob('*')):
+        if path.is_symlink():raise ValueError('symlink in native output')
+        if not path.is_file() or path==receipt_path or path.name.startswith('.megatmp'):continue
+        relative=path.relative_to(staging).as_posix()
+        if receipt['files'].get(relative)==a.digest(path):continue
+        held=staging.parent.parent/'mega-unverified'/staging.name/relative
+        held.parent.mkdir(parents=True,exist_ok=True)
+        if held.exists():held=held.with_name(held.name+'.'+a.digest(path)['sha256'])
+        path.replace(held)
+    receipt['complete']=False;write_receipt(receipt_path,receipt)
+    args=[client,'--ignore-config-file','--no-ask-password','--no-progress','--print-names','--limit-speed','2048','--path',str(staging),url]
+    with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as errors:
+        process=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=errors,text=True,encoding='utf-8')
+        try:
+            for line in process.stdout:
+                print(line.rstrip(),flush=True)
+                path=Path(line.rstrip('\r\n'))
+                if not path.is_absolute() or not path.is_file():continue
+                relative=path.resolve().relative_to(staging).as_posix()
+                if path.is_symlink() or path.name.startswith('.megatmp'):raise ValueError('invalid native completion path')
+                receipt['files'][relative]=a.digest(path)
+                write_receipt(receipt_path,receipt)
+            code=process.wait()
+        except BaseException:
+            process.terminate();process.wait();raise
+        finally:process.stdout.close()
+        errors.seek(0);messages=errors.read();unexpected=[]
+        for line in messages.splitlines():
+            prefix='ERROR: File already exists at '
+            if line.startswith(prefix):
+                path=Path(line[len(prefix):])
+                try:relative=path.resolve().relative_to(staging).as_posix()
+                except ValueError:unexpected.append(line);continue
+                if path.is_file() and receipt['files'].get(relative)==a.digest(path):continue
+            unexpected.append(line)
+        if unexpected or (code and not messages.strip()):
+            print(messages,flush=True);raise subprocess.CalledProcessError(code or 1,args)
+    inventory={}
+    for path in staging.rglob('*'):
+        if not path.is_file() or path==receipt_path:continue
+        if path.is_symlink() or path.name.startswith('.megatmp') or path.name.endswith(('.mega','.part','.tmp')):raise ValueError('native download incomplete')
+        relative=path.relative_to(staging).as_posix();actual=a.digest(path)
+        if receipt['files'].get(relative)!=actual:raise ValueError('unverified native output')
+        inventory[relative]=actual
+    if not inventory:raise ValueError('empty native download')
+    receipt.update(complete=True,completed_at=a.now(),files=inventory)
+    write_receipt(receipt_path,receipt);return receipt
+
+
 def collect(root,key,client,import_only=False):
     entry=definitions()[key];store=a.Store(root)
     try:
@@ -90,18 +152,10 @@ def collect(root,key,client,import_only=False):
         with exclusive_file(store.root/'.claims'/('mega-folder-'+key+'.lock')):
             if import_only:
                 receipt=json.loads(receipt_path.read_text());url=receipt['url']
+                if receipt.get('complete') is not True:raise ValueError('native folder download is not complete')
             else:
                 url=source(store,a.Fetcher(delay=3,timeout=30,retries=2),entry)
-                subprocess.run([client,'--ignore-config-file','--no-ask-password','--no-progress','--print-names','--limit-speed','2048','--path',str(staging),url],check=True)
-                inventory={}
-                for path in sorted(staging.rglob('*')):
-                    if path.is_symlink():raise ValueError('symlink in native output')
-                    if not path.is_file() or path==receipt_path:continue
-                    if path.name.endswith(('.mega','.part','.tmp')):raise ValueError('native download incomplete')
-                    inventory[path.relative_to(staging).as_posix()]=a.digest(path)
-                if not inventory:raise ValueError('empty native download')
-                receipt={'url':url,'completed_at':a.now(),'files':inventory}
-                receipt_path.write_text(json.dumps(receipt,ensure_ascii=False))
+                receipt=download_native(client,staging,url,receipt_path)
             print('mod folder archived',key,ingest(store,entry,staging,url,receipt=receipt),flush=True)
     finally:store.db.close()
 
