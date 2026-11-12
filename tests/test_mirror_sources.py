@@ -178,3 +178,19 @@ class DStationTests(unittest.TestCase):
         self.assertEqual(rows[3]['release_name'],'体験版')
         self.assertEqual(rows[1]['title'],rows[2]['title'])
         self.assertNotEqual(rows[1]['id'],rows[2]['id'])
+
+
+class LapistanTests(unittest.TestCase):
+    def test_early_page_assigns_md5_to_each_file(self):
+        from portals import parse_lapistan
+        html=Path('tests/fixtures/lapistan-2005.html').read_text()
+        rows=parse_lapistan(html,'https://web.archive.org/web/20050108213255/http://lapistan.jp/list/PULLTOP/index.htm')
+        self.assertEqual(len(rows),4)
+        self.assertEqual(rows[1]['title'],'お願いお星さま')
+        self.assertEqual(rows[1]['brand'],'PULLTOP')
+        self.assertEqual(rows[1]['release_name'],'体験版')
+        self.assertEqual(rows[1]['expected_md5'],'b7c11663f8dc6c4fa49c85e06696166c')
+        self.assertEqual(rows[1]['published_at'],'2004-04-28')
+        self.assertEqual(rows[1]['size_text'],'332.9MB')
+        self.assertIsNone(rows[1]['expected_size'])
+        self.assertNotEqual(rows[2]['expected_md5'],rows[3]['expected_md5'])

@@ -221,3 +221,44 @@ def parse_d_station(html,page):
             'published_at':f'{date[1]}-{int(date[2]):02}-{int(date[3]):02}' if date else None,
             'fields':{'parser':'d_station','download_endpoint':raw}})
     return list({r['id']:r for r in results}.values())
+
+
+def parse_lapistan(html,page):
+    parts=urlsplit(a.original(page));section=re.fullmatch(r'/(?:allage/)?list/([^/]+)/index\.htm[l]?',parts.path)
+    if parts.hostname not in {'lapistan.jp','www.lapistan.jp'} or not section:return []
+    root=a.DOM(html).root;folder=unquote(section[1]);brand=None
+    for image in root.all({'img'}):
+        if image.attrs.get('alt','').casefold()==folder.casefold():brand=image.attrs['alt'];break
+    if not brand:
+        for heading in root.all({'title'}):
+            match=re.fullmatch(r'WindFriction\s+(.+)',heading.text())
+            if match:brand=match[1].strip();break
+    if not brand:return []
+    results=[]
+    for link in root.all({'a'}):
+        target=a.resolve(page,link.attrs.get('href',''))
+        if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
+        split=re.split(r'　|\s{2,}',link.text(),maxsplit=1)
+        if len(split)!=2:continue
+        title,release=(v.strip() for v in split)
+        siblings=link.parent.children;position=siblings.index(link);tail=[];before=[]
+        for child in siblings[position+1:]:
+            if isinstance(child,a.Node) and child.tag in {'hr','a'}:break
+            tail.append(child.text() if isinstance(child,a.Node) else child)
+        for child in reversed(siblings[:position]):
+            if isinstance(child,a.Node) and child.tag=='hr':break
+            before.append(child.text() if isinstance(child,a.Node) else child)
+        text=' '.join(tail);date_text=' '.join(reversed(before))
+        digest=re.search(r'MD5[：:]\s*([a-fA-F0-9]{32})',text)
+        size=re.search(r'\[([\d.]+\s*[KMG]B)\]',text,re.I)
+        if not digest:continue
+        date=re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日',date_text)
+        raw=a.original(target);filename=unquote(Path(urlsplit(raw).path).name);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        ident=hashlib.sha256(('lapistan\n'+a.original(page)+'\n'+filename+'\n'+digest[1].lower()).encode()).hexdigest()
+        results.append({'id':ident,'site':'lapistan','page_url':page,'original_page_url':a.original(page),
+            'title':title,'brand':brand,'release_name':release,'filename':filename,
+            'mirrors':([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+            'expected_md5':digest[1].lower(),'expected_size':None,'size_text':size[1] if size else None,
+            'published_at':f'{date[1]}-{int(date[2]):02}-{int(date[3]):02}' if date else None,
+            'fields':{'parser':'lapistan','size_is_rounded':True}})
+    return list({r['id']:r for r in results}.values())

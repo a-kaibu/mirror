@@ -10,12 +10,12 @@ import mirror_sources as m
 import portals
 from archive_lock import exclusive_file
 
-PARSERS={key:'parse_'+key for key in ['multi_inside','mimimaid','nekoneko','tsundere','moepedia','dlsite','d_station']}
+PARSERS={key:'parse_'+key for key in ['multi_inside','mimimaid','nekoneko','tsundere','moepedia','dlsite','d_station','lapistan']}
 
 
 def reparse(store,site='both'):
     m.initialize(store)
-    version=hashlib.sha256(Path(portals.__file__).read_bytes()+Path(m.__file__).read_bytes()).hexdigest()
+    version=hashlib.sha256(Path(portals.__file__).read_bytes()+Path(m.__file__).read_bytes()+Path(a.__file__).read_bytes()).hexdigest()
     store.db.execute('CREATE TABLE IF NOT EXISTS mirror_reparse(site TEXT,url TEXT,parser_version TEXT,source_hash TEXT,parsed_at TEXT,files INTEGER,error TEXT,PRIMARY KEY(site,url))');store.db.commit()
     pages=store.db.execute("SELECT site,url,path FROM pages WHERE status='ok' AND (?='both' OR site=?)",(site,site)).fetchall()
     processed=found=failed=0
