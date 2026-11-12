@@ -155,8 +155,10 @@ Live validation on 2026-11-12 recovered Holyseal-listed `amayui_ap2.zip`
 `files/9be3296ff0c86ab79767c9716e2226fa2e401e2c6b4c0ca0519ab544f3f09266`,
 and anonymously downloaded the full HF copy with identical SHA-256 and size.
 The public SQLite backup, single JSON and saved HTML also passed read-back.
-The initial catalog contains 11 manufacturers, 13 products and 28 source-derived
-file entries; only the recovered patch is marked publicly available. Both
+The catalog contains 11 manufacturers, 13 products and 28 source-derived file
+entries. Three files are publicly verified: this Holyseal patch and a LatherCraft
+trial and patch. The LatherCraft trial also exercised multipart upload. Every
+published binary passed full anonymous HF read-back by SHA-256 and size. Both
 Chromium and Firefox passed the opt-in browser check.
 
 LatherCraft storage1 presents a certificate that expired on 2026-09-19. For
