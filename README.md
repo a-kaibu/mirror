@@ -433,3 +433,9 @@ not proof that a file is intact: actual capture dates remain in provenance,
 and independent publisher checksums are still required for matching builds.
 Previously queued current-page requests are retained as
 `deferred_service_ended` rather than repeatedly fetching pages without files.
+
+Getchu product pages also expose demo movies through `video`/`source` tags.
+These are collected using the actual `trial.getchu.com` media URL and matching
+product/brand identity; historical capture dates are retained. Captures already
+confirmed by Wayback are fetched before pages that still need availability
+lookups, and the published `all/demo.html` catalogue links are followed.

@@ -424,3 +424,37 @@ def parse_alicefree(html, page):
                 "filename":filename,"mirrors":([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
                 "expected_md5":None,"expected_size":None,"size_text":None,"published_at":None,"fields":fields}
     return list(result.values())
+
+
+def parse_getchu(html, page):
+    parts=urlsplit(a.original(page))
+    if parts.hostname not in {"www.getchu.com","getchu.com"} or not (parts.path.endswith("/soft.phtml") or re.fullmatch(r"/item/\d+/?",parts.path)):
+        return []
+    root=a.DOM(html).root
+    titles=[n.text().strip() for n in root.all({"h1"}) if n.attrs.get("id")=="soft-title"]
+    og=[n.attrs.get("content","") for n in root.all({"meta"}) if n.attrs.get("property")=="og:title"]
+    if len(titles)!=1 or len(og)!=1:
+        return []
+    brand=re.fullmatch(re.escape(titles[0])+r"\s*[(（](.+)[)）]",og[0])
+    if not brand:
+        return []
+    result={}
+    for node in root.all({"video","source"}):
+        parent=node
+        while parent.parent and parent.tag!="video" and node.tag=="source":parent=parent.parent
+        if parent.tag!="video":continue
+        target=a.resolve(page,node.attrs.get("src", ""))
+        if not target:continue
+        raw=a.original(target);binary=urlsplit(raw)
+        if binary.hostname!="trial.getchu.com" or not re.search(r"\.(mp4|wmv|mpg|mpeg|webm)$",binary.path,re.I):continue
+        label=parent.attrs.get("getchutitle", "")
+        if not label.startswith(titles[0]):continue
+        filename=unquote(Path(binary.path).name)
+        ident=hashlib.sha256(("getchu\n"+a.original(page)+"\n"+binary.path).encode()).hexdigest()
+        stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        result[ident]={"id":ident,"site":"getchu","page_url":page,"original_page_url":a.original(page),
+            "title":titles[0],"brand":brand[1],"release_name":"ムービー","filename":filename,
+            "mirrors":([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+            "expected_md5":None,"expected_size":None,"size_text":None,"published_at":None,
+            "fields":{"published_media_label":label,"getchu_product_url":a.original(page)}}
+    return list(result.values())

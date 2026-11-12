@@ -49,7 +49,7 @@ def navigable(source,url):
     if key=="alice_archives":return bool(re.fullmatch(r"/alice/(?:menu|[0-9]+)\.html|/alice/",path))
     if key=="alicefree":return path in {"/","/index.html"}
     if key=="moepedia":return path=="/" or path.startswith("/trial/") or bool(re.fullmatch(r"/game/\d+/?",path))
-    if key=="getchu":return path=="/" or path.endswith("/soft.phtml") or bool(re.fullmatch(r"/item/\d+/?",path))
+    if key=="getchu":return path=="/" or path=="/all/demo.html" or path.endswith("/soft.phtml") or bool(re.fullmatch(r"/item/\d+/?",path))
     if key=="dmm":return path=="/" or "/detail/" in path
     if key=="dlsite":return path=="/" or "/work/" in path
     return True
@@ -181,7 +181,7 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
     initialize(store);enqueue(store,source,mode);seed_platform(store,source,mode)
     index=known_files(store,source["key"]);processed=found=0
     while processed<max_pages:
-        row=store.db.execute("SELECT * FROM mirror_frontier WHERE site=? AND mode=? AND status='pending' ORDER BY rowid LIMIT 1",(source["key"],mode)).fetchone()
+        row=store.db.execute("SELECT * FROM mirror_frontier WHERE site=? AND mode=? AND status='pending' ORDER BY CASE WHEN url LIKE '%web.archive.org/web/%' THEN 0 ELSE 1 END,rowid LIMIT 1",(source["key"],mode)).fetchone()
         if not row:break
         url=row["url"];processed+=1;actual=None;rel=None
         try:
@@ -255,7 +255,7 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
                     add_record(store,record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
-            if source["key"] in {"alice_archives","alicefree"}:
+            if source["key"] in {"alice_archives","alicefree","getchu"}:
                 import portals
                 for record in getattr(portals,"parse_"+source["key"])(html,actual):
                     add_record(store,record);matched+=1
