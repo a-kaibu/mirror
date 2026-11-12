@@ -452,8 +452,15 @@ class Store:
         """)
         from catalog import initialize
         initialize(self)
+        from size_reviews import initialize as initialize_reviews
+        initialize_reviews(self.db)
+
+    def reviewed_record(self, record):
+        from size_reviews import apply
+        return apply(self, record)
 
     def add(self, record):
+        record = self.reviewed_record(record)
         old = self.db.execute("SELECT data,status,md5,sha256,size FROM items WHERE id=?", (record["id"],)).fetchone()
         if old and json.loads(old[0]) != record:
             previous = json.loads(old[0])

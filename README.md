@@ -460,3 +460,25 @@ SHA-256 is present; both attempts are logged and the digest must match. CDX
 index lookups likewise try their public HTTP endpoint on connection refusal.
 Certificate failures, HTTP access denials and rate limits do not trigger a
 transport change. This does not relax validation for other source hosts.
+
+Size discrepancies remain explicit failures until independently checked.
+`size_reviews.py` can compare a locally observed ZIP with an independently
+fetched historical copy at an actual CDX capture. It requires identical full
+SHA-256/MD5/size, a matching CDX SHA-1 digest and valid ZIP CRCs. A contradictory
+publisher checksum is never overridden. The review is bound to the exact saved
+HTML hash and source-file identity; changed pages or links require new evidence.
+
+```sh
+python size_reviews.py --site alice_archives --publish
+```
+
+SQLite `size_reviews` retains the original metadata and full evidence. The
+reviewed source version preserves `publisher_expected_size` and pins the
+verified SHA-256 while retaining the original source claim. Re-crawling the same
+HTML reapplies the same review; earlier builds remain separate. In particular,
+SHA-256-only changes also create separate source versions, including when a
+source erroneously repeats an MD5. Unresolved payloads and their observations
+are retained locally, and publication failures resume from verified local
+files instead of fetching the source again. The size-review path bounds ZIPs
+to 64 MiB transferred and 128 MiB decompressed; larger discrepancies stay open
+for a separate review rather than relaxing the download checks.

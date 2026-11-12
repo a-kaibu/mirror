@@ -123,19 +123,22 @@ def platform_page(source,fetcher,raw,actual,charset):
 
 
 def add_record(store,record):
+    record=store.reviewed_record(record)
     # A publisher may reuse a filename for another build. Historical captures
     # must retain that build rather than invalidate the previously archived one.
-    old=store.db.execute("SELECT data,md5,size FROM items WHERE id=?",(record["id"],)).fetchone()
+    old=store.db.execute("SELECT data,md5,sha256,size FROM items WHERE id=?",(record["id"],)).fetchone()
     if old:
         previous=json.loads(old["data"]);old_md5=old["md5"] or previous.get("expected_md5")
+        old_sha256=old["sha256"] or previous.get("expected_sha256")
         old_size=old["size"] if old["size"] is not None else previous.get("expected_size")
-        changed_hash=old_md5 and record.get("expected_md5") and old_md5!=record["expected_md5"]
+        changed_hash=(old_md5 and record.get("expected_md5") and old_md5!=record["expected_md5"]) or (old_sha256 and record.get("expected_sha256") and old_sha256!=record["expected_sha256"])
         changed_size=old_size is not None and record.get("expected_size") is not None and old_size!=record["expected_size"]
         if changed_hash or changed_size:
-            base=record["id"];version=record.get("expected_md5") or str(record["expected_size"])
+            base=record["id"];version=record.get("expected_sha256") or record.get("expected_md5") or str(record["expected_size"])
             record["id"]=hashlib.sha256(("source-version\n"+base+"\n"+version).encode()).hexdigest()
             record["fields"]={**record.get("fields",{}),"source_version_of":base}
     store.add(record)
+    return record["id"]
 
 
 def known_files(store,site):
