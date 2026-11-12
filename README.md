@@ -112,7 +112,9 @@ HF vn-archive/mirrors/
   files/<sha256>                 # ID only, no Japanese or original filename
 ```
 
-Downloads stream to partial files and resume only with Range/If-Range validators.
+Downloads stream to URL-bound partial files. Resume uses an HTTP validator, or a
+published MD5/SHA-256 followed by complete-file verification. Files with neither
+a validator nor a published digest restart from the beginning.
 Range offsets, response length, exact published size and MD5 are checked. HTML
 error pages and empty files are rejected. SHA-256 is stored and rechecked before
 upload. Rounded sizes such as `1.4GB` are preserved as text, never enforced as

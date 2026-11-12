@@ -138,12 +138,42 @@ class DiskTests(unittest.TestCase):
         a.transfer(Fetch([Response(PAYLOAD)]), url, self.path, self.record)
         self.assertEqual(self.path.read_bytes(), PAYLOAD)
 
-    def test_partial_without_validator_restarts(self):
+    def test_partial_without_validator_or_checksum_restarts(self):
         url = "https://mirror.test/a"
         self.part(url, b"old", validator=None)
         fetch = Fetch([Response(PAYLOAD)])
-        a.transfer(fetch, url, self.path, self.record)
+        a.transfer(fetch, url, self.path, {**self.record,'expected_md5':None})
         self.assertEqual(fetch.requests[0][1], {})
+
+    def test_publisher_checksum_binds_resume_without_http_validator(self):
+        url='https://mirror.test/a'
+        for record in [self.record,{'expected_sha256':hashlib.sha256(PAYLOAD).hexdigest(),'expected_size':len(PAYLOAD)}]:
+            with self.subTest(record=record):
+                self.part(url,PAYLOAD[:5],validator=None)
+                fetch=Fetch([Response(PAYLOAD[5:],206,{'Content-Range':f'bytes 5-{len(PAYLOAD)-1}/{len(PAYLOAD)}'})])
+                a.transfer(fetch,url,self.path,record)
+                self.assertEqual(fetch.requests[0][1],{'Range':'bytes=5-'})
+                self.assertEqual(self.path.read_bytes(),PAYLOAD)
+
+    def test_changed_or_corrupt_prefix_is_rejected_by_full_checksum(self):
+        url='https://mirror.test/a';part=self.part(url,b'wrong',validator=None)
+        fetch=Fetch([Response(PAYLOAD[5:],206,{'Content-Range':f'bytes 5-{len(PAYLOAD)-1}/{len(PAYLOAD)}'})])
+        with self.assertRaisesRegex(ValueError,'MD5 mismatch'):a.transfer(fetch,url,self.path,self.record)
+        self.assertFalse(self.path.exists());self.assertFalse(part.exists())
+
+    def test_checksum_verified_complete_part_needs_no_network(self):
+        from unittest.mock import Mock
+        url='https://mirror.test/a';self.part(url,PAYLOAD,validator=None)
+        never=Mock();result=a.transfer(never,url,self.path,self.record)
+        never.open.assert_not_called();self.assertEqual(result['md5'],MD5)
+        self.assertEqual(self.path.read_bytes(),PAYLOAD)
+
+    def test_partial_receipt_from_another_url_cannot_be_resumed(self):
+        url='https://mirror.test/a';part=self.part(url,b'wrong')
+        part.with_suffix('.json').write_text(json.dumps({'url':'https://other.test/a','validator':'"v1"'}))
+        fetch=Fetch([Response(PAYLOAD)])
+        a.transfer(fetch,url,self.path,self.record)
+        self.assertEqual(fetch.requests[0][1],{})
 
     def test_invalid_range_does_not_publish(self):
         url = "https://mirror.test/a"

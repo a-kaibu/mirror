@@ -52,7 +52,7 @@ class AliceArchivesTests(unittest.TestCase):
             dest=Path(tmp)/"RANCE_WIN.ZIP"
             part=dest.with_name(dest.name+"."+hashlib.sha256(url.encode()).hexdigest()[:16]+".part")
             part.write_bytes(b"partial")
-            part.with_suffix(".json").write_text(json.dumps({"validator":"v1"}))
+            part.with_suffix(".json").write_text(json.dumps({"url":url,"validator":"v1"}))
             a.transfer(fetch,url,dest,record)
             self.assertEqual(dest.read_bytes(),PAYLOAD)
         self.assertEqual(fetch.requests[0][1]["Referer"],page)

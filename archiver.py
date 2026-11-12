@@ -670,14 +670,23 @@ def validate(path, record, previous=None):
 
 def transfer(fetcher, url, destination, record):
     from drive_download import open_download
-    # Partial bytes belong to a single URL AND validator. Never append bytes
-    # from a different mirror or changed remote object.
+    # Partial bytes belong to one observed URL. Resumption requires either an
+    # HTTP validator or an independent expected digest for the complete file.
     suffix = hashlib.sha256(url.encode()).hexdigest()[:16]
     part = destination.with_name(destination.name + "." + suffix + ".part")
     state_path = part.with_suffix(".json")
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
-    offset = part.stat().st_size if part.exists() and state.get("validator") else 0
-    headers = {"Range": f"bytes={offset}-", "If-Range": state["validator"]} if offset else {}
+    bound=state.get('url')==url
+    expected_digest=record.get('expected_md5') or record.get('expected_sha256')
+    if bound and part.is_file() and expected_digest:
+        try:completed=validate(part,record)
+        except ValueError:completed=None
+        if completed:
+            part.replace(destination);state_path.unlink(missing_ok=True)
+            return completed
+    offset = part.stat().st_size if part.exists() and bound and (state.get("validator") or expected_digest) else 0
+    headers = {"Range": f"bytes={offset}-"} if offset else {}
+    if offset and state.get('validator'):headers['If-Range']=state['validator']
     # Public RetroPC downloads document ordinary same-site Referer navigation.
     # Keep this scoped to their published product pages and binary directory.
     source = record.get("original_page_url", "")
@@ -707,7 +716,7 @@ def transfer(fetcher, url, destination, record):
             if not match or int(match[1]) != offset or int(match[2]) < offset or int(match[2]) >= int(match[3]):
                 raise ValueError("invalid Content-Range")
             total = int(match[3])
-            if offset and response.headers.get("ETag", response.headers.get("Last-Modified")) != state["validator"]:
+            if offset and state.get("validator") and response.headers.get("ETag", response.headers.get("Last-Modified")) != state["validator"]:
                 raise ValueError("validator changed during resume")
         elif response.status == 200:
             offset = 0  # Server ignored Range, or If-Range forced a full response.
