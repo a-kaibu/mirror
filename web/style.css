@@ -44,7 +44,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .kind-filters input:focus-visible + span { outline: 3px solid #185b91; outline-offset: 3px; }
 
 .filter-options { display: flex; align-items: flex-end; flex-wrap: wrap; gap: .6rem 1rem; margin-bottom: .8rem; }
-.filter-options .kind-filters { margin: 0; }
+.filter-options .kind-filters { margin: 0; width: auto; min-width: 0; flex: 0 1 auto; }
 .available-filter { margin: 0 0 .3rem auto; white-space: nowrap; }
 #filter-status { color: #516476; font-size: .9rem; white-space: nowrap; }
 
