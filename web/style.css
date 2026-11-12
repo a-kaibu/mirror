@@ -3,6 +3,9 @@ body { background: #f5f8fc; color: #23364a; }
 header { border-top: 6px solid #185b91; border-bottom: 1px solid #c7d5e3; padding-bottom: .8rem; }
 header p, footer { color: #516476; }
 main { padding-block: 2rem; }
+.page-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: .5rem 1rem; margin-bottom: 1.5rem; }
+.page-heading h1 { margin: 0; }
+.page-heading small { margin-left: auto; color: #516476; white-space: nowrap; }
 h1 { font-size: 1.8rem; } h2 { font-size: 1.35rem; } h3 { font-size: 1.05rem; line-height: 1.7; }
 .makers { padding: 0; list-style: none; }
 .makers li { display: flex; justify-content: space-between; gap: 1rem; padding: .85rem .25rem; border-bottom: 1px solid #c7d5e3; }

@@ -147,8 +147,8 @@ def build_site(store, output):
 <html lang="ja" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(title)} · VN Mirror Archive</title><link rel="stylesheet" href="{prefix}pico.min.css"><link rel="stylesheet" href="{prefix}style.css"><script defer src="{prefix}app.js"></script></head>
 <body><a class="skip" href="#main">本文へ</a><header class="container"><nav aria-label="メイン"><ul><li><a href="{prefix}index.html"><strong>VN Mirror Archive</strong></a></li></ul></nav><p>体験版・パッチ・デモムービーの保存庫</p></header>
-<main id="main" class="container"><h1>{e(title)}</h1>{body}</main>
-<footer class="container"><small>更新：{e(data['generated_at'][:10])}</small></footer></body></html>'''
+<main id="main" class="container"><div class="page-heading"><h1>{e(title)}</h1><small>更新：{e(data['generated_at'][:10])}</small></div>{body}</main>
+</body></html>'''
 
     controls = '''<form id="filters" hidden><div class="grid"><label>作品・ファイル名で検索<input name="q" type="search" placeholder="作品名、メーカー、ファイル名"></label><label>配布種別<select name="kind"><option value="">すべて</option><option value="trial">体験版</option><option value="patch">パッチ</option><option value="movie">ムービー</option><option value="other">その他</option></select></label></div><label><input name="available" type="checkbox">ダウンロード可能な配布物のみ</label><p id="filter-status" role="status"></p></form>'''
     index = '<p>メーカーを選んで、作品ごとの配布物を探せます。体験版・パッチを優先して収集しています。</p><ul class="makers">'
