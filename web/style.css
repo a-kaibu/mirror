@@ -1,5 +1,6 @@
 :root { --pico-font-family: "BIZ UDPGothic", "Yu Gothic", sans-serif; --pico-font-size: 16px; --pico-primary: #185b91; --pico-primary-background: #185b91; --pico-primary-hover: #103f65; --pico-primary-hover-background: #103f65; --pico-border-radius: .25rem; }
-body { background: #f5f8fc; color: #23364a; }
+html { background: #f5f8fc; }
+body { min-height: 100vh; min-height: 100svh; background: #f5f8fc; color: #23364a; }
 header { border-top: 6px solid #185b91; border-bottom: 1px solid #c7d5e3; padding-bottom: .8rem; }
 header p, footer { color: #516476; }
 main { padding-block: 2rem; }
