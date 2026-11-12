@@ -25,7 +25,7 @@ def identity(*values):
 def release_info(record):
     label = record.get("release_name") or record["title"]
     # A repaired trial remains a trial, not a patch for the commercial game.
-    if re.search(r"体験|trial|(?:^|[ _])taiken", label + " " + record["filename"], re.I):
+    if re.search(r"体験|trial|(?:^|[ _])taiken", label + " " + (record["filename"] or ""), re.I):
         kind = "trial"
     elif re.search(r"パッチ|修正|アップデート|patch|update", label, re.I):
         kind = "patch"
@@ -111,6 +111,8 @@ def manifest(store):
         if r["status"] in {"verified", "archived"} and r["sha256"] and r["remote_sha256"] == r["sha256"] and r["remote_verified_at"]:
             namespace, bucket, key = r["remote_key"].split("/", 2)
             item.update(download_url=public_url(namespace, bucket, key, download=True), remote_key=r["remote_key"], public_verified_at=r["remote_verified_at"])
+        if not item["filename"] and data["filename"]:
+            item["filename"] = data["filename"]
         item["sources"].append({"id": r["id"], "site": r["site"], "page_url": data["page_url"],
             "release_name": data.get("release_name"), "kind": r["kind"], "version": r["version"],
             "platform": r["platform"], "requirements": r["requirements"],
@@ -186,7 +188,7 @@ def build_site(store, output):
         for product in products:
             body += f'<section class="product" id="p-{product["id"]}"><h2>{e(product["title"])}</h2>'
             for file in [f for f in data["files"] if f["product_id"] == product["id"]]:
-                query = " ".join([maker["name"], product["title"], file["name"], *[s["filename"] for s in file["sources"]]])
+                query = " ".join([maker["name"], product["title"], file["name"], *[(s["filename"] or "") for s in file["sources"]]])
                 label = file["name"]
                 if label.startswith(product["title"]):
                     label = label[len(product["title"]):].strip() or KINDS[file["kind"]]
@@ -196,7 +198,7 @@ def build_site(store, output):
                 if size is None:
                     size = next((source["expected_size"] for source in file["sources"] if source.get("expected_size") is not None), None)
                 size_text = human_size(size) if size is not None else next((source["size_text"] for source in file["sources"] if source.get("size_text")), "サイズ不明")
-                body += f'<div class="file-row"><p class="file-info"><span class="filename">{e(file["filename"])}</span><small class="file-size">{e(size_text)}</small></p>'
+                body += f'<div class="file-row"><p class="file-info"><span class="filename">{e(file["filename"] or "ファイル名不明")}</span><small class="file-size">{e(size_text)}</small></p>'
                 if file["download_url"]:
                     body += f'<a class="download" data-id="{file["id"]}" href="{e(file["download_url"])}">ダウンロード</a>'
                 else:
@@ -213,7 +215,7 @@ def build_site(store, output):
                         body += f'<p>{key.upper()}: <code>{e(file[key])}</code></p>'
                 body += '<ul>'
                 for source in file["sources"]:
-                    body += f'<li><a href="{e(source["page_url"])}">{e(source["site"])}</a> · {e(source["published_at"] or "掲載日不明")} · {e(source["filename"])}</li>'
+                    body += f'<li><a href="{e(source["page_url"])}">{e(source["site"])}</a> · {e(source["published_at"] or "掲載日不明")} · {e(source["filename"] or "ファイル名不明")}</li>'
                 body += '</ul></details></article>'
             body += '</section>'
         (output / "makers" / (maker["id"] + ".html")).write_text(page(maker["name"], body, "../"), encoding="utf-8")

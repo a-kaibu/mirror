@@ -17,7 +17,7 @@ async function download(id) {
     }
     const upstream = await fetch(url, {credentials: "omit"});
     if (!upstream.ok || !upstream.body) throw new Error("ファイルを取得できませんでした。");
-    const name = file.filename.replace(/[\\/\x00-\x1f\x7f]/g, "_");
+    const name = (file.filename || file.id).replace(/[\\/\x00-\x1f\x7f]/g, "_");
     const encoded = encodeURIComponent(name).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
     const headers = new Headers({
       "Content-Type": "application/octet-stream",

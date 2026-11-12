@@ -248,20 +248,22 @@ def parse_holyseal(root, url):
                 text = row.text()
                 cells = [n for n in row.children if isinstance(n, Node) and n.tag in {"td", "th"}]
                 file_text = cells[-1].text() if len(cells) >= 2 else text
-                # Real patches can be loose XP3/DLL files, and these tables also
-                # contain MP3 extras. Read the filename cell rather than reject
-                # the whole product or mistake a version label for a filename.
-                match = re.search(r"([^\s()]+\.[^\s()]+)\s*(?:\(([^)]+)\))?", file_text, re.I)
-                if not match:
-                    raise ValueError("Holyseal release has no recognized filename: " + text[:200])
-                name = match[1]
-                current = {"id": hashlib.sha256(("holyseal\n" + original(url) + "\n" + name + "\n" + strong.text()).encode()).hexdigest(),
+                # A final parenthesized size is separate from parentheses in
+                # a real filename such as tayutama2as_demo(mp4).zip.
+                size_match = re.search(r"\s*\(([^()]*)\)\s*$", file_text)
+                raw_name = file_text[:size_match.start()].strip() if size_match else file_text.strip()
+                name = raw_name if re.search(r"\.[^\s.()]{1,12}$", raw_name) else None
+                dates = re.findall(r"\d{4}/\d{2}/\d{2}", text)
+                published = dates[-1] if dates else None
+                size_text = size_match[1] if size_match else None
+                identity = name or f"unknown:{published}:{size_text}"
+                current = {"id": hashlib.sha256(("holyseal\n" + original(url) + "\n" + identity + "\n" + strong.text()).encode()).hexdigest(),
                     "site": "holyseal", "page_url": url, "original_page_url": original(url),
                     "title": title, "brand": brand, "release_name": strong.text(), "filename": name,
-                    "size_text": match[2], "expected_size": None, "expected_md5": None,
-                    "published_at": None, "mirrors": [], "fields": {k: v for k, v in product_fields.items() if k in {"発売日", "ジャンル", "制限等", "OS等", "メディア"}}}
-                dates = re.findall(r"\d{4}/\d{2}/\d{2}", text)
-                current["published_at"] = dates[-1] if dates else None
+                    "size_text": size_text, "expected_size": None, "expected_md5": None,
+                    "published_at": published, "mirrors": [], "fields": {k: v for k, v in product_fields.items() if k in {"発売日", "ジャンル", "制限等", "OS等", "メディア"}}}
+                if name is None:
+                    current["fields"]["filename_text"] = raw_name
                 records.append(current)
             if current is None:
                 continue
@@ -628,7 +630,7 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
         if limit is not None and processed >= limit:
             break
         processed += 1
-        name = re.sub(r"[^\w.() -]", "_", record["filename"])[:150].strip(". ") or "download.bin"
+        name = re.sub(r"[^\w.() -]", "_", (record["filename"] or row["id"]))[:150].strip(". ") or "download.bin"
         rel = f"files/{row['site']}/{row['id']}/{name}"
         path = store.root / rel
         path.parent.mkdir(parents=True, exist_ok=True)

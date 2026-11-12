@@ -21,6 +21,20 @@ class ArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(len(records[0]["mirrors"]),2)
         self.assertEqual(records[0]["release_name"],"修正パッチ Ver1.1")
 
+    def test_parenthesized_and_unknown_names_preserve_other_releases(self):
+        html="""<title>Holyseal ≫ Maker ≫ Game</title><table class="dltbl">
+        <tr><td><strong>デモ</strong>2017/03/01</td><td>movie(mp4).zip (328MB)</td></tr>
+        <tr><td><strong>修正ファイル</strong>2002/03/05</td><td>？ (857kB)</td></tr>
+        <tr><td><strong>修正ファイル</strong>2002/03/05</td><td>？ (48MB)</td></tr></table>"""
+        records=a.parse_detail(html,a.HOLY,"holyseal")
+        self.assertEqual(records[0]["filename"],"movie(mp4).zip")
+        self.assertEqual(records[0]["size_text"],"328MB")
+        self.assertIsNone(records[1]["filename"])
+        self.assertEqual(records[1]["fields"]["filename_text"],"？")
+        self.assertEqual(len({r["id"] for r in records}),3)
+        from catalog import release_info
+        self.assertEqual(release_info(records[1])[0],"patch")
+
     def test_retry_after_seconds_are_not_capped(self):
         self.assertEqual(a.retry_after_delay("600",60),600)
         self.assertEqual(a.retry_after_delay("bad",60),60)
