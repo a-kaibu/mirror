@@ -164,11 +164,10 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
                     store.db.execute("INSERT OR IGNORE INTO mirror_frontier(site,url,mode) VALUES(?,?,?)",(source["key"],original,mode));children+=1
             store.db.commit()
             matched=match_records(store,source,html,actual,index) if count else 0
-            if source["key"]=="moepedia" and re.fullmatch(r"/game/\d+/?",urlsplit(a.original(actual)).path):
+            if source["key"]=="moepedia":
                 from portals import parse_moepedia
-                for record in parse_moepedia(html,actual):store.add(record);matched+=1
-            if matched and source["key"]=="moepedia":
                 for record in parse_moepedia(html,actual):
+                    store.add(record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
             if source["key"]=="multi_inside":
