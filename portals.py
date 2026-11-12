@@ -525,3 +525,48 @@ def parse_xgame(html,page):
             'fields':{'published_distribution_fields':fields,'動作条件':fields.get('動作条件'),
                 '適用条件':fields.get('動作条件'),'転載条件':fields.get('転載条件')}})
     return result
+
+
+def parse_redistribution(html,page):
+    if urlsplit(a.original(page)).hostname not in {'www.redistribution.cc','redistribution.cc'}:return []
+    root=a.DOM(html).root;result=[]
+    for banner in root.all({'div'}):
+        if 'banner' not in banner.attrs.get('class','').split():continue
+        brand=title=None
+        for node in banner.children:
+            if not isinstance(node,a.Node):continue
+            if node.tag=='div' and 'banner_date' in node.attrs.get('class','').split():
+                if brand is None:brand=node.text().strip()
+                else:title=node.text().strip()
+                continue
+            if node.tag!='table' or not brand or not title:continue
+            fields=a.labels(node)
+            checksum=fields.get('md5','').strip()
+            if not fields.get('タイトル') or not re.fullmatch(r'[a-fA-F0-9]{32}',checksum):continue
+            candidates=[]
+            for link in node.all({'a'}):
+                target=a.resolve(page,link.attrs.get('href',''))
+                if not target:continue
+                parts=urlsplit(a.original(target))
+                if parts.hostname in {'www.redistribution.cc','redistribution.cc'} and parts.path.startswith('/contents/') and a.EXT.search(parts.path):candidates.append(target)
+            names={unquote(Path(urlsplit(a.original(u)).path).name) for u in candidates}
+            if not candidates:
+                filename=fields.get('ダウンロード','').strip()
+                if not a.EXT.search(filename) or '/' in filename:continue
+                names={filename}
+            if len(names)!=1:continue
+            filename=names.pop();mirrors=[]
+            for target in candidates:
+                raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+                if stamp:mirrors.append(a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme))
+                mirrors.append(raw)
+            published=fields.get('公開日(当サイト)');date=re.fullmatch(r'(\d{4})年(\d{1,2})月(\d{1,2})日',published or '')
+            if date:published=f'{int(date[1]):04}-{int(date[2]):02}-{int(date[3]):02}'
+            ident=hashlib.sha256(('redistribution\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
+            result.append({'id':ident,'site':'redistribution','page_url':page,'original_page_url':a.original(page),
+                'title':title,'brand':brand,'release_name':fields['タイトル'],'filename':filename,
+                'expected_md5':checksum.lower(),'expected_size':None,'size_text':fields.get('ファイルサイズ'),
+                'published_at':published,'mirrors':list(dict.fromkeys(mirrors)),
+                'fields':{'published_distribution_fields':fields,'配布終了日':fields.get('公開終了日(当サイト)'),
+                    '備考':fields.get('備考'),'source_link_missing':not bool(candidates)}})
+    return result
