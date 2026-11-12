@@ -127,3 +127,19 @@ class HistoricalCrawlOrderTests(unittest.TestCase):
                 self.assertEqual(fetch.requests[0][0],detail)
                 self.assertEqual(store.db.execute('select status from mirror_frontier where url=?',(home,)).fetchone()[0],'pending')
             finally:store.db.close()
+
+    def test_known_distribution_layouts_precede_catalogues_without_dropping_them(self):
+        from test_archiver import Fetch,Response
+        for key,catalogue,detail in [
+            ('magic_mirror','http://magics.ddo.jp/dl.html','http://magics.ddo.jp/info/brand/game.html'),
+            ('xgame','http://www.xgamedata.com/index2.htm','http://www.xgamedata.com/demo6/g6361/')]:
+            with self.subTest(site=key),tempfile.TemporaryDirectory() as tmp:
+                store=a.Store(tmp);m.initialize(store)
+                try:
+                    urls=[a.replay(u,'20120503221242') for u in [catalogue,detail]]
+                    for url in urls:store.db.execute("INSERT INTO mirror_frontier(site,url,mode) VALUES(?,?,'archive')",(key,url))
+                    store.db.commit();fetch=Fetch([Response(b'<html>distribution</html>',url=urls[1])])
+                    m.crawl(store,m.definitions()[key],fetch,mode='archive',max_pages=1)
+                    self.assertEqual(fetch.requests[0][0],urls[1])
+                    self.assertEqual(store.db.execute('select status from mirror_frontier where url=?',(urls[0],)).fetchone()[0],'pending')
+                finally:store.db.close()

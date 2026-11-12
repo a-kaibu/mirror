@@ -205,14 +205,22 @@ def match_records(store,source,html,page,index):
     store.db.commit();return found
 
 
+def page_rank(source,url):
+    path=urlsplit(a.original(url)).path
+    # These are observed distribution layouts, not generated download URLs.
+    if source['key']=='magic_mirror' and path.startswith('/info/'):return 0
+    if source['key']=='xgame' and re.match(r'/demo\d+/g\d+/',path):return 0
+    return 2 if path in {'','/'} else 1
+
+
 def crawl(store,source,fetcher,mode="archive",max_pages=100):
     # Read actual catalogue links before another historical homepage variant.
     # Known captures still precede URLs requiring an availability lookup.
-    store.db.create_function('mirror_is_home',1,lambda url:int(urlsplit(a.original(url)).path in {'','/'}))
+    store.db.create_function('mirror_page_rank',1,lambda url:page_rank(source,url))
     initialize(store);enqueue(store,source,mode);seed_platform(store,source,mode)
     index=known_files(store,source["key"]);processed=found=0
     while processed<max_pages:
-        row=store.db.execute("SELECT * FROM mirror_frontier WHERE site=? AND mode=? AND status='pending' ORDER BY CASE WHEN url LIKE '%web.archive.org/web/%' THEN 0 ELSE 1 END,mirror_is_home(url),rowid LIMIT 1",(source["key"],mode)).fetchone()
+        row=store.db.execute("SELECT * FROM mirror_frontier WHERE site=? AND mode=? AND status='pending' ORDER BY CASE WHEN url LIKE '%web.archive.org/web/%' THEN 0 ELSE 1 END,mirror_page_rank(url),rowid LIMIT 1",(source["key"],mode)).fetchone()
         if not row:break
         url=row["url"];processed+=1;actual=None;rel=None
         try:
