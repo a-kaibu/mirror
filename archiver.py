@@ -1043,6 +1043,29 @@ def _publish_html(store, namespace, bucket, profile="hf"):
             raise
 
 
+def _compact_snapshot(db):
+    # This is an offline backup only. The live crawl keeps its existing schema.
+    # Link primary keys contain long URLs; a rowid table duplicates those bytes
+    # in its primary-key index (about 246 MB in the current catalogue).
+    schema=db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='mirror_links'").fetchone()
+    columns=[row[1] for row in db.execute("PRAGMA table_info(mirror_links)")]
+    if (schema and "WITHOUT ROWID" not in schema[0].upper()
+            and columns==['site','parent_url','url','label','kind','matched_item','seen_at']
+            and not db.execute("SELECT 1 FROM sqlite_master WHERE name='_mirror_links_snapshot' OR (type='trigger' AND tbl_name='mirror_links')").fetchone()
+            and not db.execute("PRAGMA foreign_key_list(mirror_links)").fetchone()
+            and not db.execute("SELECT 1 FROM mirror_links WHERE site IS NULL OR parent_url IS NULL OR url IS NULL LIMIT 1").fetchone()):
+        indexes=[row[0] for row in db.execute("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='mirror_links' AND sql IS NOT NULL")]
+        with db:
+            db.execute("BEGIN")
+            db.execute("CREATE TABLE _mirror_links_snapshot ("+schema[0].split('(',1)[1]+" WITHOUT ROWID")
+            db.execute("INSERT INTO _mirror_links_snapshot SELECT * FROM mirror_links")
+            db.execute("DROP TABLE mirror_links")
+            db.execute("ALTER TABLE _mirror_links_snapshot RENAME TO mirror_links")
+            for sql in indexes:db.execute(sql)
+    # Reclaim the old table/index pages before hashing and uploading the copy.
+    db.execute("VACUUM")
+
+
 def _publish_snapshot(store, namespace, bucket, profile="hf"):
     from boto3.s3.transfer import TransferConfig
     client = s3_client(namespace, profile)
@@ -1054,6 +1077,7 @@ def _publish_snapshot(store, namespace, bucket, profile="hf"):
         snapshot = Path(tmp) / "index.sqlite3"
         with closing(sqlite3.connect(snapshot)) as backup:
             store.db.backup(backup)
+            _compact_snapshot(backup)
         client.upload_file(str(snapshot), bucket, "index.sqlite3", Config=config)
         expected = digest(snapshot)
         if public_digest(namespace, bucket, "index.sqlite3") != (expected["sha256"], expected["size"]):
