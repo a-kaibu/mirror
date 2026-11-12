@@ -1,6 +1,19 @@
 "use strict";
 
 const fold = value => value.normalize("NFKC").toLocaleLowerCase();
+const brandForm = document.querySelector("#brand-filters");
+if (brandForm) {
+  brandForm.hidden = false;
+  const brands = [...document.querySelectorAll("[data-brand]")];
+  const filterBrands = () => {
+    const query = fold(brandForm.elements.q.value.trim());
+    for (const brand of brands) brand.hidden = !fold(brand.dataset.brand).includes(query);
+  };
+  brandForm.addEventListener("submit", event => event.preventDefault());
+  brandForm.addEventListener("input", filterBrands);
+  filterBrands();
+}
+
 const form = document.querySelector("#filters");
 if (form) {
   form.hidden = false;

@@ -47,3 +47,5 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .filter-options .kind-filters { margin: 0; }
 .available-filter { margin: 0 0 .3rem auto; white-space: nowrap; }
 #filter-status { color: #516476; font-size: .9rem; white-space: nowrap; }
+
+.updated { color: #516476; white-space: nowrap; }
