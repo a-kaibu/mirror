@@ -48,7 +48,7 @@ python3 -m http.server --directory dist 8000
 
 S3 uploads use `~/.aws/credentials` profile `hf`; credentials never enter the DB,
 exports, site or repository. Namespace `vn-archive`, bucket `mirrors` are defaults.
-Pass `--root /path/to/archive` **before** the subcommand. One crawler and one archival batch can operate on the same archive using SQLite
+Pass `--root /path/to/archive` **before** the subcommand. One crawler per source and one archival batch can operate on the same archive using SQLite
 WAL. Transfers use a metadata comparison before recording success so changed source
 expectations are never silently overwritten. Do not run overlapping download batches. `download --id <source-record-id>` selects a
 specific source record; IDs appear in the manifest and SQLite.
@@ -181,12 +181,14 @@ published binary passed full anonymous HF read-back by SHA-256 and size. Both
 Chromium and Firefox passed the opt-in browser check.
 
 LatherCraft storage1 presents a certificate that expired on 2026-09-19. For
-publisher-MD5-backed downloads only, `sources.toml` explicitly trusts the exact
+legacy source downloads, `sources.toml` explicitly trusts the exact
 observed leaf certificate by SHA-256. The TLS handshake must present that exact
 certificate before an HTTP request is sent; a replacement certificate fails closed.
 This is a legacy source trust decision rather than normal CA/expiry verification.
 The pin is host-scoped and reselected on redirects (including proxy tunnels).
-Downloads without a published MD5, HF and GitHub use normal TLS. Each download
+HF and GitHub use normal TLS. Files without a published MD5 are still collected;
+the missing expectation is retained, the exact size is checked when available,
+and computed hashes plus the certificate pin are recorded. Each download
 attempt records any certificate pin used. Remove the pin when normal TLS works
 again; never automatically update a changed pin. With this configuration, the
 399,322-byte LatherCraft patch `IDOL_SIMAI_patch_PK_ver1_0_1.zip` downloaded and

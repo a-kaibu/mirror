@@ -57,18 +57,20 @@ class SourceTLSTests(unittest.TestCase):
         self.assertIsInstance(connection, a.PinnedHTTPSConnection)
         connection.close()
 
-    def test_without_published_md5_pins_are_not_used(self):
+    def test_missing_publisher_md5_is_retained_without_blocking_collection(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = a.Store(tmp)
             record = a.parse_detail(HTML, "https://example.test/items/1", "lathercraft")[0]
             record["expected_md5"] = None
             store.add(record)
-            legacy = a.Fetcher(tls_pins={"storage1.lathercraft.net": "a" * 64})
-            clean = Fetch([Response(PAYLOAD)])
-            with patch.object(a, "Fetcher", return_value=clean) as constructor:
-                self.assertEqual(a.download(store, legacy), 0)
-            constructor.assert_called_once_with(legacy.delay, legacy.timeout, legacy.retries)
-            self.assertIsNone(store.db.execute("SELECT tls_pin FROM attempts").fetchone()[0])
+            fetch = Fetch([Response(PAYLOAD)])
+            fetch.tls_pins = {"storage1.lathercraft.net": "a" * 64}
+            fetch.last_tls_pin = "a" * 64
+            self.assertEqual(a.download(store, fetch), 0)
+            row = store.rows()[0]
+            self.assertIsNone(__import__("json").loads(row["data"])["expected_md5"])
+            self.assertEqual(row["sha256"], hashlib.sha256(PAYLOAD).hexdigest())
+            self.assertEqual(store.db.execute("SELECT tls_pin FROM attempts").fetchone()[0], "a" * 64)
             store.db.close()
 
 

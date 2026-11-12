@@ -586,11 +586,9 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
         if row["status"] == "archived" and row["sha256"] and row["remote_sha256"] == row["sha256"] and row["remote_verified_at"]:
             continue
         source_fetcher = fetcher
-        if getattr(fetcher, "tls_pins", {}) and not record.get("expected_md5"):
-            # A file without a publisher digest must use ordinary TLS on all
-            # mirrors, including redirects into a configured legacy host.
-            source_fetcher = Fetcher(fetcher.delay, fetcher.timeout, fetcher.retries)
-            source_fetcher.reserve_bytes = getattr(fetcher, "reserve_bytes", 0)
+        # Exact certificate pins authenticate the configured source independently
+        # of optional publisher digests. Some real entries publish no MD5 at all;
+        # retain that absence and still record actual size, MD5 and SHA-256.
         if row["status"] == "verified":
             try:
                 validate(store.root / row["path"], record, dict(row))
@@ -606,7 +604,12 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
         path.parent.mkdir(parents=True, exist_ok=True)
         if not record["mirrors"]:
             store.update(row["id"], status="failed", error="No mirror link preserved on source page")
-        for url in record["mirrors"]:
+        mirrors = record["mirrors"]
+        if record["site"] == "lathercraft":
+            # storage2 repeatedly timed out in live collection; try the working
+            # primary first without changing the source's recorded mirror list.
+            mirrors = sorted(mirrors, key=lambda u: urlsplit(u).hostname != "storage1.lathercraft.net")
+        for url in mirrors:
             error = None
             try:
                 result = transfer(source_fetcher, url, path, record)

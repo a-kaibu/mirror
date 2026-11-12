@@ -92,6 +92,15 @@ class BulkTests(unittest.TestCase):
             self.assertEqual(a.publish(self.store, "vn-archive", "mirrors", metadata=False), 0)
         read.assert_not_called()
 
+    def test_working_primary_is_tried_before_timing_out_secondary(self):
+        record = self.add("a")
+        record["mirrors"] = ["http://storage2.lathercraft.net/file.zip", "https://storage1.lathercraft.net/file.zip"]
+        self.store.add(record)
+        fetch = Fetch([Response(PAYLOAD)])
+        self.assertEqual(a.download(self.store, fetch), 0)
+        self.assertEqual(fetch.requests[0][0], record["mirrors"][1])
+        self.assertEqual(json.loads(self.store.rows()[0]["data"])["mirrors"], record["mirrors"])
+
     def test_missing_lathercraft_link_still_retains_file_metadata(self):
         record = a.parse_detail('<h2>作品 体験版</h2><p><strong>作品:</strong>作品</p><p><strong>ファイル名:</strong>demo.zip</p>', "http://www.lathercraft.net/items/1", "lathercraft")[0]
         self.assertEqual(record["filename"], "demo.zip")

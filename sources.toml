@@ -2,7 +2,7 @@
 # storage1 presents a Let's Encrypt YR1 leaf for storage1.lathercraft.net,
 # valid 2026-06-21 through 2026-09-19. Pin its exact DER SHA-256 while the
 # expired certificate remains deployed. Remove this entry once normal TLS
-# works again; never replace a changed pin automatically. Downloads using
-# pins also require the published MD5. HF uploads/read-back use normal TLS.
+# works again; never replace a changed pin automatically. Published MD5 and
+# exact sizes are checked when available. HF uploads/read-back use normal TLS.
 [tls_pins]
 "storage1.lathercraft.net" = "390ca86165931dc26de445a37e21e6a1072723657cd2f7272a2a0c31da081d47"
