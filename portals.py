@@ -570,3 +570,43 @@ def parse_redistribution(html,page):
                 'fields':{'published_distribution_fields':fields,'配布終了日':fields.get('公開終了日(当サイト)'),
                     '備考':fields.get('備考'),'source_link_missing':not bool(candidates)}})
     return result
+
+
+def parse_magic_mirror(html,page):
+    parts=urlsplit(a.original(page))
+    if parts.hostname!='magics.ddo.jp' or not parts.path.startswith('/info/'):return []
+    root=a.DOM(html).root;panels=[n for n in root.all({'div'}) if n.attrs.get('id')=='right']
+    if len(panels)!=1:return []
+    fields={};sections={};label=None
+    for node in panels[0].children:
+        if not isinstance(node,a.Node):continue
+        if node.tag=='h2':
+            label=node.text().strip()
+            if label=='コメント':break
+        elif node.tag=='p' and label:
+            fields[label]=node.text().strip();sections[label]=node
+    if not all(fields.get(key) for key in ['素材タイトル','ブランド','作品']):return []
+    md5=fields.get('MD5','').strip()
+    if md5 and not re.fullmatch(r'[a-fA-F0-9]{32}',md5):return []
+    mirrors=[];filenames=set();block=sections.get('ダウンロード')
+    for link in block.all({'a'}) if block else []:
+        target=a.resolve(page,link.attrs.get('href',''))
+        if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
+        raw=a.original(target);filenames.add(unquote(Path(urlsplit(raw).path).name))
+        stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        if stamp:mirrors.append(a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme))
+        mirrors.append(raw)
+    if len(filenames)>1 or not (md5 or mirrors):return []
+    date=re.search(r'\d{4}/\d{2}/\d{2}',fields.get('公開開始日(当サイト)',''))
+    filename=next(iter(filenames),None)
+    official=sections.get('公式サイト')
+    official_urls=[a.original(target) for node in official.all({'a'}) if (target:=a.resolve(page,node.attrs.get('href','')))] if official else []
+    ident=hashlib.sha256(('magic_mirror\n'+a.original(page)).encode()).hexdigest()
+    return [{'id':ident,'site':'magic_mirror','page_url':page,'original_page_url':a.original(page),
+        'title':fields['作品'],'brand':fields['ブランド'],'release_name':fields['素材タイトル'],
+        'filename':filename,'expected_md5':md5.lower() or None,'expected_size':None,
+        'size_text':fields.get('ダウンロード'),'published_at':date[0].replace('/','-') if date else None,
+        'mirrors':list(dict.fromkeys(mirrors)),
+        'fields':{'published_distribution_fields':fields,'published_filename_missing':filename is None,
+            'copyright':fields.get('著作権'),'official_site_urls':list(dict.fromkeys(official_urls)),
+            'holyseal_reference':fields.get('Holyseal情報')}}]

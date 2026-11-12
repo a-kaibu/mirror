@@ -148,8 +148,11 @@ def add_record(store,record):
         hashes={key:selected[column] or previous.get(key) for key,column in [('expected_md5','md5'),('expected_sha256','sha256')]}
         same_digest=any(value and record.get(key)==value for key,value in hashes.items())
         consistent=all(not value or not record.get(key) or record[key]==value for key,value in hashes.items())
-        same_identity=(previous.get('site')==record.get('site') and previous.get('filename')==record.get('filename')
+        same_source=(previous.get('site')==record.get('site')
             and normalized(previous.get('brand') or '')==normalized(record.get('brand') or ''))
+        if same_digest and consistent and same_source and not record.get('filename'):
+            record['filename']=previous.get('filename')
+        same_identity=same_source and previous.get('filename')==record.get('filename')
         old_size=selected['size'] if selected['size'] is not None else previous.get('expected_size')
         consistent_size=old_size is None or record.get('expected_size') is None or old_size==record['expected_size']
         if same_digest and consistent and consistent_size and same_identity:
@@ -294,7 +297,7 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
                     add_record(store,record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
-            if source["key"] in {"alice_archives","alicefree","getchu","xgame","redistribution"}:
+            if source["key"] in {"alice_archives","alicefree","getchu","xgame","redistribution","magic_mirror"}:
                 import portals
                 for record in getattr(portals,"parse_"+source["key"])(html,actual):
                     add_record(store,record);matched+=1
