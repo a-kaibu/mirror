@@ -447,6 +447,7 @@ class Store:
             # incompatible size, or failed record must be revalidated/retried.
             retained = (old["status"] in {"verified", "archived"} and old["sha256"]
                 and record.get("expected_md5") and record["expected_md5"] == old["md5"]
+                and (not record.get("expected_sha256") or record["expected_sha256"] == old["sha256"])
                 and (record.get("expected_size") is None or record["expected_size"] == old["size"]))
             if not retained:
                 self.db.execute("UPDATE items SET status='pending',remote_sha256=NULL WHERE id=?", (record["id"],))
@@ -563,6 +564,8 @@ def validate(path, record, previous=None):
         raise ValueError("empty file")
     if record.get("expected_md5") and result["md5"] != record["expected_md5"]:
         raise ValueError("MD5 mismatch")
+    if record.get("expected_sha256") and result["sha256"] != record["expected_sha256"]:
+        raise ValueError("SHA-256 mismatch")
     if record.get("expected_size") is not None and result["size"] != record["expected_size"]:
         raise ValueError("published file size mismatch")
     if previous and previous.get("sha256") and result["sha256"] != previous["sha256"]:

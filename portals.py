@@ -262,3 +262,38 @@ def parse_lapistan(html,page):
             'published_at':f'{date[1]}-{int(date[2]):02}-{int(date[3]):02}' if date else None,
             'fields':{'parser':'lapistan','size_is_rounded':True}})
     return list({r['id']:r for r in results}.values())
+
+
+def parse_kokoron(html,page):
+    if urlsplit(a.original(page)).hostname!='kokoron.madoka.org':return []
+    root=a.DOM(html).root;heads=[n.text() for n in root.all({'title'})]
+    if not heads:return []
+    brand=re.sub(r'\s+mirror\s*$','',heads[0],flags=re.I).strip()
+    if brand==heads[0] or not brand:return []
+    results=[]
+    for dt in root.all({'dt'}):
+        children=[]
+        for child in dt.children:
+            if isinstance(child,a.Node) and child.tag in {'dt','dd'}:break
+            children.append(child)
+        text=' '.join(child.text() if isinstance(child,a.Node) else child for child in children)
+        label=re.search(r'『(.+?)』\s*(.+?)\s+Size\s*=',text,re.S)
+        digest=re.search(r'MD5\s*\(([^)]+)\)\s*=\s*([a-fA-F0-9]{32})',text)
+        size=re.search(r'Size\s*=\s*([\d,]+)\s*bytes',text,re.I)
+        if not label or not digest or not size:continue
+        filename=digest[1];mirrors=[]
+        for child in children:
+            links=([child] if child.tag=='a' else list(child.all({'a'}))) if isinstance(child,a.Node) else []
+            for link in links:
+                target=a.resolve(page,link.attrs.get('href',''))
+                if not target or unquote(Path(urlsplit(a.original(target)).path).name)!=filename:continue
+                raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+                mirrors.extend(([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw])
+        sha=re.search(r'SHA256\s*\('+re.escape(filename)+r'\)\s*=\s*([a-fA-F0-9]{64})',text)
+        ident=hashlib.sha256(('kokoron\n'+a.original(page)+'\n'+filename+'\n'+digest[2].lower()).encode()).hexdigest()
+        results.append({'id':ident,'site':'kokoron','page_url':page,'original_page_url':a.original(page),
+            'title':label[1],'brand':brand,'release_name':label[2].strip(),'filename':filename,'mirrors':list(dict.fromkeys(mirrors)),
+            'expected_md5':digest[2].lower(),'expected_sha256':sha[1].lower() if sha else None,
+            'expected_size':int(size[1].replace(',','')),'size_text':size[0],'published_at':None,
+            'fields':{'parser':'kokoron','removed_link':not mirrors}})
+    return list({r['id']:r for r in results}.values())

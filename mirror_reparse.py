@@ -10,7 +10,7 @@ import mirror_sources as m
 import portals
 from archive_lock import exclusive_file
 
-PARSERS={key:'parse_'+key for key in ['multi_inside','mimimaid','nekoneko','tsundere','moepedia','dlsite','d_station','lapistan']}
+PARSERS={key:'parse_'+key for key in ['multi_inside','mimimaid','nekoneko','tsundere','moepedia','dlsite','d_station','lapistan','kokoron']}
 
 
 def reparse(store,site='both'):

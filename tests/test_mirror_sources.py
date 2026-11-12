@@ -194,3 +194,24 @@ class LapistanTests(unittest.TestCase):
         self.assertEqual(rows[1]['size_text'],'332.9MB')
         self.assertIsNone(rows[1]['expected_size'])
         self.assertNotEqual(rows[2]['expected_md5'],rows[3]['expected_md5'])
+
+
+class KokoronTests(unittest.TestCase):
+    def test_unclosed_dt_keeps_removed_build_separate(self):
+        from portals import parse_kokoron
+        rows=parse_kokoron(Path('tests/fixtures/kokoron-2008.html').read_text(),'https://web.archive.org/web/20080505083448/http://kokoron.madoka.org/mirror/studio-jyaren.html')
+        self.assertEqual(len(rows),6)
+        self.assertEqual(rows[0]['title'],'電波の奴隷')
+        self.assertEqual(rows[0]['expected_size'],144329601)
+        self.assertEqual(rows[0]['expected_sha256'],'473ff858ea36cc7d1e5c1a91650d846e4f4e3989c4dd21a147634874bc02ab18')
+        self.assertEqual(rows[1]['filename'],rows[2]['filename'])
+        self.assertNotEqual(rows[1]['expected_md5'],rows[2]['expected_md5'])
+        self.assertNotEqual(rows[1]['id'],rows[2]['id'])
+        self.assertEqual(rows[2]['mirrors'],[])
+        self.assertTrue(rows[2]['fields']['removed_link'])
+
+    def test_published_sha256_is_checked(self):
+        from test_archiver import PAYLOAD
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'file.zip';path.write_bytes(PAYLOAD)
+            with self.assertRaisesRegex(ValueError,'SHA-256 mismatch'):a.validate(path,{'expected_sha256':'f'*64})

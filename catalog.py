@@ -141,7 +141,7 @@ def manifest(store):
             "reused_from": r["reused_from"],
             "original_page_url": data.get("original_page_url"), "filename": data["filename"],
             "published_at": data.get("published_at"), "mirrors": data["mirrors"], "expected_md5": data.get("expected_md5"),
-            "expected_size": data.get("expected_size"), "size_text": data.get("size_text"), "fields": data.get("fields", {}),
+            "expected_sha256": data.get("expected_sha256"), "expected_size": data.get("expected_size"), "size_text": data.get("size_text"), "fields": data.get("fields", {}),
             "status": r["status"], "fetched_at": r["fetched_at"], "source_url": r["source_url"], "error": r["error"],
             "attempts": [dict(a) for a in db.execute("SELECT url,attempted_at,error,tls_pin FROM attempts WHERE item_id=? ORDER BY id", (r["id"],))]})
     return {"schema_version": 1, "generated_at": now(), "manufacturers": makers, "products": products,

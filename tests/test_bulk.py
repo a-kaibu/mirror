@@ -85,6 +85,12 @@ class BulkTests(unittest.TestCase):
         self.store.add(record)
         self.assertFalse(bulk.reuse_verified(self.store, self.store.db.execute("SELECT * FROM items WHERE id='c'").fetchone(), "vn-archive", "mirrors"))
 
+    def test_reuse_respects_published_sha256_as_well_as_md5(self):
+        self.add("a");self.mark_public("a")
+        record=self.add("b");record["expected_sha256"]="f"*64;self.store.add(record)
+        row=self.store.db.execute("SELECT * FROM items WHERE id='b'").fetchone()
+        self.assertFalse(bulk.reuse_verified(self.store,row,"vn-archive","mirrors"))
+
     def test_repeat_publish_does_not_redownload_verified_binary(self):
         self.add("a")
         self.mark_public("a")

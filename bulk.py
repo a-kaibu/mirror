@@ -23,6 +23,7 @@ def reuse_verified(store, row, namespace, bucket):
         JOIN products p ON p.id=c.product_id WHERE i.id!=? AND i.md5=? AND p.manufacturer_id=?
         AND i.status IN ('verified','archived') AND i.remote_verified_at IS NOT NULL""", (row["id"], record["expected_md5"], maker[0])).fetchall()
     candidates = [r for r in candidates if publicly_archived(r, namespace, bucket)
+        and (not record.get("expected_sha256") or record["expected_sha256"] == r["sha256"])
         and (record.get("expected_size") is None or record["expected_size"] == r["size"])]
     # A published MD5 is a source association, not a replacement for SHA-256.
     # Only reuse an unambiguous, already fully read-back-verified byte object.
