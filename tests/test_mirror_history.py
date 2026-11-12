@@ -47,3 +47,58 @@ class MirrorHistoryTests(unittest.TestCase):
             self.assertTrue(all(u.startswith('http://web.archive.org/web/') for u in captures))
             never=Mock();self.assertEqual(discover(store,never,source),0);never.open.assert_not_called()
             store.db.close()
+
+
+class HistoricalLinkRetentionTests(unittest.TestCase):
+    def test_removed_link_keeps_checksum_bound_capture_and_its_evidence(self):
+        import copy
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                first=a.parse_detail('<h1>Game</h1><table><tr><th>ブランド</th><td>Brand</td></tr></table><a href="demo.zip">体験版</a>', 'http://source.test/item', 'kokoron')[0]
+                first['expected_md5']='1'*32
+                first['page_url']='http://web.archive.org/web/20100102030405/http://source.test/item'
+                first['mirrors']=['http://web.archive.org/web/20100102030405id_/http://source.test/demo.zip','http://source.test/demo.zip']
+                m.add_record(store,first)
+                removed=copy.deepcopy(first);removed['page_url']='http://web.archive.org/web/20120102030405/http://source.test/item'
+                removed['mirrors']=[];removed['fields']['removed_link']=True
+                m.add_record(store,removed)
+                self.assertEqual(removed['mirrors'],first['mirrors'])
+                proof=removed['fields']['historical_mirror_links']
+                self.assertEqual(proof[0]['page_url'],first['page_url'])
+                self.assertEqual(proof[0]['expected_md5'],'1'*32)
+                self.assertTrue(removed['fields']['removed_link'])
+                m.add_record(store,removed)
+                self.assertEqual(len(removed['fields']['historical_mirror_links']),2)
+            finally:store.db.close()
+
+    def test_builds_and_unchecksummed_links_are_not_combined(self):
+        import copy
+        for checksum in [None,'1'*32]:
+            with self.subTest(checksum=checksum),tempfile.TemporaryDirectory() as tmp:
+                store=a.Store(tmp)
+                try:
+                    first=a.parse_detail('<h1>Game</h1><a href="demo.zip">体験版</a>','http://source.test/item','kokoron')[0]
+                    first['expected_md5']=checksum;m.add_record(store,first)
+                    second=copy.deepcopy(first);second['mirrors']=[]
+                    if checksum:second['expected_md5']='2'*32
+                    m.add_record(store,second)
+                    self.assertEqual(second['mirrors'],[])
+                    if checksum:self.assertNotEqual(second['id'],first['id'])
+                finally:store.db.close()
+
+    def test_existing_source_version_retains_only_its_own_observed_links(self):
+        import copy
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                first=a.parse_detail('<h1>Game</h1><a href="demo.zip">体験版</a>','http://source.test/item','kokoron')[0]
+                first['expected_md5']='1'*32;m.add_record(store,first)
+                second=copy.deepcopy(first);second['expected_md5']='2'*32;second['mirrors']=['http://other.test/new.zip']
+                m.add_record(store,second)
+                removed=copy.deepcopy(first);removed['expected_md5']='2'*32;removed['mirrors']=[]
+                m.add_record(store,removed)
+                self.assertEqual(removed['id'],second['id'])
+                self.assertEqual(removed['mirrors'],['http://other.test/new.zip'])
+                self.assertNotIn(first['mirrors'][0],removed['mirrors'])
+            finally:store.db.close()

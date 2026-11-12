@@ -139,6 +139,29 @@ def add_record(store,record):
             base=record["id"];version=record.get("expected_sha256") or record.get("expected_md5") or str(record["expected_size"])
             record["id"]=hashlib.sha256(("source-version\n"+base+"\n"+version).encode()).hexdigest()
             record["fields"]={**record.get("fields",{}),"source_version_of":base}
+    # Later captures may remove a still-useful historical download link. Retain
+    # those observed URLs only when both records identify the same byte build.
+    selected=store.db.execute("SELECT data,md5,sha256,size FROM items WHERE id=?",(record['id'],)).fetchone()
+    if selected:
+        from catalog import normalized
+        previous=json.loads(selected['data'])
+        hashes={key:selected[column] or previous.get(key) for key,column in [('expected_md5','md5'),('expected_sha256','sha256')]}
+        same_digest=any(value and record.get(key)==value for key,value in hashes.items())
+        consistent=all(not value or not record.get(key) or record[key]==value for key,value in hashes.items())
+        same_identity=(previous.get('site')==record.get('site') and previous.get('filename')==record.get('filename')
+            and normalized(previous.get('brand') or '')==normalized(record.get('brand') or ''))
+        old_size=selected['size'] if selected['size'] is not None else previous.get('expected_size')
+        consistent_size=old_size is None or record.get('expected_size') is None or old_size==record['expected_size']
+        if same_digest and consistent and consistent_size and same_identity:
+            extras=[url for url in previous.get('mirrors',[]) if url not in record['mirrors']]
+            observations=list(record.get('fields',{}).get('historical_mirror_links',[]))
+            observations+=previous.get('fields',{}).get('historical_mirror_links',[])
+            observations+=[{'url':url,'page_url':previous['page_url'],**hashes} for url in extras
+                if not any(entry.get('url')==url for entry in observations)]
+            if observations:
+                unique={(entry['url'],entry['page_url']):entry for entry in observations}
+                record['fields']={**record.get('fields',{}),'historical_mirror_links':list(unique.values())}
+            record['mirrors']=list(dict.fromkeys(record['mirrors']+extras))
     store.add(record)
     return record["id"]
 
