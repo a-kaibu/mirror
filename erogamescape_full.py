@@ -55,6 +55,15 @@ def initialize(db):
     db.row_factory=sqlite3.Row
 
 
+def capture_batch_size(table):
+    # Narrow fixed-width history tables fit comfortably inside the 16 MiB
+    # response bound. The public form still enforces its cost/10-second limit.
+    fixed={'smallint','integer','bigint','boolean','real','double precision','date',
+           'timestamp without time zone','timestamp with time zone'}
+    columns=table['columns']
+    return 5000 if 0<len(columns)<=16 and all(column['type'] in fixed for column in columns) else 500
+
+
 def sqlite_type(column):
     kind=column["type"]
     if kind in {"smallint","integer","bigint","boolean"}:return "INTEGER"
@@ -151,7 +160,7 @@ def capture(db, table, request=e.query, delay=3, max_pages=None):
         where=" WHERE "+" AND ".join(conditions) if conditions else ""
         order=",".join(map(quote,pk)) if pk else "row_to_json(src)::text COLLATE \"C\""
         tail="" if pk else " OFFSET "+str(offset)
-        sql="SELECT json_build_object('id',1,'row',row_to_json(t))::text AS metadata FROM (SELECT src.* FROM "+quote(name)+" src"+where+" ORDER BY "+order+" LIMIT 500"+tail+") t"
+        sql="SELECT json_build_object('id',1,'row',row_to_json(t))::text AS metadata FROM (SELECT src.* FROM "+quote(name)+" src"+where+" ORDER BY "+order+" LIMIT "+str(capture_batch_size(table))+tail+") t"
         try:
             rows,digest=transport(sql,request)
             if rows:

@@ -35,6 +35,45 @@ class FullExportTests(unittest.TestCase):
         self.assertEqual(db.execute("SELECT status FROM _capture_state").fetchone()[0],"complete")
         db.close()
 
+    def test_narrow_pages_resume_without_skipping_when_server_returns_fewer_rows(self):
+        import re
+        db=sqlite3.connect(':memory:');f.initialize(db)
+        table={'table_name':'narrowstats','columns':[column('id','integer')],'primary_key':['id']}
+        limits=[]
+        def request(sql):
+            if 'count(*)' in sql.lower():return count(6001)
+            limits.append(int(re.search(r'LIMIT (\d+)',sql)[1]))
+            match=re.search(r'\("id"\) > \((\d+)\)',sql);cursor=int(match[1]) if match else 0
+            return records([{'id':i} for i in range(cursor+1,min(cursor+1000,6001)+1)])
+        try:
+            f.capture(db,table,request,delay=0,max_pages=1)
+            self.assertEqual(db.execute('SELECT count(*) FROM narrowstats').fetchone()[0],1000)
+            f.capture(db,table,request,delay=0)
+            self.assertEqual(set(limits),{5000})
+            self.assertEqual([r[0] for r in db.execute('SELECT id FROM narrowstats ORDER BY id')],list(range(1,6002)))
+            self.assertEqual(db.execute('SELECT status,source_count FROM _capture_state').fetchone()[:],('complete',6001))
+        finally:db.close()
+
+    def test_text_numeric_and_wide_rows_keep_conservative_pages(self):
+        import re
+        variants=[[column('id','integer'),column('text')],
+                  [column('id','integer'),column('amount','numeric')],
+                  [column('id','integer')]+[column('field'+str(i),'integer') for i in range(16)]]
+        for columns in variants:
+            with self.subTest(columns=len(columns)):
+                db=sqlite3.connect(':memory:');f.initialize(db);limits=[]
+                table={'table_name':'widestats','columns':columns,'primary_key':['id']}
+                row={c['name']:1 for c in columns}
+                def request(sql):
+                    if 'count(*)' in sql.lower():return count(1)
+                    limits.append(int(re.search(r'LIMIT (\d+)',sql)[1]))
+                    return records([] if ' > ' in sql else [row])
+                try:
+                    f.capture(db,table,request,delay=0)
+                    self.assertEqual(set(limits),{500})
+                    self.assertEqual(db.execute('SELECT status FROM _capture_state').fetchone()[0],'complete')
+                finally:db.close()
+
     def test_no_primary_key_preserves_identical_rows_and_offset(self):
         db=sqlite3.connect(":memory:");f.initialize(db)
         table={"table_name":"stats","columns":[column("value")],"primary_key":None}

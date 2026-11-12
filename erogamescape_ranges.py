@@ -133,7 +133,7 @@ def _capture_ranges(db, table, request=f.e.query, delay=3, max_pages=None):
         public=f.public_filter(table)
         if public:conditions.append(public)
         if cursor:conditions.append("("+",".join(map(f.quote,pk))+") > ("+",".join(map(f.literal,cursor))+")")
-        sql=("SELECT json_build_object('id',1,'row',row_to_json(t))::text AS metadata FROM (SELECT src.* FROM "+f.quote(name)+" src WHERE "+" AND ".join(conditions)+" ORDER BY "+",".join(map(f.quote,pk))+" LIMIT 500) t")
+        sql=("SELECT json_build_object('id',1,'row',row_to_json(t))::text AS metadata FROM (SELECT src.* FROM "+f.quote(name)+" src WHERE "+" AND ".join(conditions)+" ORDER BY "+",".join(map(f.quote,pk))+" LIMIT "+str(f.capture_batch_size(table))+") t")
         try:
             rows,digest=f.transport(sql,request)
             if rows:
