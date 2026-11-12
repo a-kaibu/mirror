@@ -26,10 +26,9 @@ def reuse_verified(store, row, namespace, bucket):
     if len({r["sha256"] for r in candidates}) != 1:
         return False
     prior = candidates[0]
-    store.update(row["id"], status="archived", path=None, md5=prior["md5"], sha256=prior["sha256"], size=prior["size"],
+    return store.update_if_current(row["id"], row["data"], status="archived", path=None, md5=prior["md5"], sha256=prior["sha256"], size=prior["size"],
         remote_key=prior["remote_key"], remote_sha256=prior["remote_sha256"], remote_verified_at=prior["remote_verified_at"],
         reused_from=prior["id"], error=None)
-    return True
 
 
 def evict_verified(store, ident, namespace, bucket):
@@ -59,9 +58,13 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
         from catalog import release_info
         kind = release_info(record)[0]
         return (0 if kind in {"trial", "patch"} else 1, record.get("expected_size") or 2**63, row["id"])
-    for row in sorted(store.rows(site), key=priority):
-        if row["status"] == "failed" and not retry_failed:
-            continue
+    visited = set()
+    while True:
+        candidates = [r for r in store.rows(site) if r["id"] not in visited and (retry_failed or r["status"] != "failed")]
+        if not candidates:
+            break
+        row = min(candidates, key=priority)
+        visited.add(row["id"])
         if publicly_archived(row, namespace, bucket) and row["status"] in {"verified", "archived"}:
             if not keep_local:
                 stats["evicted_bytes"] += evict_verified(store, row["id"], namespace, bucket)

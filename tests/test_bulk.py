@@ -92,6 +92,21 @@ class BulkTests(unittest.TestCase):
             self.assertEqual(a.publish(self.store, "vn-archive", "mirrors", metadata=False), 0)
         read.assert_not_called()
 
+    def test_newly_crawled_small_files_join_running_batch(self):
+        a_record=self.add("a");a_record["expected_size"]=10;self.store.add(a_record)
+        b_record=self.add("b");b_record["expected_size"]=20;self.store.add(b_record)
+        order=[]
+        def transfer(store,fetcher,site,ident=None,**kw):
+            order.append(ident)
+            if ident=="a":
+                fresh=self.add("c");fresh["expected_size"]=5;self.store.add(fresh)
+            self.store.update(ident,status="failed")
+            return 1
+        with patch.object(bulk,"download",side_effect=transfer),patch.object(bulk,"publish_metadata"):
+            stats=bulk.archive_batch(self.store,Fetch([]),reserve_bytes=0)
+        self.assertEqual(order,["a","c","b"])
+        self.assertEqual(stats["failed"],3)
+
     def test_working_primary_is_tried_before_timing_out_secondary(self):
         record = self.add("a")
         record["mirrors"] = ["http://storage2.lathercraft.net/file.zip", "https://storage1.lathercraft.net/file.zip"]

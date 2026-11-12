@@ -74,3 +74,33 @@ class ConcurrentCollectionTests(unittest.TestCase):
             self.assertIsNone(row["remote_sha256"])
             self.assertTrue((store.root/row["path"]).exists())
             store.db.close()
+
+    def test_parallel_metadata_bounds_requests_and_stages_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);store.add(self.record("a"))
+            (store.root/"html").mkdir()
+            for i in range(7):
+                path=f"html/{i}.html";(store.root/path).write_text(f"source {i}")
+                store.db.execute("INSERT INTO pages(url,path,status) VALUES(?,?,?)",(f"https://source.test/{i}",path,"ok"))
+            store.db.commit()
+            client=Mock();objects={};lock=threading.Lock();barrier=threading.Barrier(4)
+            state={"active":0,"peak":0,"arrivals":0}
+            def upload(path,bucket,key,**kwargs):
+                if key=="index.sqlite3":
+                    objects[key]=Path(path).read_bytes();return
+                with lock:
+                    index=state["arrivals"];state["arrivals"]+=1
+                    state["active"]+=1;state["peak"]=max(state["peak"],state["active"])
+                try:
+                    if index<4:barrier.wait(5)
+                    if key=="manifest.json":(store.root/"manifest.json").write_text("concurrent replacement")
+                    objects[key]=Path(path).read_bytes()
+                finally:
+                    with lock:state["active"]-=1
+            client.upload_file.side_effect=upload
+            with patch.object(a,"s3_client",return_value=client),patch.object(a,"public_digest",side_effect=lambda ns,bucket,key:(hashlib.sha256(objects[key]).hexdigest(),len(objects[key]))):
+                a.publish_metadata(store,"vn-archive","mirrors")
+            self.assertEqual(state["peak"],4)
+            self.assertEqual(len(json.loads(objects["manifest.json"])["files"]),1)
+            self.assertEqual(store.db.execute("SELECT count(*) FROM published_objects").fetchone()[0],8)
+            store.db.close()

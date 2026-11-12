@@ -23,6 +23,7 @@ import tempfile
 import time
 import tomllib
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
@@ -752,18 +753,52 @@ def publish_metadata(store, namespace, bucket, profile="hf"):
     # partial files, or arbitrary files from the workspace.
     provenance = [store.root / "manifest.json"]
     provenance += [store.root / r[0] for r in store.db.execute("SELECT path FROM pages WHERE path IS NOT NULL")]
-    for path in dict.fromkeys(provenance):
+    known = {r[0]: r[1] for r in store.db.execute("SELECT key,sha256 FROM published_objects")}
+    paths = iter(dict.fromkeys(provenance))
+
+    def send(path):
         key = path.relative_to(store.root).as_posix()
-        expected = digest(path)
         identity = f"{namespace}/{bucket}/{key}"
-        previous = store.db.execute("SELECT sha256 FROM published_objects WHERE key=?", (identity,)).fetchone()
-        if previous and previous[0] == expected["sha256"]:
-            continue
-        client.upload_file(str(path), bucket, key, Config=config)
-        if public_digest(namespace, bucket, key) != (expected["sha256"], expected["size"]):
-            raise ValueError(f"public provenance read-back mismatch: {key}")
-        store.db.execute("INSERT OR REPLACE INTO published_objects VALUES(?,?,?,?)", (identity, expected["sha256"], expected["size"], now()))
-        store.db.commit()
+        # The crawler can atomically replace a manifest while it is being sent.
+        # Upload an immutable staging copy and verify those exact bytes.
+        with tempfile.TemporaryDirectory(prefix="mirror-provenance-") as tmp:
+            staged = Path(tmp) / "artifact"
+            shutil.copyfile(path, staged)
+            expected = digest(staged)
+            if known.get(identity) == expected["sha256"]:
+                return None
+            client.upload_file(str(staged), bucket, key, Config=config)
+            if public_digest(namespace, bucket, key) != (expected["sha256"], expected["size"]):
+                raise ValueError(f"public provenance read-back mismatch: {key}")
+            return identity, expected["sha256"], expected["size"], now()
+
+    # Boto clients support shared use by threads. Only this main thread writes
+    # SQLite, and at most four remote objects are in flight at a time.
+    count = 0
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        pending = set()
+        for _ in range(4):
+            path = next(paths, None)
+            if path is not None:
+                pending.add(pool.submit(send, path))
+        try:
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    result = future.result()
+                    if result:
+                        store.db.execute("INSERT OR REPLACE INTO published_objects VALUES(?,?,?,?)", result)
+                        store.db.commit()
+                        count += 1
+                        if count % 50 == 0:
+                            print(f"metadata: {count} new objects verified", flush=True)
+                    path = next(paths, None)
+                    if path is not None:
+                        pending.add(pool.submit(send, path))
+        except BaseException:
+            for future in pending:
+                future.cancel()
+            raise
     # Consistent SQLite backup, not a copy of a live DB/WAL. Pages builds derive
     # HTML and their single JSON export from this same source of truth.
     with tempfile.TemporaryDirectory() as tmp:
