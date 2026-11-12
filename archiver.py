@@ -379,14 +379,22 @@ class Fetcher:
 
     def open(self, url, headers=None):
         self.last_tls_pin = None
-        if urlsplit(url).scheme not in {"http", "https"}:
+        parts=urlsplit(url)
+        if parts.scheme not in {"http", "https"}:
             raise ValueError("only HTTP(S) URLs are supported")
+        if re.search(r"[\x00-\x1f\x7f]",url):
+            raise ValueError("control characters in source URL")
+        # Publishers sometimes leave spaces or Japanese characters unescaped.
+        # Encode only the wire URL; source metadata and existing escapes remain.
+        transport_url=urlunsplit((parts.scheme,parts.netloc,
+            quote(parts.path,safe="/%:@!$&'()*+,;=-._~"),
+            quote(parts.query,safe="%/?@:!$&'()*+,;=-._~"),""))
         for attempt in range(self.retries):
             current = time.monotonic()
             time.sleep(max(0, self.delay - (current - self.last), self.not_before - current))
             self.last = time.monotonic()
             try:
-                return self.opener.open(Request(url, headers={"User-Agent": "VN-Mirror-Archiver/0.1 (cultural preservation)",
+                return self.opener.open(Request(transport_url, headers={"User-Agent": "VN-Mirror-Archiver/0.1 (cultural preservation)",
                     "Accept-Encoding": "identity", **(headers or {})}), timeout=self.timeout)
             except HTTPError as e:
                 if e.code not in {408, 429, 500, 502, 503, 504}:

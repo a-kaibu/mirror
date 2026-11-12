@@ -77,3 +77,15 @@ class WaybackTransportTests(unittest.TestCase):
                 fetch=Fetch([error])
                 with self.assertRaises(type(error)):a.open_archive_page(fetch,target)
                 self.assertEqual(len(fetch.requests),1)
+
+    def test_request_encodes_published_spaces_and_unicode_without_double_escaping(self):
+        from unittest.mock import Mock
+        fetch=a.Fetcher(delay=0,retries=1)
+        fetch.opener=Mock()
+        url='http://publisher.test/MATERIAL MEL/日本語%20trial.zip?file=体験版+1&sig=a%2Fb'
+        fetch.open(url,{'Range':'bytes=10-'})
+        request=fetch.opener.open.call_args.args[0]
+        self.assertEqual(request.full_url,'http://publisher.test/MATERIAL%20MEL/%E6%97%A5%E6%9C%AC%E8%AA%9E%20trial.zip?file=%E4%BD%93%E9%A8%93%E7%89%88+1&sig=a%2Fb')
+        self.assertEqual(request.get_header('Range'),'bytes=10-')
+        with self.assertRaises(ValueError):fetch.open('http://publisher.test/file\n.zip')
+        self.assertEqual(fetch.opener.open.call_count,1)
