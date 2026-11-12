@@ -250,3 +250,20 @@ The HF copy is fully read back and checked by SHA-256 and byte count.
 
 `manifest.json` is generated locally and deployed with GitHub Pages. It is never
 uploaded to HF. The archive catalog backup on HF is `index.sqlite3`.
+
+## Publisher trial collection
+
+`python official.py` scans official product/trial pages for brands matched to the
+ErogameScape catalog. It prioritizes catalog entries with trial URLs, follows
+same-host download/support links within the product directory, and stores every
+fetched HTML page. Direct trials, patches and movie links enter the existing
+SQLite catalog as `site=official`; CDN links explicitly present in source HTML
+are supported. Published digests are attached only within a single-file context.
+Publisher flyers, banners and wallpapers are outside this scan's scope.
+
+`official_scans` records per-game results. Unknown binary links, failed pages,
+and traversal bounds require review; a page without direct links is not evidence
+that every possible distribution mechanism was supported. `--retry` retries review
+entries. `--limit N` permits bounded validation. Existing completed scans resume
+without re-fetching their pages. Ordinary archive batches can process these new
+records, retaining the original page and ErogameScape IDs as provenance.
