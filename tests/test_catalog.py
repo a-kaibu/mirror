@@ -115,6 +115,21 @@ class CatalogTests(unittest.TestCase):
         self.store.update("b", sha256="b" * 64)
         self.assertEqual(len(self.store.export()["files"]), 3)
 
+    def test_mirror_updates_keep_bytes_matching_current_published_digest(self):
+        record = self.record("a")
+        self.store.add(record)
+        a.download(self.store, Fetch([Response(PAYLOAD)]))
+        sha = hashlib.sha256(PAYLOAD).hexdigest()
+        self.store.update("a", remote_sha256=sha, remote_key="vn-archive/mirrors/files/" + sha, remote_verified_at=a.now())
+        record["mirrors"].append("https://new-mirror.test/file.zip")
+        self.store.add(record)
+        self.assertEqual(self.store.rows()[0]["status"], "verified")
+        self.assertEqual(self.store.rows()[0]["remote_sha256"], sha)
+        record["expected_md5"] = "f" * 32
+        self.store.add(record)
+        self.assertEqual(self.store.rows()[0]["status"], "pending")
+        self.assertIsNone(self.store.rows()[0]["remote_sha256"])
+
     def test_public_link_requires_public_verification(self):
         self.store.add(self.record("a"))
         sha = "a" * 64
