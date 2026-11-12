@@ -73,3 +73,35 @@ def parse_multi_inside(html,page):
             "expected_size":None,"size_text":size[1] if size else None,"published_at":dates[0] if dates else None,
             "fields":{"parser":"multi_inside","size_is_rounded":True}})
     return result
+
+
+def parse_mimimaid(html,page):
+    if urlsplit(a.original(page)).hostname!="mimimaid.moe.hm":return []
+    root=a.DOM(html).root
+    heads=list(root.all({"title"}))
+    if not heads or "みみめいど" not in heads[0].text():return []
+    brand=heads[0].text().split("|")[0].strip().lstrip("■").strip()
+    results=[]
+    for heading in root.all({"span"}):
+        if "style9" not in heading.attrs.get("class", "").split():continue
+        title=heading.text();group=heading.parent
+        while group.parent and group.tag!="table":group=group.parent
+        for block in group.all({"table"}):
+            if block.attrs.get("width")!="700":continue
+            fields=a.labels(block)
+            if not fields.get("素材名"):continue
+            text=block.text();digest=re.search(r"MD5[：:]\s*([a-fA-F0-9]{32})",text)
+            size=re.search(r"\(([0-9,]+)\s*バイト\)",text)
+            date=re.search(r"\d{4}/\d{2}/\d{2}",fields.get("公開日", ""))
+            for link in block.all({"a"}):
+                target=a.resolve(page,link.attrs.get("href", ""))
+                if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
+                raw=a.original(target);filename=unquote(Path(urlsplit(raw).path).name)
+                stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+                mirrors=([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw]
+                ident=hashlib.sha256(("mimimaid\n"+a.original(page)+"\n"+filename).encode()).hexdigest()
+                results.append({"id":ident,"site":"mimimaid","page_url":page,"original_page_url":a.original(page),
+                    "title":title,"brand":brand,"release_name":fields["素材名"],"filename":filename,"mirrors":mirrors,
+                    "expected_md5":digest[1].lower() if digest else None,"expected_size":int(size[1].replace(",", "")) if size else None,
+                    "size_text":fields.get("ファイルサイズ"),"published_at":date[0].replace("/","-") if date else None,"fields":fields})
+    return list({r["id"]:r for r in results}.values())

@@ -25,6 +25,17 @@ class MirrorSourcesTests(unittest.TestCase):
         self.assertTrue(all("_gl=" not in r["mirrors"][0] for r in result))
         self.assertEqual(parse_moepedia(html,"https://moepedia.net/trial/"),[])
 
+    def test_getchu_seeds_accept_source_text_ids_and_reject_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);m.initialize(store)
+            store.db.execute("CREATE TABLE external_metadata(provider TEXT,entity TEXT,external_id TEXT,data TEXT)")
+            for ident,value in enumerate(["1493",1234,"../bad",None,True,"0"]):
+                store.db.execute("INSERT INTO external_metadata VALUES(?,?,?,?)",("erogamescape","game",str(ident),json.dumps({"comike":value})))
+            store.db.commit();m.seed_platform(store,m.definitions()["getchu"],"live")
+            urls={r[0] for r in store.db.execute("SELECT url FROM mirror_frontier")}
+            self.assertEqual(urls,{"https://www.getchu.com/soft.phtml?id=1493","https://www.getchu.com/soft.phtml?id=1234"})
+            store.db.close()
+
     def test_capture_host_is_validated(self):
         payload={"archived_snapshots":{"closest":{"available":True,"status":"200","url":"https://web.archive.org/web/20180101000000/http://evil.test/"}}}
         with self.assertRaises(ValueError):m.availability(Fetch([Response(json.dumps(payload).encode())]),"http://suezou.dyndns.org/",m.definitions()["suezou"])
@@ -67,3 +78,17 @@ class MultiInsideTests(unittest.TestCase):
         self.assertIsNone(records[1]["expected_size"])
         self.assertEqual(records[1]["size_text"],"471MB")
         self.assertEqual(len(records[1]["mirrors"]),6)
+
+
+class MimimaidTests(unittest.TestCase):
+    def test_real_tables_keep_each_product_and_exact_bytes(self):
+        from portals import parse_mimimaid
+        html=Path("tests/fixtures/mimimaid.html").read_text()
+        rows=parse_mimimaid(html,"https://web.archive.org/web/20110609095446/http://mimimaid.moe.hm/html/x18/studio-jyaren/index.htm")
+        self.assertEqual(len(rows),10)
+        self.assertEqual(rows[0]["title"],"操心術0")
+        self.assertEqual(rows[0]["expected_size"],493430161)
+        self.assertEqual(rows[0]["expected_md5"],"c1b79bcf1f0d79ec2ec8102f884f8575")
+        self.assertEqual(rows[0]["release_name"],"体験版")
+        self.assertEqual(rows[-1]["title"],"操心術３")
+        self.assertEqual(rows[-1]["expected_size"],112673502)

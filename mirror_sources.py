@@ -61,7 +61,7 @@ def seed_platform(store,source,mode):
     rows=store.db.execute("SELECT data FROM external_metadata WHERE provider='erogamescape' AND entity='game' ORDER BY external_id DESC").fetchall()
     for row in rows:
         game=json.loads(row[0]);url=None
-        if key=="getchu" and type(game.get("comike")) is int and game["comike"]>0:
+        if key=="getchu" and re.fullmatch(r"[0-9]+",str(game.get("comike", ""))) and int(game["comike"])>0:
             url=f"https://www.getchu.com/soft.phtml?id={game['comike']}"
         elif key=="dmm" and game.get("dmm"):
             trial=game.get("trial_url") or ""
@@ -173,6 +173,12 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
             if source["key"]=="multi_inside":
                 from portals import parse_multi_inside
                 for record in parse_multi_inside(html,actual):
+                    store.add(record);matched+=1
+                    for link in record["mirrors"]:
+                        store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
+            if source["key"]=="mimimaid":
+                from portals import parse_mimimaid
+                for record in parse_mimimaid(html,actual):
                     store.add(record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
