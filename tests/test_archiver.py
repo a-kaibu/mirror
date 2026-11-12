@@ -78,6 +78,18 @@ class ParserTests(unittest.TestCase):
         html = '<meta charset="Shift_JIS">体験版'
         self.assertEqual(a.decode_html(html.encode("cp932")), html)
 
+    def test_replay_scripts_do_not_override_publisher_encoding(self):
+        prefix = b'<script charset="utf-8" src="wombat.js"></script>' + b' ' * 9000
+        publisher = '<meta http-equiv="Content-Type" content="text/html; charset=EUC-JP"><a href="demo.zip">体験版をダウンロード</a>'.encode('euc_jp')
+        # Injected Unicode outside the publisher encoding prevents strict decode.
+        toolbar = '<aside>📅</aside>'.encode('utf-8')
+        decoded = a.decode_html(prefix + publisher + toolbar, 'utf-8')
+        self.assertIn('体験版をダウンロード', decoded)
+        self.assertIn('href="demo.zip"', decoded)
+
+    def test_unknown_document_charset_falls_back(self):
+        self.assertIn('体験版', a.decode_html('<meta charset="unknown-encoding">体験版'.encode()))
+
     def test_no_download_is_empty(self):
         self.assertEqual(a.parse_detail("<a href='/'>home</a>", "https://example.com/item", "lathercraft"), [])
 

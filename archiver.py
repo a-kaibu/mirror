@@ -144,13 +144,29 @@ class DOM(HTMLParser):
 
 
 def decode_html(data, charset=None):
-    meta = re.search(br"charset\s*=\s*[\"']?([A-Za-z0-9_-]+)", data[:8192], re.I)
-    for encoding in dict.fromkeys([charset, meta[1].decode() if meta else None, "utf-8", "cp932", "euc_jp"]):
+    # Script charset attributes describe external scripts, not this document.
+    # Replay injections can also push the publisher's declaration past 8 KiB.
+    meta = next((match for tag in re.finditer(br"<meta\b[^>]*>", data[:256*1024], re.I)
+                 if (match := re.search(br"charset\s*=\s*[\"']?([A-Za-z0-9_-]+)", tag[0], re.I))), None)
+    declared = meta[1].decode() if meta else None
+    for encoding in dict.fromkeys([charset, declared]):
         if encoding:
             try:
                 return data.decode(encoding)
             except (UnicodeError, LookupError):
                 pass
+    # Wayback inserts UTF-8 toolbar text into legacy-encoded documents. When
+    # no strict decoder succeeds, retain publisher text using its declaration.
+    if declared:
+        try:
+            return data.decode(declared, errors="replace")
+        except LookupError:
+            pass
+    for encoding in ("utf-8", "cp932", "euc_jp"):
+        try:
+            return data.decode(encoding)
+        except UnicodeError:
+            pass
     return data.decode("utf-8", errors="replace")
 
 
