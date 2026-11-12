@@ -204,6 +204,37 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
     store.export();return processed,found
 
 
+class SharedArchiveFetcher:
+    """Serialize archive request starts, preserving a single Retry-After state."""
+    def __init__(self,fetcher):
+        import threading
+        self.fetcher=fetcher;self.lock=threading.Lock()
+
+    def open(self,url,headers=None):
+        with self.lock:return self.fetcher.open(url,headers)
+
+
+def parallel_crawl(root,sources,mode="auto",max_pages=100):
+    from concurrent.futures import ThreadPoolExecutor,as_completed
+    from archive_lock import exclusive_file
+    archive=SharedArchiveFetcher(a.Fetcher(delay=10,timeout=25,retries=2))
+    def collect(source):
+        selected=("live" if source["adapter"]=="platform" else "archive") if mode=="auto" else mode
+        fetcher=a.Fetcher(delay=3,timeout=25,retries=2) if selected=="live" else archive
+        with exclusive_file(Path(root)/".claims"/("discovery-"+source["key"]+".lock")):
+            store=a.Store(root)
+            try:return crawl(store,source,fetcher,selected,max_pages)
+            finally:store.db.close()
+    results={}
+    with ThreadPoolExecutor(max_workers=max(1,len(sources)),thread_name_prefix="mirror") as pool:
+        jobs={pool.submit(collect,source):source["key"] for source in sources}
+        for job in as_completed(jobs):
+            key=jobs[job]
+            try:results[key]=job.result();print("mirror coverage",key,results[key],flush=True)
+            except Exception as error:results[key]=str(error);print("mirror worker failed",key,error,flush=True)
+    return results
+
+
 if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root",default="archive");parser.add_argument("--site",choices=["all",*definitions()],default="all")
@@ -213,19 +244,6 @@ if __name__=="__main__":
         initialize(store)
         sources=[source for key,source in definitions().items()
             if args.site==key or (args.site=="all" and source["adapter"]!="native")]
-        # Share host pacing/Retry-After state and rotate sources after each page.
-        # A large catalogue must not delay the first pass over every other site.
-        fetcher=a.Fetcher(delay=10,timeout=25,retries=2)
-        totals={source["key"]:[0,0] for source in sources}
-        active=list(sources)
-        while active:
-            following=[]
-            for source in active:
-                key=source["key"]
-                mode=("live" if source["adapter"]=="platform" else "archive") if args.mode=="auto" else args.mode
-                processed,found=crawl(store,source,fetcher,mode,1)
-                totals[key][0]+=processed;totals[key][1]+=found
-                print("mirror coverage",key,totals[key],flush=True)
-                if processed and totals[key][0]<args.max_pages:following.append(source)
-            active=following
+        store.db.close()
+        parallel_crawl(args.root,sources,args.mode,args.max_pages)
     finally:store.db.close()

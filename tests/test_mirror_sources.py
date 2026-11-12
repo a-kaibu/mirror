@@ -120,3 +120,18 @@ class TsundereTests(unittest.TestCase):
         self.assertEqual(rows[0]["expected_size"],119132956)
         self.assertEqual(rows[0]["expected_md5"],"73bc3af33bf4227f2297fd68127393e9")
         self.assertEqual(len(rows[0]["mirrors"]),2)
+
+
+class ParallelDiscoveryTests(unittest.TestCase):
+    def test_sites_run_concurrently_with_separate_sqlite_connections(self):
+        import threading
+        barrier=threading.Barrier(2,timeout=5);connections=[]
+        def crawl(store,source,fetcher,mode,max_pages):
+            connections.append(store.db)
+            store.db.execute("SELECT count(*) FROM items").fetchone()
+            barrier.wait()
+            return 1,0
+        with tempfile.TemporaryDirectory() as tmp,patch.object(m,"crawl",side_effect=crawl):
+            result=m.parallel_crawl(tmp,[m.definitions()[key] for key in ["getchu","dmm"]],max_pages=1)
+            self.assertEqual(result,{"getchu":(1,0),"dmm":(1,0)})
+            self.assertEqual(len({id(c) for c in connections}),2)
