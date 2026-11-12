@@ -344,3 +344,23 @@ Original schema, timestamp, README and all supplied licenses are embedded in
 The SQLite file is published as `vndb.sqlite3` and anonymously read back in full.
 This is the official public dump scope; content omitted by VNDB is not reconstructed.
 When refreshing, replace the complete snapshot so deleted/opted-out rows are removed.
+
+### Continuous discovery and acquisition
+
+`python mirror_sources.py --site all --max-pages 10000` runs independent workers
+for every additional source. Archive HTML requests share pacing and Retry-After
+state within the process. Live platform sessions have separate cookie jars.
+`python mirror_history.py --site lapistan` queues distinct historical HTML bodies
+from CDX, including captures before closure. Explicit dated frontier URLs preserve
+their replay date when following navigation.
+
+`python mirror_reparse.py --watch` checks saved HTML every minute with fresh parser
+code. Parser/source fingerprints avoid repeating unchanged work. No network
+requests are needed for reanalysis. Different MD5/size builds keep separate records.
+
+`python archive_watch.py` watches acquisition queues for all additional sources,
+with one independent worker per source. Existing body workers can finish safely
+because record claims prevent duplicate transfers. Empty queues do not publish
+metadata repeatedly. Failed sources retry immediately only when a new, untried
+Wayback binary capture appears; publication failures retain local verified files
+and retry after cooldown. Native/core batches remain separately managed.
