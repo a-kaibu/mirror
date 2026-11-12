@@ -72,3 +72,22 @@ class OfficialTests(unittest.TestCase):
         self.assertEqual(len(list(root.all({"a"}))),1)
         records,_=o.parse(html,PAGE,GAME,BRAND)
         self.assertEqual(len(records),1)
+
+    def test_trial_container_identifies_image_only_download(self):
+        html='<div id="box_special_trial_dlf"><a href="waffle_0171t.zip"><img src="button.png"></a></div>'
+        records,unknown=o.parse(html,PAGE,GAME,BRAND)
+        self.assertEqual(len(records),1);self.assertEqual(records[0]["release_name"],"体験版")
+        self.assertEqual(unknown,[])
+
+    def test_iframe_news_hint_and_asset_exclusion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);o.initialize(store)
+            start=b'<a href="download.html">Download</a><a href="download.html">Trial available</a><iframe src="iframe-download_trial.html"></iframe><a href="images/download/photo.jpg">Download</a><a href="download/leaflet.pdf">Download</a>'
+            direct=b'<div class="patchbox"><a href="fanzagames_0181t.zip">Download</a></div>'
+            frame=b'<a href="waffle_0171t.zip">Download</a>'
+            seed='https://key.visualarts.co.jp/anemoi/index.html'
+            fetch=Fetch([Response(start,url=seed),Response(direct,url=PAGE),Response(frame,url='https://key.visualarts.co.jp/anemoi/iframe-download_trial.html')])
+            self.assertEqual(o.scan(store,fetch,GAME,BRAND,seed),2)
+            self.assertEqual(len(fetch.requests),3)
+            self.assertTrue(all(__import__('json').loads(row["data"])["release_name"]=="体験版" for row in store.rows()))
+            store.db.close()

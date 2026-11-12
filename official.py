@@ -30,13 +30,17 @@ def binary_links(node, page):
     return result
 
 
-def parse(html, page, game, brand, scoped=True):
+def parse(html, page, game, brand, scoped=True, hint=None):
     root=a.DOM(html).root
     records={}
     unsupported=[]
+    filenames={unquote(urlsplit(u).path.rsplit("/",1)[-1]) for _,u in binary_links(root,page)}
     for link,target in binary_links(root,page):
         filename=unquote(urlsplit(target).path.rsplit("/",1)[-1])
-        describe=lambda n: " ".join([n.text(),n.attrs.get("title","")]+[img.attrs.get("alt","") for img in n.all({"img"})])
+        def describe(n):
+            marker=" ".join([n.attrs.get("id",""),n.attrs.get("class","")])
+            trial=" 体験版" if re.search(r"(?<![a-z])trial(?![a-z])",marker,re.I) else ""
+            return " ".join([n.text(),n.attrs.get("title","")]+[img.attrs.get("alt","") for img in n.all({"img"})])+trial
         context=describe(link);node=link.parent
         while node is not None and node.tag not in {"body","html","root"}:
             text=describe(node)
@@ -47,8 +51,10 @@ def parse(html, page, game, brand, scoped=True):
             node=node.parent
         label=context+" "+filename
         kind=release_info({"title":label,"filename":filename})[0]
-        if kind=="other" and re.search(r"フライヤー|チラシ|バナー|壁紙|アイコン|ポスター|banner|wallpaper|flyer",context,re.I):
+        if kind=="other" and re.search(r"フライヤー|チラシ|バナー|壁紙|アイコン|ポスター|説明書|セーブ|banner|wallpaper|flyer|manual",label,re.I):
             continue  # Publisher scan targets trials, patches and movies.
+        if kind=="other" and hint in KINDS and hint!="other" and len(filenames)==1:
+            kind=hint
         if kind=="other" or (not scoped and normalized(game["gamename"]) not in normalized(context)):
             unsupported.append(target);continue
         key=hashlib.sha256(("official\n"+page+"\n"+filename).encode()).hexdigest()
@@ -84,6 +90,7 @@ def seeds(store):
 
 def scan(store, fetcher, game, brand, seed, max_pages=20):
     queue=deque([(seed,0)]);seen=set();found=0;failures=[];unclassified=[]
+    hints={seed: {"trial"}} if game.get("trial_url") and a.canonical(game["trial_url"])==seed else {}
     while queue and len(seen)<max_pages:
         url,depth=queue.popleft()
         if url in seen:continue
@@ -101,7 +108,9 @@ def scan(store, fetcher, game, brand, seed, max_pages=20):
             home_path=urlsplit(game.get("shoukai") or "").path
             product_folder=home_path if home_path.endswith("/") else home_path.rsplit("/",1)[0]+"/"
             scoped=product_folder not in {"","/"} and base.path.startswith(product_folder)
-            records,unknown=parse(html,actual,game,brand,scoped=scoped)
+            options=hints.get(url,set())
+            hint=next(iter(options)) if len(options)==1 else None
+            records,unknown=parse(html,actual,game,brand,scoped=scoped,hint=hint)
             unclassified.extend(unknown)
             for record in records:
                 prior=store.db.execute("SELECT data FROM items WHERE id=?",(record["id"],)).fetchone()
@@ -110,11 +119,15 @@ def scan(store, fetcher, game, brand, seed, max_pages=20):
                 store.add(record)
             found+=len(records)
             if depth<2:
-                for link in a.DOM(html).root.all({"a"}):
-                    target=a.resolve(actual,link.attrs.get("href",""))
+                for link in a.DOM(html).root.all({"a","iframe","frame"}):
+                    target=a.resolve(actual,link.attrs.get("href") or link.attrs.get("src", ""))
                     if not target or BINARY.search(urlsplit(target).path):continue
                     parts=urlsplit(target)
-                    if parts.hostname==base.hostname and parts.path.startswith(folder) and NAVIGATION.search(link.text()+" "+parts.path):
+                    extension=Path(parts.path).suffix.lower()
+                    if extension not in {"",".html",".htm",".php",".cgi",".asp",".aspx"}:continue
+                    if parts.hostname==base.hostname and parts.path.startswith(folder) and (link.tag in {"iframe","frame"} or NAVIGATION.search(link.text()+" "+parts.path)):
+                        kind=release_info({"title":link.text()+" "+parts.path.rsplit("/",1)[-1],"filename":""})[0]
+                        if kind!="other":hints.setdefault(target,set()).add(kind)
                         queue.append((target,depth+1))
         except (OSError,ValueError,http.client.HTTPException) as error:
             failures.append({"url":url,"error":str(error)})
