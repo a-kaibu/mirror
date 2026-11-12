@@ -628,8 +628,9 @@ def crawl(store, fetcher, site, seed, max_pages=None, max_items=None, export=Tru
                             queue.append(link)
             if detail:
                 records = parse_detail(html, effective_url, site)
+                from mirror_sources import add_record
                 for record in records:
-                    store.add(record)
+                    add_record(store, record)
                 if not records:
                     raise ValueError("no downloadable links recognized; saved HTML needs parser review")
                 print(f"{site}: {len(records)} file(s) {url}")

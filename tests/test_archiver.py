@@ -44,6 +44,33 @@ class Fetch:
         return r
 
 
+class NativeHistoryTests(unittest.TestCase):
+    def test_changed_historical_build_keeps_published_original(self):
+        url="https://www.lathercraft.net/items/1"
+        changed_md5="a"*32
+        with tempfile.TemporaryDirectory() as root:
+            store=a.Store(root)
+            a.crawl(store,Fetch([Response(HTML.encode(),url=url)]),"lathercraft",url,export=False)
+            original=store.db.execute("SELECT * FROM items").fetchone()
+            sha="b"*64
+            store.db.execute("UPDATE items SET status='archived',md5=?,sha256=?,remote_key=?,remote_sha256=?,remote_verified_at=? WHERE id=?",
+                (MD5,sha,"files/"+sha,sha,a.now(),original['id']))
+            store.db.commit()
+            a.crawl(store,Fetch([Response(HTML.replace(MD5,changed_md5).encode(),url=url)]),"lathercraft",url,export=False)
+            rows=store.db.execute("SELECT * FROM items ORDER BY status").fetchall()
+            self.assertEqual(len(rows),2)
+            archived=next(r for r in rows if r['id']==original['id'])
+            self.assertEqual(archived['status'],'archived')
+            self.assertEqual(archived['remote_sha256'],sha)
+            self.assertEqual(json.loads(archived['data'])['expected_md5'],MD5)
+            variant=next(r for r in rows if r['id']!=original['id'])
+            self.assertEqual(variant['status'],'pending')
+            self.assertEqual(json.loads(variant['data'])['expected_md5'],changed_md5)
+            self.assertEqual(json.loads(variant['data'])['fields']['source_version_of'],original['id'])
+            self.assertIsNone(variant['remote_verified_at'])
+            store.db.close()
+
+
 class ParserTests(unittest.TestCase):
     def test_mirror_group_and_metadata(self):
         records = a.parse_detail(HTML, "https://www.lathercraft.net/items/1", "lathercraft")
