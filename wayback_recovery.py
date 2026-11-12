@@ -34,9 +34,9 @@ def captures(payload, target):
     return result
 
 
-def discover(store, fetcher, limit=None, refresh=False):
+def discover(store, fetcher, limit=None, refresh=False, site="both"):
     attempted = found = 0
-    for item in store.rows("holyseal"):
+    for item in store.rows(site):
         if item["status"] != "failed":
             continue
         record = json.loads(item["data"])
@@ -80,9 +80,10 @@ if __name__ == "__main__":
     parser.add_argument("--root", default="archive")
     parser.add_argument("--limit", type=a.positive)
     parser.add_argument("--refresh", action="store_true")
+    parser.add_argument("--site", default="both", help="source key, or both for all registered records")
     args = parser.parse_args()
     store = a.Store(args.root)
     try:
-        print("CDX discovery:", discover(store, a.Fetcher(delay=10, timeout=30, retries=2), args.limit, args.refresh))
+        print("CDX discovery:", discover(store, a.Fetcher(delay=10, timeout=30, retries=2), args.limit, args.refresh, args.site))
     finally:
         store.db.close()

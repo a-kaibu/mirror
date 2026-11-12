@@ -30,9 +30,10 @@ class WaybackRecoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = a.Store(tmp)
             record = a.parse_detail(HTML, "https://example.test/items/1", "lathercraft")[0]
-            record.update(site="holyseal", mirrors=[TARGET])
+            record.update(site="multi_inside", mirrors=[TARGET])
             store.add(record);store.update(record["id"],status="failed")
             network = Fetch([Response(json.dumps(ROWS).encode())])
+            self.assertEqual(discover(store, Mock(), site="holyseal"), (0, 0))
             self.assertEqual(discover(store, network), (1, 2))
             never = Mock()
             self.assertEqual(discover(store, never), (0, 2)); never.open.assert_not_called()
