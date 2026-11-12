@@ -90,6 +90,14 @@ class ParserTests(unittest.TestCase):
     def test_unknown_document_charset_falls_back(self):
         self.assertIn('体験版', a.decode_html('<meta charset="unknown-encoding">体験版'.encode()))
 
+    def test_undeclared_iso2022_jp_is_not_misread_as_ascii_utf8(self):
+        html='<html><a href="trial.zip">体験版のミラー一覧</a></html>'
+        raw=html.encode('iso2022_jp')
+        self.assertEqual(a.decode_html(raw),html)
+        # Replay scripts and non-JIS toolbar text do not replace publisher text.
+        mixed=b'<script charset="utf-8"></script>'+raw+'📅'.encode()
+        self.assertIn('体験版のミラー一覧',a.decode_html(mixed))
+
     def test_no_download_is_empty(self):
         self.assertEqual(a.parse_detail("<a href='/'>home</a>", "https://example.com/item", "lathercraft"), [])
 

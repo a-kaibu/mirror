@@ -162,6 +162,10 @@ def decode_html(data, charset=None):
             return data.decode(declared, errors="replace")
         except LookupError:
             pass
+    # Early mirror pages sometimes omit charset metadata entirely. ISO-2022-JP
+    # uses ASCII escape runs, so UTF-8 would otherwise "succeed" with mojibake.
+    if (b"\x1b$B" in data or b"\x1b$@" in data) and b"\x1b(B" in data:
+        return data.decode("iso2022_jp", errors="replace")
     for encoding in ("utf-8", "cp932", "euc_jp"):
         try:
             return data.decode(encoding)
