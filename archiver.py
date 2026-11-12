@@ -411,6 +411,18 @@ class Store:
     def __init__(self, root):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        from archive_lock import exclusive_file
+        # WAL mode changes and additive migrations race on a fresh database,
+        # even with SQLite busy_timeout. Serialize setup across processes while
+        # leaving ordinary per-connection reads/transfers concurrent.
+        with exclusive_file(self.root / ".sqlite-init.lock"):
+            try:
+                self._initialize()
+            except BaseException:
+                if hasattr(self,"db"):self.db.close()
+                raise
+
+    def _initialize(self):
         self.db = sqlite3.connect(self.root / "index.sqlite3", timeout=30)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
