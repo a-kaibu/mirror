@@ -116,6 +116,22 @@ def platform_page(source,fetcher,raw,actual,charset):
     return raw,actual,charset
 
 
+def add_record(store,record):
+    # A publisher may reuse a filename for another build. Historical captures
+    # must retain that build rather than invalidate the previously archived one.
+    old=store.db.execute("SELECT data,md5,size FROM items WHERE id=?",(record["id"],)).fetchone()
+    if old:
+        previous=json.loads(old["data"]);old_md5=old["md5"] or previous.get("expected_md5")
+        old_size=old["size"] if old["size"] is not None else previous.get("expected_size")
+        changed_hash=old_md5 and record.get("expected_md5") and old_md5!=record["expected_md5"]
+        changed_size=old_size is not None and record.get("expected_size") is not None and old_size!=record["expected_size"]
+        if changed_hash or changed_size:
+            base=record["id"];version=record.get("expected_md5") or str(record["expected_size"])
+            record["id"]=hashlib.sha256(("source-version\n"+base+"\n"+version).encode()).hexdigest()
+            record["fields"]={**record.get("fields",{}),"source_version_of":base}
+    store.add(record)
+
+
 def known_files(store,site):
     by_hash={};by_url={}
     for row in store.rows():
@@ -144,7 +160,7 @@ def match_records(store,source,html,page,index):
         record={**donor,"id":hashlib.sha256((source["key"]+"\n"+a.original(page)+"\n"+candidate["filename"]).encode()).hexdigest(),
             "site":source["key"],"page_url":page,"original_page_url":a.original(page),"filename":candidate["filename"],"mirrors":list(dict.fromkeys(mirrors)),
             "fields":{**donor.get("fields",{}),"matched_source_id":donor["id"],"mirror_source":source["name"]}}
-        store.add(record);found+=1
+        add_record(store,record);found+=1
         for url in candidate["mirrors"]:
             store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],page,clean(url)))
     store.db.commit();return found
@@ -158,7 +174,7 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
         if not row:break
         url=row["url"];processed+=1;actual=None;rel=None
         try:
-            target=url if mode=="live" else availability(fetcher,url,source)
+            target=url if mode=="live" or a.WAYBACK.match(url) else availability(fetcher,url,source)
             if target is None:
                 store.db.execute("UPDATE mirror_frontier SET status='no_capture_returned',checked_at=? WHERE site=? AND url=? AND mode=?",(a.now(),source["key"],url,mode));store.db.commit();print("mirror",source["key"],"no capture",url,flush=True);continue
             with fetcher.open(target) as response:
@@ -189,31 +205,31 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
             if source["key"]=="moepedia":
                 from portals import parse_moepedia
                 for record in parse_moepedia(html,actual):
-                    store.add(record);matched+=1
+                    add_record(store,record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
             if source["key"]=="multi_inside":
                 from portals import parse_multi_inside
                 for record in parse_multi_inside(html,actual):
-                    store.add(record);matched+=1
+                    add_record(store,record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
             if source["key"]=="mimimaid":
                 from portals import parse_mimimaid
                 for record in parse_mimimaid(html,actual):
-                    store.add(record);matched+=1
+                    add_record(store,record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
             if source["key"]=="nekoneko":
                 from portals import parse_nekoneko
                 for record in parse_nekoneko(html,actual):
-                    store.add(record);matched+=1
+                    add_record(store,record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
             if source["key"]=="tsundere":
                 from portals import parse_tsundere
                 for record in parse_tsundere(html,actual):
-                    store.add(record);matched+=1
+                    add_record(store,record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
             found+=matched
