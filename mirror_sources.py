@@ -260,7 +260,7 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
                     add_record(store,record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
-            if source["key"] in {"alice_archives","alicefree","getchu"}:
+            if source["key"] in {"alice_archives","alicefree","getchu","xgame"}:
                 import portals
                 for record in getattr(portals,"parse_"+source["key"])(html,actual):
                     add_record(store,record);matched+=1

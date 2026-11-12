@@ -2,6 +2,7 @@
 import hashlib
 from pathlib import Path
 import re
+import unicodedata
 from urllib.parse import urlsplit,unquote,parse_qs
 import archiver as a
 
@@ -484,3 +485,43 @@ def parse_getchu(html, page):
             'expected_md5':None,'expected_size':None,'size_text':None,'published_at':None,
             'fields':{'published_media_label':label,'published_button':'demo_t.gif' if trial_button else None,'getchu_product_url':a.original(page)}}
     return list(result.values())
+
+
+def parse_xgame(html,page):
+    parts=urlsplit(a.original(page))
+    if parts.hostname not in {'www.xgamedata.com','xgamedata.com'} or not re.fullmatch(r'/demo\d+/g\d+/',parts.path):return []
+    root=a.DOM(html).root
+    brands=set()
+    links=[]
+    for node in root.all({'a'}):
+        target=a.resolve(page,node.attrs.get('href',''))
+        if not target:continue
+        raw=a.original(target);link=urlsplit(raw)
+        fragment=urlsplit(a.original(node.attrs.get('href',''))).fragment
+        if 'このブランド' in node.text() and link.hostname in {'www.xgamedata.com','xgamedata.com'} and fragment:
+            brands.add(unicodedata.normalize('NFKC',unquote(fragment)).strip())
+        if a.EXT.search(link.path):links.append(target)
+    if len(brands)!=1:return []
+    brand=brands.pop();result=[]
+    sections=re.split(r'(?=【\s*素\s*材\s*名\s*】)',root.text())
+    for section in sections[1:]:
+        fields={re.sub(r'\s+','',unicodedata.normalize('NFKC',key)):value.strip().splitlines()[0].strip()
+                for key,value in re.findall(r'【([^】]+)】\s*(.*?)(?=【|$)',section,re.S) if value.strip()}
+        label=fields.get('素材名','');filename=fields.get('登録名','')
+        title=re.fullmatch(r'『(.+?)』\s*(.+)',label)
+        size=fields.get('ファイルサイズ/MD5','');checksum=re.search(r'MD5\s*[:：]\s*([a-fA-F0-9]{32})(?![a-fA-F0-9])',size,re.I)
+        candidates=[target for target in links if unquote(Path(urlsplit(a.original(target)).path).name)==filename]
+        if not title or not filename or not checksum or not candidates:continue
+        mirrors=[]
+        for target in candidates:
+            raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+            if stamp:mirrors.append(a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme))
+            mirrors.append(raw)
+        ident=hashlib.sha256(('xgame\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
+        result.append({'id':ident,'site':'xgame','page_url':page,'original_page_url':a.original(page),
+            'title':title[1],'brand':brand,'release_name':title[2],'filename':filename,
+            'expected_md5':checksum[1].lower(),'expected_size':None,'size_text':size.split('/')[0].strip(),
+            'published_at':None,'mirrors':list(dict.fromkeys(mirrors)),
+            'fields':{'published_distribution_fields':fields,'動作条件':fields.get('動作条件'),
+                '適用条件':fields.get('動作条件'),'転載条件':fields.get('転載条件')}})
+    return result
