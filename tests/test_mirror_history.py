@@ -29,3 +29,21 @@ class MirrorHistoryTests(unittest.TestCase):
             m.add_record(store,json.loads(json.dumps(second)))
             self.assertEqual(len(store.rows()),2)
             store.db.close()
+
+    def test_http_history_transport_and_dates_survive_cache(self):
+        from mirror_history import discover
+        from test_archiver import Fetch,Response
+        from unittest.mock import Mock
+        target='http://lapistan.jp/list/PULLTOP/index.htm'
+        rows=[['timestamp','original','mimetype','statuscode','digest'],
+              ['20050101000000',target,'text/html','200','old'],
+              ['20100101000000',target,'text/html','200','new']]
+        source={'key':'lapistan','name':'Lapistan','homes':[target],'seeds':[target],'adapter':'mirror','references':[]}
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            fetch=Fetch([Response(json.dumps(rows).encode(),url='http://web.archive.org/cdx/search/cdx?url=page')])
+            self.assertEqual(discover(store,fetch,source),2)
+            captures=[r[0] for r in store.db.execute('SELECT url FROM mirror_frontier')]
+            self.assertTrue(all(u.startswith('http://web.archive.org/web/') for u in captures))
+            never=Mock();self.assertEqual(discover(store,never,source),0);never.open.assert_not_called()
+            store.db.close()

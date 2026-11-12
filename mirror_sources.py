@@ -123,7 +123,9 @@ def platform_page(source,fetcher,raw,actual,charset):
 
 
 def add_record(store,record):
-    record=store.reviewed_record(record)
+    reviewed=store.reviewed_record(record)
+    if reviewed is not record:
+        record.clear();record.update(reviewed)
     # A publisher may reuse a filename for another build. Historical captures
     # must retain that build rather than invalidate the previously archived one.
     old=store.db.execute("SELECT data,md5,sha256,size FROM items WHERE id=?",(record["id"],)).fetchone()

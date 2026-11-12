@@ -7,7 +7,7 @@ import archiver as a
 import mirror_sources as m
 
 
-def history(payload,target):
+def history(payload,target,scheme="https"):
     if not isinstance(payload,list):raise ValueError('CDX response must be an array')
     if not payload:return []
     if not isinstance(payload[0],list) or not {'timestamp','original','statuscode','digest'}<=set(payload[0]):raise ValueError('CDX columns missing')
@@ -22,7 +22,7 @@ def history(payload,target):
         # every distinct body and its earliest actual capture timestamp.
         key=row['digest'] if row['digest']!='-' else row['timestamp']
         if key in seen:continue
-        seen.add(key);result.append(a.replay(row['original'],row['timestamp']))
+        seen.add(key);result.append(a.replay(row['original'],row['timestamp'],scheme=scheme))
     return result
 
 
@@ -31,18 +31,21 @@ def discover(store,fetcher,source):
     store.db.execute('CREATE TABLE IF NOT EXISTS mirror_history(site TEXT,url TEXT,checked_at TEXT,status TEXT,data TEXT,error TEXT,PRIMARY KEY(site,url))');store.db.commit()
     queued=0
     for url in dict.fromkeys(source['seeds']+source['homes']):
+        scheme=a.archive_index_scheme(store,url)
         cached=store.db.execute('SELECT status,data FROM mirror_history WHERE site=? AND url=?',(source['key'],url)).fetchone()
         try:
             if cached and cached['status']=='ok':payload=json.loads(cached['data'])
             else:
                 endpoint='https://web.archive.org/cdx/search/cdx?'+urlencode({'url':url,'output':'json','filter':'statuscode:200','fl':'timestamp,original,mimetype,statuscode,digest','limit':10000})
-                with a.open_archive_index(fetcher,endpoint) as response:raw=response.read(16*1024*1024+1)
+                with a.open_archive_index(fetcher,endpoint) as response:
+                    raw=response.read(16*1024*1024+1);index_url=response.geturl()
                 if len(raw)>16*1024*1024:raise ValueError('CDX response exceeds bound')
                 payload=json.loads(raw)
                 if isinstance(payload,list) and len(payload)>=10001:raise ValueError('CDX truncation requires pagination')
                 history(payload,url)
+                scheme=a.archive_index_scheme(store,url,index_url)
                 store.db.execute('INSERT OR REPLACE INTO mirror_history VALUES(?,?,?,?,?,?)',(source['key'],url,a.now(),'ok',json.dumps(payload),None))
-            captures=history(payload,url)
+            captures=history(payload,url,scheme=scheme)
             for capture in captures:
                 if not m.allowed(source,capture):raise ValueError('capture outside registered hosts')
                 queued+=store.db.execute("INSERT OR IGNORE INTO mirror_frontier(site,url,mode) VALUES(?,?,'archive')",(source['key'],capture)).rowcount

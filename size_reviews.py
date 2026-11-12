@@ -167,12 +167,16 @@ def collect(store,fetcher,site='alice_archives',limit=None,publish=False):
             with current.open('rb') as stream:sha1=base64.b32encode(hashlib.file_digest(stream,'sha1').digest()).decode()
             endpoint='https://web.archive.org/cdx/search/cdx?'+urlencode({'url':a.original(record['mirrors'][0]),'output':'json',
                 'filter':'statuscode:200','fl':'timestamp,original,mimetype,statuscode,digest,length','collapse':'digest','limit':'10000'})
-            with a.open_archive_index(fetcher,endpoint) as response:raw=response.read(16*1024*1024+1)
+            with a.open_archive_index(fetcher,endpoint) as response:
+                raw=response.read(16*1024*1024+1);index_url=response.geturl()
             if len(raw)>16*1024*1024:raise ValueError('review index exceeds bound')
             payload=json.loads(raw)
             if len(payload)>=10001:raise ValueError('review index truncated')
             (folder/'cdx.json').write_bytes(raw)
-            matches=[c for c in captures(payload,a.original(record['mirrors'][0])) if c['index_digest']==sha1]
+            candidates=captures(payload,a.original(record['mirrors'][0]))
+            scheme=a.archive_index_scheme(store,a.original(record['mirrors'][0]),index_url)
+            if scheme!='https':candidates=captures(payload,a.original(record['mirrors'][0]),scheme=scheme)
+            matches=[c for c in candidates if c['index_digest']==sha1]
             if not matches:raise ValueError('no independent historical digest matches the observed file')
             capture=min(matches,key=lambda c:c['captured_at']);historical=folder/'historical.zip'
             try:actual=fetch_copy(fetcher,capture['url'],historical)

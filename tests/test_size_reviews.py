@@ -40,7 +40,10 @@ class SizeReviewTests(unittest.TestCase):
         self.assertEqual(row['status'],'pending');self.assertIsNone(row['remote_verified_at'])
         original=json.loads(self.store.db.execute("SELECT data FROM items WHERE id='source'").fetchone()[0])
         self.assertEqual(original['expected_size'],len(self.payload)+7)
-        self.assertEqual(m.add_record(self.store,dict(self.record)),ident)
+        incoming=dict(self.record)
+        self.assertEqual(m.add_record(self.store,incoming),ident)
+        self.assertEqual(incoming['id'],ident)
+        self.assertEqual(incoming['expected_size'],len(self.payload))
         self.assertEqual(len(self.store.rows()),2)
         self.assertEqual(self.store.db.execute('SELECT count(*) FROM size_reviews').fetchone()[0],1)
 

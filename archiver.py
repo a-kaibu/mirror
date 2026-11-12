@@ -403,6 +403,17 @@ def open_archive_index(fetcher, url):
         return fetcher.open(urlunsplit(("http",parts.netloc,parts.path,parts.query,"")))
 
 
+def archive_index_scheme(store,target_url,index_url=None):
+    """Retain the actual public CDX transport when deriving replay URLs."""
+    if index_url is not None:
+        parts=urlsplit(index_url)
+        if parts.netloc=='web.archive.org' and parts.path=='/cdx/search/cdx' and parts.scheme in {'http','https'}:
+            store.db.execute('INSERT OR REPLACE INTO archive_index_transports VALUES(?,?,?)',(target_url,index_url,now()))
+            return parts.scheme
+    saved=store.db.execute('SELECT index_url FROM archive_index_transports WHERE target_url=?',(target_url,)).fetchone()
+    return urlsplit(saved[0]).scheme if saved else 'https'
+
+
 class CachedPageFetcher:
     """Resume a collection from saved successful HTML without refetching it."""
     def __init__(self, store, fetcher):
@@ -449,6 +460,7 @@ class Store:
           status TEXT, error TEXT);
         CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY, item_id TEXT, url TEXT,
           attempted_at TEXT, error TEXT);
+        CREATE TABLE IF NOT EXISTS archive_index_transports(target_url TEXT PRIMARY KEY,index_url TEXT NOT NULL,checked_at TEXT NOT NULL);
         """)
         from catalog import initialize
         initialize(self)

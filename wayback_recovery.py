@@ -6,7 +6,7 @@ from urllib.parse import urlencode, urlsplit
 import archiver as a
 
 
-def captures(payload, target):
+def captures(payload, target, scheme="https"):
     if not isinstance(payload, list):
         raise ValueError("CDX response is not an array")
     if not payload:
@@ -29,7 +29,7 @@ def captures(payload, target):
             continue
         if row.get("mimetype", "").lower() in {"text/html", "application/xhtml+xml"}:
             continue
-        result.append({"url": a.replay(row["original"], row["timestamp"], raw=True),
+        result.append({"url": a.replay(row["original"], row["timestamp"], raw=True, scheme=scheme),
             "original_url": row["original"], "captured_at": row["timestamp"], "index_digest": row["digest"]})
     return result
 
@@ -42,6 +42,7 @@ def discover(store, fetcher, limit=None, refresh=False, site="both"):
         record = json.loads(item["data"])
         originals = list(dict.fromkeys(a.original(u) for u in record["mirrors"] + record.get("fields",{}).get("recovery_urls",[])))
         for target in originals:
+            scheme=a.archive_index_scheme(store,target)
             saved = store.db.execute("SELECT * FROM wayback_lookups WHERE url=?", (target,)).fetchone()
             if saved and saved["status"] == "ok" and not refresh:
                 payload = json.loads(saved["data"])
@@ -54,19 +55,21 @@ def discover(store, fetcher, limit=None, refresh=False, site="both"):
                 try:
                     with a.open_archive_index(fetcher,endpoint) as response:
                         raw = response.read(16 * 1024 * 1024 + 1)
+                        index_url = response.geturl()
                     if len(raw) > 16 * 1024 * 1024:
                         raise ValueError("CDX response exceeds 16 MiB")
                     payload = json.loads(raw)
                     if len(payload) >= 10001:
                         raise ValueError("CDX result truncated; requires pagination")
                     captures(payload, target)  # Validate before recording success.
+                    scheme=a.archive_index_scheme(store,target,index_url)
                     store.db.execute("INSERT OR REPLACE INTO wayback_lookups VALUES(?,?,?,?,?)", (target, a.now(), "ok", json.dumps(payload), None))
                 except (OSError, ValueError) as error:
                     store.db.execute("INSERT OR REPLACE INTO wayback_lookups VALUES(?,?,?,?,?)", (target, a.now(), "failed", None, str(error)))
                     store.db.commit()
                     print("CDX failed", target, error, flush=True)
                     continue
-            candidates = captures(payload, target)
+            candidates = captures(payload, target, scheme=scheme)
             for candidate in candidates:
                 store.db.execute("INSERT OR IGNORE INTO wayback_candidates VALUES(?,?,?,?,?)", (item["id"], candidate["url"], candidate["original_url"], candidate["captured_at"], candidate["index_digest"]))
             store.db.commit()

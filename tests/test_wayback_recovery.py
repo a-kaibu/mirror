@@ -44,3 +44,18 @@ class WaybackRecoveryTests(unittest.TestCase):
             self.assertEqual(a.download(store, download), 0)
             self.assertIn("20181120233710id_", download.requests[0][0])
             store.db.close()
+
+    def test_actual_public_index_transport_survives_cached_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            record=a.parse_detail(HTML,"https://example.test/items/1","lathercraft")[0]
+            record.update(site="multi_inside",mirrors=[TARGET],expected_md5=None)
+            store.add(record);store.update(record['id'],status='failed')
+            index='http://web.archive.org/cdx/search/cdx?url=http%3A%2F%2Fmirror.test%2Fdemo.zip'
+            fetch=Fetch([Response(json.dumps(ROWS).encode(),url=index)])
+            self.assertEqual(discover(store,fetch),(1,2))
+            urls=[r[0] for r in store.db.execute('SELECT url FROM wayback_candidates')]
+            self.assertTrue(all(u.startswith('http://web.archive.org/web/') for u in urls))
+            never=Mock();self.assertEqual(discover(store,never),(0,2));never.open.assert_not_called()
+            self.assertEqual(store.db.execute('SELECT index_url FROM archive_index_transports WHERE target_url=?',(TARGET,)).fetchone()[0],index)
+            store.db.close()
