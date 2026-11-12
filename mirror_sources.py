@@ -46,6 +46,8 @@ def enqueue(store,source,mode,urls=None):
 def navigable(source,url):
     path=urlsplit(a.original(url)).path
     key=source["key"]
+    if key=="alice_archives":return bool(re.fullmatch(r"/alice/(?:menu|[0-9]+)\.html|/alice/",path))
+    if key=="alicefree":return path in {"/","/index.html"}
     if key=="moepedia":return path=="/" or path.startswith("/trial/") or bool(re.fullmatch(r"/game/\d+/?",path))
     if key=="getchu":return path=="/" or path.endswith("/soft.phtml") or bool(re.fullmatch(r"/item/\d+/?",path))
     if key=="dmm":return path=="/" or "/detail/" in path
@@ -177,7 +179,7 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
             target=url if mode=="live" or a.WAYBACK.match(url) else availability(fetcher,url,source)
             if target is None:
                 store.db.execute("UPDATE mirror_frontier SET status='no_capture_returned',checked_at=? WHERE site=? AND url=? AND mode=?",(a.now(),source["key"],url,mode));store.db.commit();print("mirror",source["key"],"no capture",url,flush=True);continue
-            with fetcher.open(target) as response:
+            with fetcher.open(target, {"Referer":"http://retropc.net/alice/" if urlsplit(target).path.endswith("/menu.html") else "http://retropc.net/alice/menu.html"} if source["key"]=="alice_archives" and mode=="live" else None) as response:
                 actual=a.canonical(response.geturl())
                 if not allowed(source,actual):raise ValueError("mirror redirected outside registered hosts")
                 if mode=="archive" and not a.WAYBACK.match(actual):raise ValueError("archive left Wayback")
@@ -241,6 +243,12 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
             if source["key"]=="d_station":
                 from portals import parse_d_station
                 for record in parse_d_station(html,actual):
+                    add_record(store,record);matched+=1
+                    for link in record["mirrors"]:
+                        store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
+            if source["key"] in {"alice_archives","alicefree"}:
+                import portals
+                for record in getattr(portals,"parse_"+source["key"])(html,actual):
                     add_record(store,record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))

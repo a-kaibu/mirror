@@ -591,6 +591,14 @@ def transfer(fetcher, url, destination, record):
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     offset = part.stat().st_size if part.exists() and state.get("validator") else 0
     headers = {"Range": f"bytes={offset}-", "If-Range": state["validator"]} if offset else {}
+    # Public RetroPC downloads document ordinary same-site Referer navigation.
+    # Keep this scoped to their published product pages and binary directory.
+    source = record.get("original_page_url", "")
+    if (record.get("site") == "alice_archives" and urlsplit(url).hostname == "retropc.net"
+            and urlsplit(url).path.startswith("/alice/files/")
+            and urlsplit(source).hostname == "retropc.net"
+            and re.fullmatch(r"/alice/\d+\.html", urlsplit(source).path)):
+        headers["Referer"] = source
     try:
         response = open_download(fetcher, url, headers)
     except HTTPError as e:
@@ -600,7 +608,7 @@ def transfer(fetcher, url, destination, record):
         # verify the full response rather than accepting a truncated .part.
         e.close()
         offset = 0
-        response = open_download(fetcher, url)
+        response = open_download(fetcher, url, {k:v for k,v in headers.items() if k not in {"Range", "If-Range"}} or None)
     with response:
         if response.headers.get("Content-Encoding", "identity") != "identity":
             raise ValueError("unexpected content encoding for binary transfer")

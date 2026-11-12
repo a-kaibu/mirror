@@ -148,3 +148,19 @@ name = "ハニワ開発室"
 adapter = "curated"
 homes = ["https://hannylaboratory.blogspot.com/"]
 seeds = ["https://hannylaboratory.blogspot.com/2023/02/blog-post_24.html"]
+
+[[sources]]
+key = "alice_archives"
+name = "アリスソフト アーカイブズ"
+homes = ["http://retropc.net/alice/"]
+seeds = ["http://retropc.net/alice/menu.html"]
+adapter = "platform"
+references = ["https://kichikuou.github.io/web/help/games/", "https://www.alicesoft.com/about/#cont08"]
+
+[[sources]]
+key = "alicefree"
+name = "アリスソフト配布フリー宣言対象ソフト配布"
+homes = ["https://alicefree.fastlast.org/"]
+seeds = ["https://alicefree.fastlast.org/"]
+adapter = "platform"
+references = ["https://kichikuou.github.io/web/help/games/", "https://www.alicesoft.com/about/#cont08"]

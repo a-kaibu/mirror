@@ -334,3 +334,93 @@ def parse_dmm(html,page):
             'expected_md5':None,'expected_size':None,'size_text':None,'published_at':None,
             'fields':{'dmm_content_id':parts.path.strip('/').split('/')[-1],'published_link':target}})
     return list({r['id']:r for r in results}.values())
+
+
+def parse_alice_archives(html, page):
+    original = a.original(page)
+    parts = urlsplit(original)
+    if parts.hostname != "retropc.net" or not re.fullmatch(r"/alice/\d+\.html", parts.path):
+        return []
+    root = a.DOM(html).root
+    titles = [" ".join(n.text().split()) for n in root.all({"font"})
+              if n.attrs.get("size") == "5"]
+    fields = a.labels(root)
+    brand = " ".join(fields.get("発売元", "").split())
+    if len(titles) != 1 or brand not in {"アリスソフト", "チャンピオンソフト"}:
+        raise ValueError("Alice archives product identity missing or ambiguous")
+    result = {}
+    for link in root.all({"a"}):
+        target = a.resolve(page, link.attrs.get("href", ""))
+        if not target:
+            continue
+        raw = a.original(target)
+        binary = urlsplit(raw)
+        if binary.hostname != "retropc.net" or not binary.path.startswith("/alice/files/") or not a.EXT.search(binary.path):
+            continue
+        label = " ".join(link.text().split())
+        if not re.search("ディスクイメージ|CDイメージ|アーカイブ", label):
+            continue
+        filename = unquote(Path(binary.path).name)
+        exact = re.findall(r"([\d,]+)\s*バイト", label)
+        platform = re.match(r"(.+?版)", label)
+        ident = hashlib.sha256(("alice_archives\n"+original+"\n"+binary.path).encode()).hexdigest()
+        stamp = a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        mirrors = ([a.replay(raw,stamp[1],raw=True)] if stamp else []) + [raw]
+        record = {"id":ident,"site":"alice_archives","page_url":page,"original_page_url":original,
+            "title":titles[0],"brand":brand,"release_name":"本編 "+(platform[1] if platform else label),
+            "filename":filename,"mirrors":mirrors,"expected_md5":None,
+            "expected_size":int(exact[0].replace(",","")) if len(exact)==1 else None,
+            "size_text":label,"published_at":None,
+            "fields":{"distribution_kind":"full","platform":platform[1] if platform else None,
+                      "download_label":label,"発売年月":fields.get("発売年月"),
+                      "license_url":"https://www.alicesoft.com/about/#cont08",
+                      "source_conditions":"配布フリー宣言対象。原アーカイブの内容をそのまま保存。"}}
+        result[ident] = record
+    return list(result.values())
+
+
+def parse_alicefree(html, page):
+    original = a.original(page)
+    if urlsplit(original).hostname != "alicefree.fastlast.org" or urlsplit(original).path not in {"/","/index.html"}:
+        return []
+    root = a.DOM(html).root
+    if "配布フリー宣言" not in root.text():
+        raise ValueError("Alice free catalogue identity missing")
+    result = {}
+    for paragraph in root.all({"p"}):
+        titles = [" ".join(n.text().split()) for n in paragraph.children if isinstance(n,a.Node)
+                  and n.tag == "font" and n.attrs.get("size") == "+1"]
+        if len(titles) != 1:
+            continue
+        source_title = titles[0]
+        for link in paragraph.all({"a"}):
+            target = a.resolve(page,link.attrs.get("href", ""))
+            if not target:
+                continue
+            raw = a.original(target);parts = urlsplit(raw)
+            if parts.hostname != "d1.alicefree.fastlast.org" or not parts.path.startswith("/d/") or not a.EXT.search(parts.path):
+                continue
+            filename = unquote(Path(parts.path).name)
+            label = " ".join(link.text().split())
+            title = source_title
+            # The final paragraph contains three different original distributions.
+            if "/" in source_title:
+                title = re.sub(r"\((?:RAR|ZIP|※\d+)\)","",label).strip()
+            book = "ブックレット" in title
+            if book:
+                title = "鬼畜王ランス"
+            part = re.search(r"\.part(\d+)\.rar$", filename, re.I)
+            fields = {"distribution_kind":"other" if book else "full", "source_title":source_title,
+                "download_label":label,"license_url":"https://www.alicesoft.com/about/#cont08",
+                "requirements":" ".join(paragraph.text().split()),
+                "archive_format":Path(parts.path).suffix.lower().lstrip(".")}
+            if part:
+                fields["part_number"] = int(part[1])
+                fields["part_set"] = re.sub(r"\.part\d+\.rar$","",filename,flags=re.I)
+            ident = hashlib.sha256(("alicefree\n"+original+"\n"+parts.path).encode()).hexdigest()
+            stamp = a.WAYBACK.match(target) or a.WAYBACK.match(page)
+            result[ident] = {"id":ident,"site":"alicefree","page_url":page,"original_page_url":original,
+                "title":title,"brand":"アリスソフト","release_name":("資料 ブックレット " if book else "本編 ")+label,
+                "filename":filename,"mirrors":([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+                "expected_md5":None,"expected_size":None,"size_text":None,"published_at":None,"fields":fields}
+    return list(result.values())

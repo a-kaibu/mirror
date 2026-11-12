@@ -406,3 +406,21 @@ version and application conditions, including required earlier updates. The
 collector uses ErogameScape game/brand identities and records its coverage in
 `official_support_scans`, leaving the primary product scans intact. Files enter
 the normal `official` download/publication queue.
+
+The registered `alice_archives` and `alicefree` sources collect the original
+free-distribution packages, including separate PC-88/PC-98/MSX/X68000/FM TOWNS/
+Windows editions, CD images, multipart RAR files and the separately labelled
+Kichikuou booklet. All links come from the published catalogue HTML. Platform
+labels, exact sizes where published, multipart grouping and source conditions
+are retained; packages are not unpacked or converted for an emulator.
+
+```sh
+python mirror_sources.py --site alice_archives --mode live --max-pages 100
+python mirror_sources.py --site alicefree --mode live --max-pages 10
+python archive_watch.py --site alice_archives --site alicefree
+```
+
+Each source has one sequential transfer worker. RetroPC page navigation and
+file requests retain their actual same-site referring page as documented by
+the public download site. Publisher support patches remain in the `official`
+queue and are collected before full games within that queue.

@@ -12,7 +12,9 @@ from test_archiver import Fetch,Response,HTML
 class MirrorSourcesTests(unittest.TestCase):
     def test_requested_sources_are_registered_without_priority_filtering(self):
         sites=m.definitions()
-        self.assertEqual(len(sites),19)
+        self.assertEqual(len(sites),21)
+        self.assertIn("alice_archives",sites)
+        self.assertIn("alicefree",sites)
         self.assertTrue({"kokoron","holyseal","multi_inside","tsundere","lapistan","nekoneko","d_station","suezou","getchu","dmm","moepedia","dlsite"}<=set(sites))
         self.assertEqual(m.clean("https://trial.test/file.zip?_gl=tracking&id=12&utm_source=ignore"),"https://trial.test/file.zip?id=12")
         self.assertEqual(m.clean("https://trial.test/file.zip?token=keep"),"https://trial.test/file.zip?token=keep")
