@@ -30,7 +30,7 @@ class WaybackRecoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = a.Store(tmp)
             record = a.parse_detail(HTML, "https://example.test/items/1", "lathercraft")[0]
-            record.update(site="multi_inside", mirrors=[TARGET])
+            record.update(site="multi_inside", mirrors=[], fields={"recovery_urls":[TARGET]})
             store.add(record);store.update(record["id"],status="failed")
             network = Fetch([Response(json.dumps(ROWS).encode())])
             self.assertEqual(discover(store, Mock(), site="holyseal"), (0, 0))

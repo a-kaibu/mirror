@@ -209,6 +209,7 @@ class KokoronTests(unittest.TestCase):
         self.assertNotEqual(rows[1]['id'],rows[2]['id'])
         self.assertEqual(rows[2]['mirrors'],[])
         self.assertTrue(rows[2]['fields']['removed_link'])
+        self.assertEqual(rows[2]['fields']['recovery_urls'],['http://kokoron.madoka.org/mirror/d/denpanodorei/denpa_try.zip'])
 
     def test_published_sha256_is_checked(self):
         from test_archiver import PAYLOAD

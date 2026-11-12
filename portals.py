@@ -296,6 +296,17 @@ def parse_kokoron(html,page):
             'expected_md5':digest[2].lower(),'expected_sha256':sha[1].lower() if sha else None,
             'expected_size':int(size[1].replace(',','')),'size_text':size[0],'published_at':None,
             'fields':{'parser':'kokoron','removed_link':not mirrors}})
+    # Removed builds may share a filename with a currently linked build. Keep
+    # that URL as an explicitly derived CDX search hint, never as a published
+    # download link for the removed build. Its own MD5/SHA must still match.
+    linked={}
+    for record in results:
+        for url in record['mirrors']:
+            linked.setdefault((record['title'],record['filename']),set()).add(a.original(url))
+    for record in results:
+        if not record['mirrors']:
+            hints=sorted(linked.get((record['title'],record['filename']),[]))
+            if hints:record['fields']['recovery_urls']=hints;record['fields']['recovery_reason']='same-page same-title same-filename linked build; search historical bytes only'
     return list({r['id']:r for r in results}.values())
 
 

@@ -40,7 +40,7 @@ def discover(store, fetcher, limit=None, refresh=False, site="both"):
         if item["status"] != "failed":
             continue
         record = json.loads(item["data"])
-        originals = list(dict.fromkeys(a.original(u) for u in record["mirrors"]))
+        originals = list(dict.fromkeys(a.original(u) for u in record["mirrors"] + record.get("fields",{}).get("recovery_urls",[])))
         for target in originals:
             saved = store.db.execute("SELECT * FROM wayback_lookups WHERE url=?", (target,)).fetchone()
             if saved and saved["status"] == "ok" and not refresh:
