@@ -482,3 +482,12 @@ are retained locally, and publication failures resume from verified local
 files instead of fetching the source again. The size-review path bounds ZIPs
 to 64 MiB transferred and 128 MiB decompressed; larger discrepancies stay open
 for a separate review rather than relaxing the download checks.
+
+
+### Early Fuzzy2 checksum documents
+
+`python fuzzy2.py --watch` checks saved TYPE-MOON evaluation pages and imports
+variants only after retrieving their explicitly linked MD5 documents. The public
+checksum text, actual replay URL and document SHA-256 are retained with source
+provenance. Audio variants remain separate; rounded sizes are descriptive.
+The normal acquisition workers download and publish these checksum-bound items.

@@ -27,7 +27,7 @@ def release_info(record):
     if record.get("fields", {}).get("distribution_kind") == "full":
         return "full", record.get("fields", {}).get("version"), record.get("fields", {}).get("platform"), record.get("fields", {}).get("requirements")
     # A repaired trial remains a trial, not a patch for the commercial game.
-    if re.search(r"体験|trial|(?:^|[ _])taiken", label + " " + (record["filename"] or ""), re.I):
+    if re.search(r"体験|評価版|trial|(?:^|[ _])taiken", label + " " + (record["filename"] or ""), re.I):
         kind = "trial"
     elif re.search(r"ムービー|movie|動画|(?:^|[ _])PV(?:$|[ _])", label, re.I):
         # A corrected movie is still a movie, rather than a game patch.
