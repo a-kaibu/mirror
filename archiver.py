@@ -514,6 +514,7 @@ class Store:
           status TEXT, error TEXT);
         CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY, item_id TEXT, url TEXT,
           attempted_at TEXT, error TEXT);
+        CREATE INDEX IF NOT EXISTS attempts_item ON attempts(item_id,id);
         CREATE TABLE IF NOT EXISTS archive_index_transports(target_url TEXT PRIMARY KEY,index_url TEXT NOT NULL,checked_at TEXT NOT NULL);
         """)
         from catalog import initialize
