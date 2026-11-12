@@ -105,3 +105,24 @@ class ConcurrentCollectionTests(unittest.TestCase):
             self.assertEqual(objects["html/0.html"],b"source 0")
             self.assertEqual(store.db.execute("SELECT count(*) FROM published_objects").fetchone()[0],7)
             store.db.close()
+
+
+class MetadataCheckpointIsolationTests(unittest.TestCase):
+    def test_catalog_checkpoint_does_not_wait_for_html_upload(self):
+        from types import SimpleNamespace
+        entered=threading.Event();release=threading.Event();errors=[]
+        def slow_html(*args):entered.set();release.wait(5)
+        with tempfile.TemporaryDirectory() as tmp,patch.object(a,'_publish_html',side_effect=slow_html),patch.object(a,'_publish_snapshot') as snapshot:
+            store=SimpleNamespace(root=Path(tmp))
+            def background():
+                try:a.publish_metadata(store,'vn-archive','mirrors')
+                except BaseException as error:errors.append(error)
+            thread=threading.Thread(target=background);thread.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                a.publish_metadata(store,'vn-archive','mirrors',include_html=False)
+                self.assertEqual(snapshot.call_count,1)
+                self.assertTrue(thread.is_alive())
+            finally:release.set();thread.join(5)
+            self.assertEqual(errors,[])
+            self.assertEqual(snapshot.call_count,2)

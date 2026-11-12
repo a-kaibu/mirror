@@ -831,19 +831,22 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
     return count
 
 
-def publish_metadata(store, namespace, bucket, profile="hf"):
-    # Bodies are immutable SHA-256 objects; index.sqlite3 is shared and mutable.
-    # Serialize its complete checkpoint across all collector/batch processes.
+def publish_metadata(store, namespace, bucket, profile="hf", include_html=True):
     from archive_lock import exclusive_file
+    # Slow provenance uploads must not hold the mutable catalogue checkpoint
+    # lock. Acquisition batches only checkpoint SQLite; a separate worker drains
+    # saved HTML with its own lock and per-object public verification.
+    if include_html:
+        with exclusive_file(store.root / ".provenance.lock"):
+            _publish_html(store, namespace, bucket, profile)
     with exclusive_file(store.root / ".publish.lock"):
-        return _publish_metadata(store, namespace, bucket, profile)
+        _publish_snapshot(store, namespace, bucket, profile)
 
 
-def _publish_metadata(store, namespace, bucket, profile="hf"):
+def _publish_html(store, namespace, bucket, profile="hf"):
     from boto3.s3.transfer import TransferConfig
     client = s3_client(namespace, profile)
     config = TransferConfig(multipart_threshold=256 * 1024**2, multipart_chunksize=256 * 1024**2, max_concurrency=2)
-    store.export()
     # Publish provenance and saved HTML, never credentials, SQLite journals,
     # partial files, or arbitrary files from the workspace.
     provenance = [store.root / r[0] for r in store.db.execute("SELECT path FROM pages WHERE path IS NOT NULL")]
@@ -893,6 +896,13 @@ def _publish_metadata(store, namespace, bucket, profile="hf"):
             for future in pending:
                 future.cancel()
             raise
+
+
+def _publish_snapshot(store, namespace, bucket, profile="hf"):
+    from boto3.s3.transfer import TransferConfig
+    client = s3_client(namespace, profile)
+    config = TransferConfig(multipart_threshold=256 * 1024**2, multipart_chunksize=256 * 1024**2, max_concurrency=2)
+    store.export()
     # Consistent SQLite backup, not a copy of a live DB/WAL. Pages builds derive
     # HTML and their single JSON export from this same source of truth.
     with tempfile.TemporaryDirectory() as tmp:

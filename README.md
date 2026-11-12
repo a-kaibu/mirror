@@ -364,3 +364,12 @@ because record claims prevent duplicate transfers. Empty queues do not publish
 metadata repeatedly. Failed sources retry immediately only when a new, untried
 Wayback binary capture appears; publication failures retain local verified files
 and retry after cooldown. Native/core batches remain separately managed.
+
+### Independent provenance publication
+
+Run `python provenance_watch.py` alongside acquisition workers. It uploads and
+fully verifies saved HTML under a separate provenance lock, then checkpoints
+SQLite. Body batches checkpoint only SQLite, so an HTML backlog cannot stall
+file transfers. SQLite snapshots still serialize their complete upload/read-back
+transaction. `--once` drains one current HTML snapshot and exits. Both publication
+paths exclude `manifest.json` and `ABOUT.txt` from HF.
