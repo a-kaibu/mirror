@@ -297,3 +297,29 @@ def parse_kokoron(html,page):
             'expected_size':int(size[1].replace(',','')),'size_text':size[0],'published_at':None,
             'fields':{'parser':'kokoron','removed_link':not mirrors}})
     return list({r['id']:r for r in results}.values())
+
+
+def parse_dmm(html,page):
+    parts=urlsplit(a.original(page))
+    if parts.hostname not in {'dlsoft.dmm.co.jp','dlsoft.dmm.com'} or not re.fullmatch(r'/detail/[a-zA-Z0-9_]+/?',parts.path):return []
+    root=a.DOM(html).root;titles=[n.text() for n in root.all({'h1'}) if n.text()]
+    brands=set()
+    for link in root.all({'a'}):
+        brand=re.fullmatch(r'ブランド「(.+?)」へのリンク',link.attrs.get('title',''))
+        if brand:brands.add(brand[1])
+    if len(titles)!=1 or len(brands)!=1:return []
+    brand=next(iter(brands));results=[]
+    for link in root.all({'a'}):
+        if '体験版' not in link.text():continue
+        target=a.resolve(page,link.attrs.get('href',''))
+        if not target:continue
+        raw=a.original(target)
+        if not re.fullmatch(r'sample[0-9]+\.dmm\.(?:co\.jp|com)',urlsplit(raw).hostname or '') or not a.EXT.search(urlsplit(raw).path):continue
+        filename=unquote(Path(urlsplit(raw).path).name);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        ident=hashlib.sha256(('dmm\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
+        results.append({'id':ident,'site':'dmm','page_url':page,'original_page_url':a.original(page),
+            'title':titles[0],'brand':brand,'release_name':'体験版','filename':filename,
+            'mirrors':([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+            'expected_md5':None,'expected_size':None,'size_text':None,'published_at':None,
+            'fields':{'dmm_content_id':parts.path.strip('/').split('/')[-1],'published_link':target}})
+    return list({r['id']:r for r in results}.values())

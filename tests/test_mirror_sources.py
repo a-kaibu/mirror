@@ -215,3 +215,14 @@ class KokoronTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'file.zip';path.write_bytes(PAYLOAD)
             with self.assertRaisesRegex(ValueError,'SHA-256 mismatch'):a.validate(path,{'expected_sha256':'f'*64})
+
+
+class DmmTests(unittest.TestCase):
+    def test_explicit_trial_uses_product_brand_not_sidebar(self):
+        from portals import parse_dmm
+        html='<h1>作品A</h1><a href="/list/?maker=2" title="ブランド「ブランドA」へのリンク">ブランドA</a><a href="/list/?maker=9">別ブランド</a><a href="https://sample9.dmm.co.jp/digital/pcgame/brand_0001/brand_0001t.zip">体験版</a><a href="https://sample9.dmm.co.jp/full.zip">購入</a><a href="https://evil.test/trial.zip">体験版</a>'
+        rows=parse_dmm(html,'https://dlsoft.dmm.co.jp/detail/brand_0001/')
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['brand'],'ブランドA')
+        self.assertEqual(rows[0]['filename'],'brand_0001t.zip')
+        self.assertEqual(parse_dmm(html,'https://dlsoft.dmm.co.jp/'),[])
