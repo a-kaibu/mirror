@@ -168,6 +168,22 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(self.store.rows()[0]["status"], "pending")
         self.assertIsNone(self.store.rows()[0]["remote_sha256"])
 
+    def test_checksumless_descriptive_update_retains_public_copy(self):
+        record=self.record("checksumless");record["expected_md5"]=None
+        self.store.add(record);a.download(self.store,Fetch([Response(PAYLOAD)]))
+        sha=hashlib.sha256(PAYLOAD).hexdigest()
+        self.store.update(record["id"],status="archived",remote_sha256=sha,remote_key="vn-archive/mirrors/files/"+sha,remote_verified_at=a.now())
+        record["fields"]["description"]="corrected metadata"
+        self.store.add(record)
+        row=self.store.db.execute("SELECT * FROM items WHERE id=?",(record["id"],)).fetchone()
+        self.assertEqual(row["status"],"archived")
+        self.assertEqual(row["remote_sha256"],sha)
+        record["mirrors"]=["https://other.test/replaced.zip"]
+        self.store.add(record)
+        row=self.store.db.execute("SELECT * FROM items WHERE id=?",(record["id"],)).fetchone()
+        self.assertEqual(row["status"],"pending")
+        self.assertIsNone(row["remote_sha256"])
+
     def test_public_link_requires_public_verification(self):
         self.store.add(self.record("a"))
         sha = "a" * 64

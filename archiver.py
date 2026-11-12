@@ -442,13 +442,17 @@ class Store:
     def add(self, record):
         old = self.db.execute("SELECT data,status,md5,sha256,size FROM items WHERE id=?", (record["id"],)).fetchone()
         if old and json.loads(old[0]) != record:
-            # Added mirrors/capture metadata do not invalidate bytes that still
-            # match the current publisher MD5 and exact size. A changed digest,
-            # incompatible size, or failed record must be revalidated/retried.
+            previous = json.loads(old[0])
+            # Descriptive updates do not change already verified bytes. Without
+            # a publisher hash, retain proof only for unchanged file identity;
+            # changed URLs/names or contradictory expectations require transfer.
+            same_file = (previous.get("filename") == record.get("filename")
+                and previous.get("mirrors") == record.get("mirrors"))
             retained = (old["status"] in {"verified", "archived"} and old["sha256"]
-                and record.get("expected_md5") and record["expected_md5"] == old["md5"]
+                and (not record.get("expected_md5") or record["expected_md5"] == old["md5"])
                 and (not record.get("expected_sha256") or record["expected_sha256"] == old["sha256"])
-                and (record.get("expected_size") is None or record["expected_size"] == old["size"]))
+                and (record.get("expected_size") is None or record["expected_size"] == old["size"])
+                and (record.get("expected_md5") or record.get("expected_sha256") or same_file))
             if not retained:
                 self.db.execute("UPDATE items SET status='pending',remote_sha256=NULL WHERE id=?", (record["id"],))
         self.db.execute("INSERT INTO items(id,site,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
