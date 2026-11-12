@@ -13,10 +13,10 @@ async function download(id) {
     if (!file) return new Response("公開ファイルが見つかりません。", {status: 404});
     const url = new URL(file.download_url);
     if (url.origin !== "https://huggingface.co" || !url.pathname.startsWith("/buckets/")) {
-      throw new Error("配布先がHFの公開バケットではありません。");
+      throw new Error("ダウンロード先を確認できませんでした。");
     }
     const upstream = await fetch(url, {credentials: "omit"});
-    if (!upstream.ok || !upstream.body) throw new Error("HFから取得できませんでした。");
+    if (!upstream.ok || !upstream.body) throw new Error("ファイルを取得できませんでした。");
     const name = file.filename.replace(/[\\/\x00-\x1f\x7f]/g, "_");
     const encoded = encodeURIComponent(name).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
     const headers = new Headers({
@@ -28,7 +28,7 @@ async function download(id) {
     if (file.size !== null) headers.set("Content-Length", String(file.size));
     return new Response(upstream.body, {headers});
   } catch (error) {
-    return new Response(`${error.message}\n元のページのHF直接リンクから再試行してください。`, {
+    return new Response(`${error.message}\n元のページに戻り、時間をおいて再試行してください。`, {
       status: 502, headers: {"Content-Type": "text/plain; charset=utf-8"},
     });
   }

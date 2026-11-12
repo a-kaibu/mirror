@@ -146,9 +146,9 @@ def build_site(store, output):
         return f'''<!doctype html>
 <html lang="ja" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(title)} · VN Mirror Archive</title><link rel="stylesheet" href="{prefix}pico.min.css"><link rel="stylesheet" href="{prefix}style.css"><script defer src="{prefix}app.js"></script></head>
-<body><a class="skip" href="#main">本文へ</a><header class="container"><nav aria-label="メイン"><ul><li><a href="{prefix}index.html"><strong>VN Mirror Archive</strong></a></li></ul><ul><li><a href="{prefix}manifest.json">目録 JSON</a></li></ul></nav><p>体験版・パッチ・デモムービーの保存庫</p></header>
-<main id="main" class="container"><h1>{e(title)}</h1>{body}<p id="download-status" role="status" aria-live="polite"></p></main>
-<footer class="container"><small>ファイルは Hugging Face からダウンロードします。更新：{e(data['generated_at'][:10])}</small></footer></body></html>'''
+<body><a class="skip" href="#main">本文へ</a><header class="container"><nav aria-label="メイン"><ul><li><a href="{prefix}index.html"><strong>VN Mirror Archive</strong></a></li></ul></nav><p>体験版・パッチ・デモムービーの保存庫</p></header>
+<main id="main" class="container"><h1>{e(title)}</h1>{body}</main>
+<footer class="container"><small>更新：{e(data['generated_at'][:10])}</small></footer></body></html>'''
 
     controls = '''<form id="filters" hidden><div class="grid"><label>作品・ファイル名で検索<input name="q" type="search" placeholder="作品名、メーカー、ファイル名"></label><label>配布種別<select name="kind"><option value="">すべて</option><option value="trial">体験版</option><option value="patch">パッチ</option><option value="movie">ムービー</option><option value="other">その他</option></select></label></div><label><input name="available" type="checkbox">ダウンロード可能な配布物のみ</label><p id="filter-status" role="status"></p></form>'''
     index = '<p>メーカーを選んで、作品ごとの配布物を探せます。体験版・パッチを優先して収集しています。</p><ul class="makers">'
@@ -172,9 +172,9 @@ def build_site(store, output):
                         body += f' · {label}: {e(file[key])}'
                 body += '</p>'
                 if file["download_url"]:
-                    body += f'<p><button type="button" class="save-file" data-id="{file["id"]}" data-filename="{e(file["filename"])}" hidden>元のファイル名で保存</button> <a href="{e(file["download_url"])}">HFから直接ダウンロード</a></p>'
+                    body += f'<p><a class="download" data-id="{file["id"]}" href="{e(file["download_url"])}">ダウンロード</a></p>'
                 else:
-                    body += '<p class="unavailable">取得・公開確認待ち</p>'
+                    body += '<p class="unavailable">未収録</p>'
                 body += '<details><summary>チェックサム・出典</summary>'
                 for key in ["sha256", "md5"]:
                     if file[key]:

@@ -56,9 +56,9 @@ def run():
                     page.goto(base)
                     page.get_by_role("link", name="保存動作の検証", exact=True).click()
                     try:
-                        page.locator(".save-file").wait_for(state="visible", timeout=10000)
+                        page.wait_for_function("document.querySelector('a.download').href.includes('/project/download/')", timeout=10000)
                     except Exception:
-                        print(engine, "SW state:", page.evaluate("async () => ({secure: isSecureContext, support: 'serviceWorker' in navigator, controller: navigator.serviceWorker?.controller?.scriptURL, registrations: 'serviceWorker' in navigator ? (await navigator.serviceWorker.getRegistrations()).map(r => ({scope:r.scope, active:r.active?.state, waiting:r.waiting?.state, installing:r.installing?.state})) : [], status: document.querySelector('#download-status').textContent})"))
+                        print(engine, "SW state:", page.evaluate("async () => ({secure: isSecureContext, support: 'serviceWorker' in navigator, controller: navigator.serviceWorker?.controller?.scriptURL, registrations: 'serviceWorker' in navigator ? (await navigator.serviceWorker.getRegistrations()).map(r => ({scope:r.scope, active:r.active?.state, waiting:r.waiting?.state, installing:r.installing?.state})) : []})"))
                         print("page errors:", errors)
                         raise
                     page.get_by_role("searchbox").fill("存在しない作品")
@@ -66,7 +66,7 @@ def run():
                     page.get_by_role("searchbox").fill("体験版")
                     assert page.locator("[data-entry]:visible").count() == 1
                     with page.expect_download(timeout=60000) as pending:
-                        page.get_by_role("button", name="元のファイル名で保存").click()
+                        page.get_by_role("link", name="ダウンロード", exact=True).click()
                     download = pending.value
                     assert download.suggested_filename == filename, download.suggested_filename
                     assert download.failure() is None, (download.failure(), download.url)
@@ -80,7 +80,7 @@ def run():
                     page = nojs.new_page()
                     page.goto(base)
                     page.get_by_role("link", name="保存動作の検証", exact=True).click()
-                    assert page.get_by_role("link", name="HFから直接ダウンロード").get_attribute("href") == url
+                    assert page.get_by_role("link", name="ダウンロード", exact=True).get_attribute("href") == url
                     nojs.close()
                     context.close()
                     print(f"{engine}: Unicode filename, exact HF bytes, filters, 390px, no-JS links OK")

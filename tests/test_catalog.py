@@ -136,8 +136,11 @@ class CatalogTests(unittest.TestCase):
         self.assertIn("../index.html", page)
         self.assertIn("&lt;img", page)
         self.assertNotIn("<img src=x", page)
-        self.assertIn("取得・公開確認待ち", page)
-        self.assertNotIn("save-file", page)
+        self.assertIn("未収録", page)
+        self.assertNotIn('class="download"', page)
+        self.assertNotIn("Hugging Face", page)
+        self.assertNotIn("HFから", page)
+        self.assertNotIn("元のファイル名で保存", page)
         self.assertTrue((out / "sw.js").exists())
 
     def test_migrates_old_sqlite_without_losing_progress(self):

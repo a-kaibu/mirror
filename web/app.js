@@ -36,22 +36,13 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
         // Downloads are navigations into the registered scope; the current
         // document need not already have a controller (Firefox install race).
         if (!registration.active) return;
-        for (const button of document.querySelectorAll(".save-file")) button.hidden = false;
+        for (const link of document.querySelectorAll("a.download")) {
+          link.href = new URL(`download/${link.dataset.id}`, script);
+        }
       };
       navigator.serviceWorker.addEventListener("controllerchange", enable);
       enable();
     })
-    .catch(() => {
-      document.querySelector("#download-status").textContent = "元の名前での保存を準備できませんでした。HFの直接リンクから保存し、表示された元ファイル名に変更してください。";
-    });
-}
-for (const button of document.querySelectorAll(".save-file")) {
-  button.addEventListener("click", () => {
-    const link = document.createElement("a");
-    link.href = new URL(`download/${button.dataset.id}`, script);
-    document.body.append(link);
-    link.click();
-    link.remove();
-    document.querySelector("#download-status").textContent = "HFからダウンロードします。保存状況はブラウザのダウンロード一覧で確認できます。";
-  });
+    // The ordinary download link remains usable if registration is unavailable.
+    .catch(() => {});
 }
