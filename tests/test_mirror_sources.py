@@ -107,3 +107,16 @@ class NekonekoTests(unittest.TestCase):
         self.assertEqual(trial["expected_md5"],"d319fe58c3dee8b9e1fe41afd8ae4124")
         self.assertIsNone(trial["expected_size"])
         self.assertEqual(rows[-1]["title"],"神聖にして侵すべからず")
+
+
+class TsundereTests(unittest.TestCase):
+    def test_detail_separates_release_and_exact_size(self):
+        from portals import parse_tsundere
+        html=Path("tests/fixtures/tsundere-detail.html").read_text()
+        rows=parse_tsundere(html,"https://web.archive.org/web/20260613183104/https://mirror.tsundere.ne.jp/mirrorinfo/commerce/adult/studio-jyaren/Soushinjutu0-demomov_mod.html")
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]["title"],"操心術0")
+        self.assertEqual(rows[0]["release_name"],"デモムービー 修正版")
+        self.assertEqual(rows[0]["expected_size"],119132956)
+        self.assertEqual(rows[0]["expected_md5"],"73bc3af33bf4227f2297fd68127393e9")
+        self.assertEqual(len(rows[0]["mirrors"]),2)

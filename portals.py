@@ -139,3 +139,29 @@ def parse_nekoneko(html,page):
             "expected_md5":digest[1].lower(),"expected_size":None,"size_text":size[1],"published_at":None,
             "fields":{"parser":"nekoneko","size_is_rounded":True}})
     return list({r["id"]:r for r in results}.values())
+
+
+def parse_tsundere(html,page):
+    if urlsplit(a.original(page)).hostname!="mirror.tsundere.ne.jp":return []
+    root=a.DOM(html).root;fields=a.labels(root)
+    label=fields.get("タイトル", "");brand=fields.get("ブランド")
+    identity=re.split(r"\s{2,}|　",label,maxsplit=1)
+    if not brand or len(identity)!=2:return []
+    title,release=(v.strip() for v in identity)
+    if not title or not release:return []
+    digest=re.search(r"\b([a-fA-F0-9]{32})\b",fields.get("md5/sha1", ""))
+    size=re.search(r"\(([0-9,]+)\s*Byte\)",fields.get("ファイルサイズ", ""),re.I)
+    results=[]
+    for span in root.all({"span"}):
+        if "downloadlink" not in span.attrs.get("class", "").split():continue
+        for link in span.all({"a"}):
+            target=a.resolve(page,link.attrs.get("href", ""))
+            if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
+            raw=a.original(target);filename=unquote(Path(urlsplit(raw).path).name);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+            ident=hashlib.sha256(("tsundere\n"+a.original(page)+"\n"+filename).encode()).hexdigest()
+            results.append({"id":ident,"site":"tsundere","page_url":page,"original_page_url":a.original(page),
+                "title":title,"brand":brand,"release_name":release,"filename":filename,
+                "mirrors":([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+                "expected_md5":digest[1].lower() if digest else None,"expected_size":int(size[1].replace(",", "")) if size else None,
+                "size_text":fields.get("ファイルサイズ"),"published_at":fields.get("当サイト公開日"),"fields":fields})
+    return list({r["id"]:r for r in results}.values())
