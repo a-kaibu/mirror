@@ -664,7 +664,8 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
         rel = f"files/{row['site']}/{row['id']}/{name}"
         path = store.root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        mirrors = list(dict.fromkeys(matching_mirrors(store, row, record) + record["mirrors"]))
+        captures = [r[0] for r in store.db.execute("SELECT url FROM wayback_candidates WHERE item_id=? ORDER BY captured_at DESC", (row["id"],))]
+        mirrors = list(dict.fromkeys(matching_mirrors(store, row, record) + captures + record["mirrors"]))
         if not mirrors:
             store.update(row["id"], status="failed", error="No mirror link preserved on source page")
         if record["site"] == "lathercraft":

@@ -220,3 +220,16 @@ import `parameters` and `search` from `search.mjs`, fetch `manifest.json`, then 
 `manifest.json`; no server or second persisted JSON catalog is needed.
 
 Run the search tests with `node --test tests/search.test.mjs`.
+
+### Binary captures from other dates
+
+`python wayback_recovery.py --limit 20` checks failed Holyseal downloads using
+the CDX index for each original binary URL. All returned successful capture dates
+are retained in SQLite, including repeated digests: a broken replay at one date
+must not hide another date. HTML captures and unrelated paths are excluded.
+Index digests are provenance, not a replacement for publisher MD5 validation.
+`--refresh` queries successful cached index lookups again. Empty results and
+request failures are recorded separately. Results reaching the 10,000 capture
+limit are marked failed, never reported as an exhaustive search.
+After discovery, `archive-batch --site holyseal --retry-failed` tries alternate
+dates (newest first), checks file contents, publishes and reads back the result.
