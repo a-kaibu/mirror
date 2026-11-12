@@ -78,6 +78,43 @@ class ConcurrentCollectionTests(unittest.TestCase):
                 self.assertEqual(len(fetch.requests),1)
             finally:store.db.close()
 
+    def test_completed_transfer_survives_rejection_and_resumes_without_network(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);record=self.record('a');store.add(record)
+            class ChangingResponse(Response):
+                changed=False
+                def read(inner,*args):
+                    if not inner.changed:
+                        inner.changed=True;store.add(dict(record,expected_md5='f'*32))
+                    return super().read(*args)
+            try:
+                self.assertEqual(a.download(store,Fetch([ChangingResponse(PAYLOAD),OSError('offline')]),export=False),1)
+                receipt=store.db.execute("select url,attempted_at from attempts where error like 'source metadata changed during transfer%' order by id desc limit 1").fetchone()
+                store.add(record);never=Mock()
+                self.assertEqual(a.download(store,never,export=False),0);never.open.assert_not_called()
+                row=store.rows()[0]
+                self.assertEqual(row['status'],'verified')
+                self.assertEqual(row['source_url'],receipt['url'])
+                self.assertEqual(row['fetched_at'],receipt['attempted_at'])
+                self.assertEqual(row['sha256'],hashlib.sha256(PAYLOAD).hexdigest())
+            finally:store.db.close()
+
+    def test_completed_recovery_rejects_unproved_or_corrupted_working_copies(self):
+        for mode in ['no_receipt','no_checksum','corrupt']:
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as tmp:
+                store=a.Store(tmp);record=self.record('a')
+                if mode=='no_checksum':record['expected_md5']=None
+                store.add(record)
+                path=Path(tmp)/'files/lathercraft/a/demo.zip';path.parent.mkdir(parents=True);path.write_bytes(b'bad' if mode=='corrupt' else PAYLOAD)
+                if mode!='no_receipt':
+                    store.db.execute('insert into attempts(item_id,url,attempted_at,error) values(?,?,?,?)',('a','https://old.test/demo.zip',a.now(),'source metadata changed during transfer; retry against current expectations'));store.db.commit()
+                fetch=Fetch([Response(PAYLOAD)])
+                try:
+                    self.assertEqual(a.download(store,fetch,export=False),0)
+                    self.assertEqual(len(fetch.requests),1)
+                    self.assertNotEqual(store.rows()[0]['source_url'],'https://old.test/demo.zip')
+                finally:store.db.close()
+
     def test_publish_cannot_acknowledge_changed_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=a.Store(tmp);record=self.record("a");store.add(record)

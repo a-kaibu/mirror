@@ -765,6 +765,21 @@ def matching_mirrors(store, row, record):
     return list(dict.fromkeys(mirrors))
 
 
+def recover_completed_transfer(store,row,record,path,rel):
+    """Recover a completed, checksum-bound transfer that lost its metadata CAS."""
+    if (not (record.get('expected_md5') or record.get('expected_sha256'))
+            or path.is_symlink() or not path.is_file()):return False
+    receipt=store.db.execute("""SELECT url,attempted_at FROM attempts WHERE item_id=?
+        AND error LIKE 'source metadata changed during transfer%' ORDER BY id DESC LIMIT 1""",(row['id'],)).fetchone()
+    if not receipt:return False
+    try:result=validate(path,record)
+    except (OSError,ValueError):return False
+    if not store.update_if_current(row['id'],row['data'],status='verified',path=rel,source_url=receipt['url'],
+            fetched_at=receipt['attempted_at'],error=None,remote_sha256=None,**result):return False
+    print(f"recovered completed transfer {rel} ({result['size']} bytes)",flush=True)
+    return True
+
+
 def download(store, fetcher, site="both", limit=None, ident=None, export=True):
     failures = processed = 0
     if ident is not None and not any(row["id"] == ident for row in store.rows(site)):
@@ -792,6 +807,7 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
         rel = f"files/{row['site']}/{row['id']}/{name}"
         path = store.root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
+        if recover_completed_transfer(store,row,record,path,rel):continue
         captures = [r[0] for r in store.db.execute("SELECT url FROM wayback_candidates WHERE item_id=? ORDER BY captured_at DESC", (row["id"],))]
         mirrors = list(dict.fromkeys(matching_mirrors(store, row, record) + captures + record["mirrors"]))
         if not mirrors:
