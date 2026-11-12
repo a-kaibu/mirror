@@ -173,6 +173,10 @@ def build_site(store, output):
             shutil.copyfile(path, output / path.name)
     shutil.copyfile(store.root / "manifest.json", output / "manifest.json")
     (output / ".nojekyll").touch()
+    (output / "search").mkdir(exist_ok=True)
+    (output / "search" / "index.html").write_text('''<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JSON search</title>
+<script type="module" src="../search-page.mjs"></script></head><body><pre id="result" style="white-space:pre-wrap;overflow-wrap:anywhere">読み込み中</pre></body></html>''', encoding="utf-8")
     e = lambda text: escape(str(text), quote=True)
 
     def page(title, body, prefix=""):

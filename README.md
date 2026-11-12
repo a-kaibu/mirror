@@ -199,3 +199,24 @@ Storage2 still timed out.
 Some Holyseal product captures and binary links return 404. These are recorded
 individually; an archived page is not proof of a recoverable binary. This project
 has not yet completed a full crawl of either source.
+
+## JSON search on GitHub Pages
+
+Open `https://a-kaibu.github.io/mirror/search/?kind=trial` in a browser.
+The page filters the single generated `manifest.json` using JavaScript and displays
+JSON. It has no link in the ordinary catalog UI. Parameters:
+
+- `kind`: `trial`, `patch`, `movie`, `other`
+- `q`: NFKC-normalized search across maker, product and filenames; spaces mean AND
+- `manufacturer`: maker ID or exact normalized name
+- `available`: `true` or `false`
+- `limit`: 1–200 (default 50), `offset`: default 0
+
+Example: `search/?kind=trial&available=true&limit=20`.
+The response includes `total`, `limit`, `offset`, `generated_at`, and `results`.
+Pages serves HTML; JavaScript produces the JSON display in the browser. For code,
+import `parameters` and `search` from `search.mjs`, fetch `manifest.json`, then call
+`search(manifest, parameters(new URL(searchURL)))`. Direct HTTP clients can fetch
+`manifest.json`; no server or second persisted JSON catalog is needed.
+
+Run the search tests with `node --test tests/search.test.mjs`.
