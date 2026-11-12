@@ -42,3 +42,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .kind-filters span { display: inline-block; border: 1px solid #9eafbf; border-radius: 999px; padding: .25rem .8rem; background: #fff; color: #23364a; }
 .kind-filters input:checked + span { background: #185b91; border-color: #185b91; color: #fff; }
 .kind-filters input:focus-visible + span { outline: 3px solid #185b91; outline-offset: 3px; }
+
+.filter-options { display: flex; align-items: flex-end; flex-wrap: wrap; gap: .6rem 1rem; margin-bottom: .8rem; }
+.filter-options .kind-filters { margin: 0; }
+.available-filter { margin: 0 0 .3rem auto; white-space: nowrap; }
+#filter-status { color: #516476; font-size: .9rem; white-space: nowrap; }
