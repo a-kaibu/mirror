@@ -37,6 +37,62 @@ def parse_moepedia(html,page):
     return list(result.values())
 
 
+def _parse_multi_inside_legacy(root,page):
+    credits=[n for n in root.all({'div'}) if re.match(r'^\s*(?:\(c\)|©)\s*',n.text(),re.I)]
+    headings=[n.text().strip('[]［］ ') for n in root.all({'h1'}) if n.text().strip('[]［］ ').endswith('ミラー')]
+    bodies=[n for n in root.all({'div'}) if '＜ファイル本体＞' in n.text()]
+    if not credits or not headings or not bodies:return []
+    credit=min(credits,key=lambda n:len(n.text()));body=min(bodies,key=lambda n:len(n.text()))
+    publishers=[]
+    for link in credit.all({'a'}):
+        target=a.resolve(page,link.attrs.get('href',''))
+        if target and link.text():publishers.append({'name':link.text(),'url':a.original(target)})
+    if not publishers:return []
+    brand=re.sub(r'^\s*(?:\(c\)|©)\s*','',credit.text(),flags=re.I).strip()
+    if len(publishers)==1:brand=publishers[0]['name']
+    else:
+        # A nested official brand directory identifies the specific sub-brand;
+        # unrelated copyright holders remain combined exactly as credited.
+        paths=[urlsplit(entry['url']) for entry in publishers]
+        directories=[entry.path.rsplit('/',1)[0]+'/' for entry in paths]
+        if (all(entry.hostname==paths[-1].hostname for entry in paths)
+                and all(directories[-1].startswith(parent) for parent in directories[:-1])
+                and any(parent!=directories[-1] for parent in directories[:-1])):
+            brand=publishers[-1]['name']
+    title=re.sub(r'\s+[^\s]+ミラー$','',headings[0]).strip()
+    if not title or title==headings[0]:return []
+    hashes={}
+    for match in re.finditer(r'\bMD5\s*\(\s*(.*?)\s*\)\s*=\s*([a-fA-F0-9]{32})\b',body.text(),re.S):
+        hashes.setdefault(match[1].strip(),set()).add(match[2].lower())
+    prefix=[];result={};stack=list(reversed(body.children))
+    while stack:
+        node=stack.pop()
+        if isinstance(node,str):prefix.append(node);continue
+        if node.tag=='br':prefix.append('\n')
+        if node.tag=='a':
+            href=node.attrs.get('href','');ftp=re.match(r'^(?:https?://web\.archive\.org/web/\d{14}(?:[a-z_]+)?/)?(ftp://.+)$',href)
+            target=a.resolve(page,href);raw=ftp[1] if ftp else a.original(target) if target else None
+            if raw and a.EXT.search(urlsplit(raw).path):
+                filename=unquote(Path(urlsplit(raw).path).name);values=hashes.get(filename,set())
+                if len(values)<=1:
+                    before=' '.join(prefix);labels=list(re.finditer(r'◇\s*([^：:\n]+)\s*[：:]',before))
+                    label=labels[-1][1].strip() if labels else filename
+                    tail=before[before.rfind(filename)+len(filename):] if filename in before else ''
+                    size=re.search(r'\[[^\]\r\n]*,\s*([\d.]+\s*[KMGT]B)\s*\]',tail,re.I)
+                    ident=hashlib.sha256(('multi_inside\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
+                    entry=result.setdefault(filename,{'id':ident,'site':'multi_inside','page_url':page,'original_page_url':a.original(page),
+                        'title':title,'brand':brand,'release_name':label,'filename':filename,'mirrors':[],
+                        'expected_md5':next(iter(values),None),'expected_size':None,'size_text':size[1] if size else None,'published_at':None,
+                        'fields':{'parser':'multi_inside_legacy','publisher_credit':credit.text(),'publisher_links':publishers,'size_is_rounded':True}})
+                    if ftp:entry['fields'].setdefault('published_ftp_links',[]).append({'url':raw,'observed_href':href})
+                    else:
+                        stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+                        entry['mirrors']+=([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw]
+        stack.extend(reversed(node.children))
+    for entry in result.values():entry['mirrors']=list(dict.fromkeys(entry['mirrors']))
+    return list(result.values())
+
+
 def parse_multi_inside(html,page):
     parts=urlsplit(a.original(page))
     if parts.hostname not in {"www.pachi.ac","pachi.ac"} or not parts.path.startswith("/~multi/download/index/"):return []
@@ -44,9 +100,9 @@ def parse_multi_inside(html,page):
     def classified(node,name):return name in node.attrs.get("class", "").split()
     brands=[n for n in root.all({"div"}) if classified(n,"brand")]
     titles=[n for n in root.all({"div"}) if classified(n,"title")]
-    if not brands or not titles:return []
+    if not brands or not titles:return _parse_multi_inside_legacy(root,page)
     brand_links=list(brands[0].all({"a"}))
-    if not brand_links:return []
+    if not brand_links:return _parse_multi_inside_legacy(root,page)
     brand=brand_links[0].text()
     title=re.sub(r"\s*\[.*", "", titles[0].text()).strip()
     result=[]

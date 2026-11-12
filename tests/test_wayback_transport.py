@@ -81,6 +81,41 @@ class WaybackTransportTests(unittest.TestCase):
             self.assertEqual(store.rows()[0]["status"],"failed")
             store.db.close()
 
+    def test_watcher_wakes_failed_http_capture_once_for_secure_retry(self):
+        import archive_watch as watch
+        plain='http://web.archive.org/web/20190102030405id_/http://mirror.test/demo.zip'
+        secure=plain.replace('http://','https://',1)
+        with tempfile.TemporaryDirectory() as folder:
+            store=a.Store(folder)
+            try:
+                record=a.parse_detail(HTML,'https://source.test/item/1','lathercraft')[0]
+                record.update(site='mimimaid',expected_md5=None,mirrors=[plain]);store.add(record)
+                store.db.execute('INSERT INTO wayback_candidates VALUES(?,?,?,?,?)',(record['id'],plain,'http://mirror.test/demo.zip','20190102030405',None))
+                store.db.execute('INSERT INTO attempts(item_id,url,error) VALUES(?,?,?)',(record['id'],plain,'<urlopen error [Errno 111] Connection refused>'))
+                store.db.commit();store.update(record['id'],status='failed')
+                self.assertEqual(watch.ready(store,'mimimaid'),1)
+                self.assertIsNotNone(store.db.execute('SELECT 1 FROM wayback_candidates WHERE url=?',(secure,)).fetchone())
+                store.db.execute('INSERT INTO attempts(item_id,url,error) VALUES(?,?,?)',(record['id'],secure,'<urlopen error [Errno 111] Connection refused>'))
+                store.db.commit();store.update(record['id'],status='failed')
+                self.assertEqual(watch.ready(store,'mimimaid'),0)
+                self.assertEqual(store.db.execute('SELECT count(*) FROM wayback_candidates').fetchone()[0],2)
+            finally:store.db.close()
+
+    def test_watcher_does_not_change_transport_after_http_denial(self):
+        import archive_watch as watch
+        plain='http://web.archive.org/web/20190102030405id_/http://mirror.test/demo.zip'
+        with tempfile.TemporaryDirectory() as folder:
+            store=a.Store(folder)
+            try:
+                record=a.parse_detail(HTML,'https://source.test/item/1','lathercraft')[0]
+                record.update(site='mimimaid',mirrors=[plain]);store.add(record)
+                store.db.execute('INSERT INTO wayback_candidates VALUES(?,?,?,?,?)',(record['id'],plain,'http://mirror.test/demo.zip','20190102030405',None))
+                store.db.execute('INSERT INTO attempts(item_id,url,error) VALUES(?,?,?)',(record['id'],plain,'HTTP Error 429: slow down'))
+                store.db.commit();store.update(record['id'],status='failed')
+                self.assertEqual(watch.ready(store,'mimimaid'),0)
+                self.assertEqual(store.db.execute('SELECT count(*) FROM wayback_candidates').fetchone()[0],1)
+            finally:store.db.close()
+
     def test_cdx_connection_fallback_does_not_hide_access_denial(self):
         url="https://web.archive.org/cdx/search/cdx?url=http%3A%2F%2Fmirror.test%2Fdemo.zip"
         fetch=Fetch([URLError(ConnectionRefusedError(111,"refused")),Response(b"[]")])
