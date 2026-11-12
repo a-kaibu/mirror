@@ -87,14 +87,26 @@ class Node:
         self.children = []
 
     def text(self):
-        return " ".join(c.text() if isinstance(c, Node) else c for c in self.children).strip()
+        # Old publisher HTML can nest thousands of unclosed elements. Preserve
+        # the recursive join/strip semantics without Python recursion limits.
+        stack, values = [(self, False)], {}
+        while stack:
+            node, visited = stack.pop()
+            if not visited:
+                stack.append((node, True))
+                stack.extend((child, False) for child in reversed(node.children) if isinstance(child, Node))
+            else:
+                values[node] = " ".join(values.pop(child) if isinstance(child, Node) else child for child in node.children).strip()
+        return values[self]
 
     def all(self, tags):
-        for child in self.children:
+        stack = list(reversed(self.children))
+        while stack:
+            child = stack.pop()
             if isinstance(child, Node):
                 if child.tag in tags:
                     yield child
-                yield from child.all(tags)
+                stack.extend(reversed(child.children))
 
 
 class DOM(HTMLParser):

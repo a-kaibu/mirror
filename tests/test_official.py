@@ -64,3 +64,11 @@ class OfficialTests(unittest.TestCase):
             other.db.execute("INSERT INTO metadata_sync VALUES(?,?,?,?)",("brand",83,1,a.now()));other.db.commit()
             store.db.execute("INSERT INTO official_scans VALUES(?,?,?,?,?,?)",(35435,PAGE,"found",1,None,a.now()));store.db.commit()
             other.db.close();store.db.close()
+
+    def test_old_deeply_nested_html_does_not_exceed_recursion_limit(self):
+        html='<div>'*2000+'<section><h2>体験版</h2><a href="trial.zip">Download</a></section>'+'</div>'*2000
+        root=a.DOM(html).root
+        self.assertEqual(root.text(),"体験版 Download")
+        self.assertEqual(len(list(root.all({"a"}))),1)
+        records,_=o.parse(html,PAGE,GAME,BRAND)
+        self.assertEqual(len(records),1)
