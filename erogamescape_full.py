@@ -67,6 +67,16 @@ def cell(value):
     return value
 
 
+class QueryCostExceeded(ValueError):
+    pass
+
+
+def check_query_cost(raw):
+    text=a.DOM(a.decode_html(raw)).root.text()
+    if re.search(r"エラー\s*[(（]実行コスト高[)）]",text):
+        raise QueryCostExceeded("public SQL form rejected the query cost; use smaller indexed ranges")
+
+
 def transport(sql, request):
     raw=request(sql)
     # Keep numeric lexemes exact for PostgreSQL numeric/decimal columns.
@@ -84,6 +94,7 @@ def transport(sql, request):
             return rows,hashlib.sha256(raw).hexdigest()
     # The official empty-results response has a successful query plan and an
     # empty query_result_main; all other missing result tables are failures.
+    check_query_cost(raw)
     if e.parse_rows(a.decode_html(raw))==[]:return [],hashlib.sha256(raw).hexdigest()
     raise ValueError("SQL result missing")
 
@@ -98,7 +109,9 @@ def public_filter(table):
 def count_source(name, request, predicate=""):
 
     sql="SELECT json_build_object('id',1,'count',count(*))::text AS metadata FROM "+quote(name)+" src"+(" WHERE "+predicate if predicate else "")
-    rows=e.parse_rows(a.decode_html(request(sql)))
+    raw=request(sql)
+    check_query_cost(raw)
+    rows=e.parse_rows(a.decode_html(raw))
     if len(rows)!=1 or type(rows[0].get("count")) is not int:raise ValueError("source count missing")
     return rows[0]["count"]
 
@@ -121,6 +134,10 @@ def capture(db, table, request=e.query, delay=3, max_pages=None):
         try:
             expected=count_source(name,request,predicate)
             db.execute("UPDATE _capture_state SET expected_count=? WHERE name=?",(expected,name));db.commit()
+        except QueryCostExceeded:
+            db.rollback()
+            from erogamescape_ranges import capture_ranges
+            return capture_ranges(db,table,request,delay,max_pages)
         except Exception as error:
             db.rollback()
             db.execute("UPDATE _capture_state SET status='failed',updated_at=?,error=? WHERE name=?",(a.now(),str(error),name));db.commit()
@@ -150,6 +167,11 @@ def capture(db, table, request=e.query, delay=3, max_pages=None):
                 if actual!=source:raise ValueError(f"count drift: captured {actual}, current source {source}; reconciliation required")
                 db.execute("UPDATE _capture_state SET status='complete',rows=?,source_count=?,updated_at=?,error=NULL WHERE name=?",(actual,source,a.now(),name))
             db.execute("INSERT INTO _capture_requests(name,sql,response_sha256,row_count,fetched_at) VALUES(?,?,?,?,?)",(name,sql,digest,len(rows),a.now()));db.commit()
+        except QueryCostExceeded as error:
+            db.rollback()
+            db.execute("INSERT INTO _capture_requests(name,sql,fetched_at,error) VALUES(?,?,?,?)",(name,sql,a.now(),str(error)));db.commit()
+            from erogamescape_ranges import capture_ranges
+            return capture_ranges(db,table,request,delay,max_pages=None if max_pages is None else max(0,max_pages-pages))
         except Exception as error:
             db.rollback()
             db.execute("UPDATE _capture_state SET status='failed',updated_at=?,error=? WHERE name=?",(a.now(),str(error),name))

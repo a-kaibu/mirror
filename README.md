@@ -439,3 +439,16 @@ These are collected using the actual `trial.getchu.com` media URL and matching
 product/brand identity; historical capture dates are retained. Captures already
 confirmed by Wayback are fetched before pages that still need availability
 lookups, and the published `all/demo.html` catalogue links are followed.
+
+When the public ErogameScape SQL form rejects a broad query's execution cost,
+`erogamescape_ranges.py` partitions the leading primary key into smaller indexed
+ranges without changing the server's limits. Ranges and composite-key cursors
+are committed with each batch. Text ranges require a verified binary collation;
+unsupported key types fail explicitly. Source row counts and the existing full
+SQLite publication gate still have to pass before replacing the public snapshot.
+A failed public table can be resumed independently while the main exporter
+continues later tables:
+
+```sh
+python erogamescape_ranges.py --table fanza_doujin_sales
+```
