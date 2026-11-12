@@ -367,7 +367,8 @@ class Store:
     def __init__(self, root):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.root / "index.sqlite3")
+        self.db = sqlite3.connect(self.root / "index.sqlite3", timeout=30)
+        self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
@@ -396,6 +397,11 @@ class Store:
     def update(self, ident, **kwargs):
         self.db.execute("UPDATE items SET " + ",".join(k + "=?" for k in kwargs) + " WHERE id=?", (*kwargs.values(), ident))
         self.db.commit()
+
+    def update_if_current(self, ident, data, **kwargs):
+        changed = self.db.execute("UPDATE items SET " + ",".join(k + "=?" for k in kwargs) + " WHERE id=? AND data=?", (*kwargs.values(), ident, data)).rowcount
+        self.db.commit()
+        return bool(changed)
 
     def export(self):
         from catalog import export_manifest
@@ -604,11 +610,12 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
             error = None
             try:
                 result = transfer(source_fetcher, url, path, record)
-                store.update(row["id"], status="verified", path=rel, source_url=url, fetched_at=now(), error=None, remote_sha256=None, **result)
+                if not store.update_if_current(row["id"], row["data"], status="verified", path=rel, source_url=url, fetched_at=now(), error=None, remote_sha256=None, **result):
+                    raise ValueError("source metadata changed during transfer; retry against current expectations")
                 print(f"verified {rel} ({result['size']} bytes)")
             except (OSError, ValueError, http.client.HTTPException) as e:
                 error = str(e)
-                store.update(row["id"], status="failed", error=error)
+                store.update_if_current(row["id"], row["data"], status="failed", error=error)
                 print(f"download failed {url}: {error}", file=sys.stderr)
             store.db.execute("INSERT INTO attempts(item_id,url,attempted_at,error,tls_pin) VALUES(?,?,?,?,?)", (row["id"], url, now(), error, getattr(source_fetcher, "last_tls_pin", None)))
             store.db.commit()
@@ -724,7 +731,8 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
             store.update(row["id"], remote_sha256=None, remote_verified_at=None)
             raise ValueError(f"public read-back mismatch: {key}")
         checked[key] = remote_sha, remote_size
-        store.update(row["id"], remote_key=f"{namespace}/{bucket}/{key}", remote_sha256=remote_sha, remote_verified_at=now())
+        if not store.update_if_current(row["id"], row["data"], remote_key=f"{namespace}/{bucket}/{key}", remote_sha256=remote_sha, remote_verified_at=now()):
+            raise ValueError("source metadata changed during publication; verified remote object retained")
         print(f"public read-back verified: {namespace}/{bucket}/{key}")
     if metadata:
         publish_metadata(store, namespace, bucket, profile)
@@ -817,6 +825,7 @@ def main(argv=None):
     p.add_argument("--limit", type=positive)
     p.add_argument("--checkpoint-every", type=positive, default=10)
     p.add_argument("--keep-local", action="store_true")
+    p.add_argument("--retry-failed", action="store_true")
     p.add_argument("--reserve-gib", type=positive, default=16)
     for command in ["crawl", "download", "verify", "upload", "status"]:
         p = subs.add_parser(command)
@@ -849,7 +858,7 @@ def main(argv=None):
             from bulk import archive_batch
             stats = archive_batch(store, Fetcher(delay=1, timeout=25, retries=2, tls_pins=source_tls_pins()),
                 args.namespace, args.bucket, args.profile, args.site, args.limit, args.keep_local,
-                args.reserve_gib * 1024**3, args.checkpoint_every)
+                args.reserve_gib * 1024**3, args.checkpoint_every, args.retry_failed)
             return int(bool(stats["failed"]))
         if args.command == "build-site":
             from catalog import build_site

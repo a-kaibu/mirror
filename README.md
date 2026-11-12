@@ -48,8 +48,9 @@ python3 -m http.server --directory dist 8000
 
 S3 uploads use `~/.aws/credentials` profile `hf`; credentials never enter the DB,
 exports, site or repository. Namespace `vn-archive`, bucket `mirrors` are defaults.
-Pass `--root /path/to/archive` **before** the subcommand. Only one writer should
-operate on an archive at a time. `download --id <source-record-id>` selects a
+Pass `--root /path/to/archive` **before** the subcommand. One crawler and one archival batch can operate on the same archive using SQLite
+WAL. Transfers use a metadata comparison before recording success so changed source
+expectations are never silently overwritten. Do not run overlapping download batches. `download --id <source-record-id>` selects a
 specific source record; IDs appear in the manifest and SQLite.
 
 ## Large collections

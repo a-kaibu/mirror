@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import tempfile
 import unicodedata
 
 KINDS = {"trial": "体験版", "patch": "パッチ", "movie": "ムービー", "other": "その他"}
@@ -125,10 +126,18 @@ def manifest(store):
 
 
 def export_manifest(store):
-    data = manifest(store)
+    # Keep related catalog tables in one read snapshot while the crawler adds
+    # new rows. WAL lets the producer continue without waiting for JSON output.
+    store.db.execute("BEGIN")
+    try:
+        data = manifest(store)
+    finally:
+        store.db.rollback()
     path = store.root / "manifest.json"
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=store.root, prefix="manifest-", suffix=".tmp", delete=False) as stream:
+        temporary = Path(stream.name)
+        json.dump(data, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
     temporary.replace(path)
     return data
 

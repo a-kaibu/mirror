@@ -51,7 +51,7 @@ def evict_verified(store, ident, namespace, bucket):
 
 
 def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", profile="hf", site="both",
-                  limit=None, keep_local=False, reserve_bytes=16 * 1024**3, checkpoint_every=10):
+                  limit=None, keep_local=False, reserve_bytes=16 * 1024**3, checkpoint_every=10, retry_failed=False):
     stats = {"processed": 0, "published": 0, "reused": 0, "failed": 0, "evicted_bytes": 0}
     fetcher.reserve_bytes = reserve_bytes
     def priority(row):
@@ -60,6 +60,8 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
         kind = release_info(record)[0]
         return (0 if kind in {"trial", "patch"} else 1, record.get("expected_size") or 2**63, row["id"])
     for row in sorted(store.rows(site), key=priority):
+        if row["status"] == "failed" and not retry_failed:
+            continue
         if publicly_archived(row, namespace, bucket) and row["status"] in {"verified", "archived"}:
             if not keep_local:
                 stats["evicted_bytes"] += evict_verified(store, row["id"], namespace, bucket)
