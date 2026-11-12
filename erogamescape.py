@@ -9,14 +9,15 @@ from pathlib import Path
 import time
 from urllib.parse import urlencode, parse_qs, urlsplit
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 import archiver as a
 from catalog import normalized
 
 FORM = "https://erogamescape.dyndns.org/~ap2/ero/toukei_kaiseki/sql_for_erogamer_form.php"
 TABLES = {
-    "brand": ("brandlist", "id,brandname,url,kind,lost"),
-    "game": ("gamelist", "id,gamename,brandname,sellday,model,shoukai,trial_url,genre,erogame"),
-    "holyseal": ("holyseal", "id,game,holyseal_id"),
+    "brand": ("brandlist", "*"),
+    "game": ("gamelist", "*"),
+    "holyseal": ("holyseal", "*"),
 }
 
 
@@ -57,15 +58,33 @@ def parse_rows(html):
     raise ValueError("SQL result table missing; refusing an empty successful import")
 
 
+_sql_last = 0
+_sql_not_before = 0
+
+
 def query(sql):
+    global _sql_last, _sql_not_before
     request = Request(FORM, data=urlencode({"sql": sql}).encode(), headers={
         "User-Agent": "VN-Mirror-Archiver/0.1 (cultural preservation)",
         "Content-Type": "application/x-www-form-urlencoded"})
-    with urlopen(request, timeout=40) as response:
-        data = response.read(16 * 1024 * 1024 + 1)
-    if len(data) > 16 * 1024 * 1024:
-        raise ValueError("SQL response exceeds 16 MiB")
-    return data
+    for attempt in range(3):
+        current=time.monotonic()
+        time.sleep(max(0,3-(current-_sql_last),_sql_not_before-current))
+        _sql_last=time.monotonic()
+        try:
+            with urlopen(request, timeout=40) as response:
+                data = response.read(16 * 1024 * 1024 + 1)
+            if len(data)>16*1024*1024:raise ValueError("SQL response exceeds 16 MiB")
+            return data
+        except HTTPError as error:
+            if error.code not in {429,500,502,503,504}:raise
+            wait=a.retry_after_delay(error.headers.get("Retry-After",""),60 if error.code==429 else 2**attempt)
+            _sql_not_before=time.monotonic()+wait
+            error.close()
+            if attempt==2:raise
+        except OSError:
+            _sql_not_before=time.monotonic()+2**attempt
+            if attempt==2:raise
 
 
 def collect(store, entity, request=query, max_pages=None, refresh=False, delay=3):

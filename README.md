@@ -267,3 +267,25 @@ that every possible distribution mechanism was supported. `--retry` retries revi
 entries. `--limit N` permits bounded validation. Existing completed scans resume
 without re-fetching their pages. Ordinary archive batches can process these new
 records, retaining the original page and ErogameScape IDs as provenance.
+
+### Full public database export
+
+`python erogamescape_full.py --upload` enumerates live public table/view schemas
+and captures every column of public data tables into
+`archive/erogamescape.full.sqlite3`. Authentication, private service preferences,
+operational logs and pending moderation edits are excluded before data requests;
+`_source_schema.excluded_reason` records the exact exclusions. Private reviews
+are filtered according to the public profile visibility flag.
+
+Compound/string primary keys use keyset pagination. Tables without keys use a
+deterministic row JSON order and preserve duplicate rows. Decimal values remain
+exact text; PostgreSQL arrays/JSON/enums and source type metadata are preserved.
+Each page, cursor, error and response hash is recorded for resumption. A source
+schema change or count mismatch fails that table instead of reporting completion.
+Acquisition spans multiple HTTP requests rather than a single remote transaction.
+
+Publication requires every included table to complete, matching source/local row
+counts, and `PRAGMA integrity_check`. The database is checkpointed and held stable
+while uploaded as `erogamescape.sqlite3`; full anonymous SHA-256/size read-back is
+required. Until full capture finishes, HF retains the previous catalog snapshot.
+Use `--max-tables N --max-pages N` for bounded validation; reruns resume.
