@@ -182,6 +182,12 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
                     store.add(record);matched+=1
                     for link in record["mirrors"]:
                         store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
+            if source["key"]=="nekoneko":
+                from portals import parse_nekoneko
+                for record in parse_nekoneko(html,actual):
+                    store.add(record);matched+=1
+                    for link in record["mirrors"]:
+                        store.db.execute("UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?",(record["id"],source["key"],actual,clean(link)))
             found+=matched
             status="review" if count and not matched else "captured"
             if not count and not children:status="review"

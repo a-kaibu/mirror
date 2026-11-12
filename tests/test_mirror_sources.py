@@ -92,3 +92,18 @@ class MimimaidTests(unittest.TestCase):
         self.assertEqual(rows[0]["release_name"],"体験版")
         self.assertEqual(rows[-1]["title"],"操心術３")
         self.assertEqual(rows[-1]["expected_size"],112673502)
+
+
+class NekonekoTests(unittest.TestCase):
+    def test_real_page_tracks_product_headings_and_file_scoped_checksums(self):
+        from portals import parse_nekoneko
+        html=Path("tests/fixtures/nekoneko-pulltop.html").read_text()
+        rows=parse_nekoneko(html,"https://web.archive.org/web/20250429112759/http://nekoneko-web.multi-band.net/nekoneko-web18/download/movie/PULLTOP/pulltop_dl-menu.html")
+        self.assertEqual(len(rows),12)
+        self.assertEqual({r["brand"] for r in rows},{"PULLTOP"})
+        trial=next(r for r in rows if r["filename"]=="oozora_trial101.exe")
+        self.assertEqual(trial["title"],"この大空に、翼をひろげて")
+        self.assertEqual(trial["release_name"],"体験版Ver1.01")
+        self.assertEqual(trial["expected_md5"],"d319fe58c3dee8b9e1fe41afd8ae4124")
+        self.assertIsNone(trial["expected_size"])
+        self.assertEqual(rows[-1]["title"],"神聖にして侵すべからず")

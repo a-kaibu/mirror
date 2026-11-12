@@ -105,3 +105,37 @@ def parse_mimimaid(html,page):
                     "expected_md5":digest[1].lower() if digest else None,"expected_size":int(size[1].replace(",", "")) if size else None,
                     "size_text":fields.get("ファイルサイズ"),"published_at":date[0].replace("/","-") if date else None,"fields":fields})
     return list({r["id"]:r for r in results}.values())
+
+
+def parse_nekoneko(html,page):
+    if urlsplit(a.original(page)).hostname not in {"nekoneko-web.multi-band.net","www.nekoneko-web.net"}:return []
+    root=a.DOM(html).root
+    brand=re.search(r"□\s*(.+?)さんのミラーページ",root.text())
+    if not brand:return []
+    brand=brand[1].strip();title=None;results=[]
+    for node in root.all({"font","a"}):
+        if node.tag=="font" and node.attrs.get("color", "").lower()=="#000000":
+            heading=re.fullmatch(r"\s*『(.+?)』\s*",node.text())
+            if heading:title=heading[1]
+        if node.tag!="a" or not title:continue
+        target=a.resolve(page,node.attrs.get("href", ""))
+        if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
+        context=node.parent;digest=None
+        while context.parent and context.tag not in {"td","table","body"}:
+            digest=re.search(r"MD5\s*[:：]\s*([a-fA-F0-9]{32})",context.text())
+            if digest:break
+            context=context.parent
+        if not digest:continue
+        binaries=[link for link in context.all({"a"}) if a.EXT.search(urlsplit(a.original(a.resolve(page,link.attrs.get("href", "")) or "")).path)]
+        if len(binaries)!=1:continue
+        text=context.text();size=re.search(r"『サイズ[：:]\s*([\d.]+\s*[KMG]B)』",text)
+        if not size:continue
+        release=text[:size.start()].strip()
+        raw=a.original(target);filename=unquote(Path(urlsplit(raw).path).name);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        ident=hashlib.sha256(("nekoneko\n"+a.original(page)+"\n"+filename).encode()).hexdigest()
+        results.append({"id":ident,"site":"nekoneko","page_url":page,"original_page_url":a.original(page),
+            "title":title,"brand":brand,"release_name":release,"filename":filename,
+            "mirrors":([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+            "expected_md5":digest[1].lower(),"expected_size":None,"size_text":size[1],"published_at":None,
+            "fields":{"parser":"nekoneko","size_is_rounded":True}})
+    return list({r["id"]:r for r in results}.values())
