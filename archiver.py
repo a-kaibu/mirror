@@ -8,6 +8,8 @@ from contextlib import closing
 import hashlib
 import hmac
 import http.client
+import io
+from email.message import Message
 import json
 import os
 from pathlib import Path
@@ -343,6 +345,24 @@ class Fetcher:
                 time.sleep(2 ** attempt)
 
 
+class CachedPageFetcher:
+    """Resume a collection from saved successful HTML without refetching it."""
+    def __init__(self, store, fetcher):
+        self.store, self.fetcher = store, fetcher
+
+    def open(self, url, headers=None):
+        row = self.store.db.execute("SELECT * FROM pages WHERE url=?", (canonical(url),)).fetchone()
+        recoverable = row and (row["status"] == "ok" or (row["error"] or "").startswith("no downloadable links"))
+        if not headers and recoverable and row["path"] and (self.store.root / row["path"]).is_file():
+            response = io.BytesIO((self.store.root / row["path"]).read_bytes())
+            response.status = 200
+            response.headers = Message()
+            response.geturl = lambda: row["response_url"] or url
+            response.fetched_at = row["fetched_at"]
+            return response
+        return self.fetcher.open(url, headers)
+
+
 class Store:
     def __init__(self, root):
         self.root = Path(root)
@@ -424,10 +444,11 @@ def crawl(store, fetcher, site, seed, max_pages=None, max_items=None):
                 html = decode_html(data, response.headers.get_content_charset())
                 # Relative links belong to the capture actually returned by Wayback.
                 effective_url = response.geturl()
+                fetched_at = getattr(response, "fetched_at", None) or now()
             target = store.root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
-            store.db.execute("INSERT OR REPLACE INTO pages(url,site,path,fetched_at,status,error,response_url) VALUES(?,?,?,?,?,?,?)", (url, site, rel, now(), "ok", None, effective_url))
+            store.db.execute("INSERT OR REPLACE INTO pages(url,site,path,fetched_at,status,error,response_url) VALUES(?,?,?,?,?,?,?)", (url, site, rel, fetched_at, "ok", None, effective_url))
             root = DOM(html).root
             found = []
             for a in root.all({"a"}):
@@ -805,6 +826,7 @@ def main(argv=None):
         if command == "download":
             p.add_argument("--id", help="download one catalog source record")
         if command == "crawl":
+            p.add_argument("--cached", action="store_true", help="resume using saved successful HTML")
             p.add_argument("--max-pages", type=positive)
             p.add_argument("--max-items", type=positive)
             p.add_argument("--lathercraft-url", default="http://www.lathercraft.net/items?page=1")
@@ -837,6 +859,8 @@ def main(argv=None):
             alias_maker(store, args.alias, args.name)
         if args.command == "crawl":
             fetcher = Fetcher(delay=args.delay)
+            if args.cached:
+                fetcher = CachedPageFetcher(store, fetcher)
             failed = 0
             holy_seeds = args.holyseal_url or [HOLY, HOLY.replace("flt=try", "flt=fix"), HOLY.replace("flt=try", "flt=demo")]
             for site, seed in [("lathercraft", args.lathercraft_url), *[("holyseal", u) for u in holy_seeds]]:
