@@ -373,3 +373,14 @@ SQLite. Body batches checkpoint only SQLite, so an HTML backlog cannot stall
 file transfers. SQLite snapshots still serialize their complete upload/read-back
 transaction. `--once` drains one current HTML snapshot and exits. Both publication
 paths exclude `manifest.json` and `ABOUT.txt` from HF.
+
+### Creator-published Rance releases
+
+`python hanny.py` follows only download links in the curated article bodies in
+`hanny_sources.toml`; sidebars and comments are excluded. It records the published
+Drive filename, creator, version and source conditions. `python archive_watch.py
+--site hanny` downloads and publishes the results. Public Google Drive confirmation
+forms are followed at transfer time; sign-in-required files fail without using an
+account. Range validators, complete-body hashing and anonymous HF read-back remain
+required. Full releases appear under 本編 (`kind=full`), separately from trials and
+patches; frontend JSON search accepts the same filter.

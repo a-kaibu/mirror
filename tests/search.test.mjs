@@ -42,3 +42,9 @@ test("upstream errors and schema failures never report empty success", async () 
     assert.equal((await response.json()).error, "Catalog temporarily unavailable");
   }
 });
+test("full freeware distributions have their own filter", async () => {
+  const loader = async () => ({...catalog, files: [...catalog.files, {id: "full", product_id: "p", kind: "full", filename: "game.zip", sources: [], download_url: "https://example.test/full"}]});
+  const result = await (await request("?kind=full", loader)).json();
+  assert.equal(result.total, 1);
+  assert.equal(result.results[0].id, "full");
+});

@@ -475,7 +475,7 @@ class Store:
         return export_manifest(self)
 
     def rows(self, site="both"):
-        return self.db.execute("SELECT i.* FROM items i JOIN item_catalog c ON c.item_id=i.id WHERE (?='both' OR site=?) ORDER BY CASE c.kind WHEN 'trial' THEN 0 WHEN 'patch' THEN 1 WHEN 'movie' THEN 2 ELSE 3 END,i.id", (site, site)).fetchall()
+        return self.db.execute("SELECT i.* FROM items i JOIN item_catalog c ON c.item_id=i.id WHERE (?='both' OR site=?) ORDER BY CASE c.kind WHEN 'trial' THEN 0 WHEN 'patch' THEN 1 WHEN 'full' THEN 2 WHEN 'movie' THEN 3 ELSE 4 END,i.id", (site, site)).fetchall()
 
 
 def is_detail(url, site):
@@ -582,6 +582,7 @@ def validate(path, record, previous=None):
 
 
 def transfer(fetcher, url, destination, record):
+    from drive_download import open_download
     # Partial bytes belong to a single URL AND validator. Never append bytes
     # from a different mirror or changed remote object.
     suffix = hashlib.sha256(url.encode()).hexdigest()[:16]
@@ -591,7 +592,7 @@ def transfer(fetcher, url, destination, record):
     offset = part.stat().st_size if part.exists() and state.get("validator") else 0
     headers = {"Range": f"bytes={offset}-", "If-Range": state["validator"]} if offset else {}
     try:
-        response = fetcher.open(url, headers)
+        response = open_download(fetcher, url, headers)
     except HTTPError as e:
         if e.code != 416 or not offset:
             raise
@@ -599,7 +600,7 @@ def transfer(fetcher, url, destination, record):
         # verify the full response rather than accepting a truncated .part.
         e.close()
         offset = 0
-        response = fetcher.open(url)
+        response = open_download(fetcher, url)
     with response:
         if response.headers.get("Content-Encoding", "identity") != "identity":
             raise ValueError("unexpected content encoding for binary transfer")

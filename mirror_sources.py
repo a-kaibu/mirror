@@ -293,7 +293,7 @@ if __name__=="__main__":
     try:
         initialize(store)
         sources=[source for key,source in definitions().items()
-            if args.site==key or (args.site=="all" and source["adapter"]!="native")]
+            if args.site==key or (args.site=="all" and source["adapter"] not in {"native","curated"})]
         store.db.close()
         parallel_crawl(args.root,sources,args.mode,args.max_pages)
     finally:store.db.close()

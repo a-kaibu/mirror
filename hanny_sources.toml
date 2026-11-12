@@ -1,0 +1,37 @@
+[[entries]]
+page = "https://hannylaboratory.blogspot.com/2023/04/blog-post.html"
+title = "ランス02"
+kind = "full"
+version = "1.01"
+
+[[entries]]
+page = "https://hannylaboratory.blogspot.com/2023/01/blog-post_26.html"
+title = "ランス4"
+kind = "full"
+version = "2.05"
+
+[[entries]]
+page = "https://hannylaboratory.blogspot.com/2023/02/blog-post_9.html"
+title = "ランス4.1"
+kind = "full"
+version = "1.05"
+label = "41"
+
+[[entries]]
+page = "https://hannylaboratory.blogspot.com/2023/02/blog-post_9.html"
+title = "ランス4.2"
+kind = "full"
+version = "1.05"
+label = "42"
+
+[[entries]]
+page = "https://hannylaboratory.blogspot.com/2023/02/blog-post_23.html"
+title = "ランス6"
+kind = "patch"
+version = "2.05"
+
+[[entries]]
+page = "https://hannylaboratory.blogspot.com/2019/11/blog-post_17.html"
+title = "ランスクエスト"
+kind = "patch"
+version = "3.86"

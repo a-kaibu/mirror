@@ -141,3 +141,10 @@ homes = ["https://www.dlsite.com/"]
 seeds = ["https://www.dlsite.com/pro/work/=/product_id/VJ01007035.html"]
 adapter = "platform"
 references = ["https://moepedia.net/game/98727/"]
+
+[[sources]]
+key = "hanny"
+name = "ハニワ開発室"
+adapter = "curated"
+homes = ["https://hannylaboratory.blogspot.com/"]
+seeds = ["https://hannylaboratory.blogspot.com/2023/02/blog-post_24.html"]

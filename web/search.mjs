@@ -1,4 +1,4 @@
-const KINDS = new Set(["trial", "patch", "movie", "other"]);
+const KINDS = new Set(["trial", "patch", "full", "movie", "other"]);
 const fold = value => String(value ?? "").normalize("NFKC").toLocaleLowerCase();
 
 export function parameters(url) {
@@ -8,7 +8,7 @@ export function parameters(url) {
       throw new Error("Unknown or repeated parameter: " + key);
   }
   const kind = p.get("kind") || "";
-  if (kind && !KINDS.has(kind)) throw new Error("kind must be trial, patch, movie or other");
+  if (kind && !KINDS.has(kind)) throw new Error("kind must be trial, patch, full, movie or other");
   const available = p.get("available");
   if (available !== null && !["true", "false"].includes(available)) throw new Error("available must be true or false");
   const integer = (key, fallback, min, max) => {
