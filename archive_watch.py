@@ -9,7 +9,23 @@ from archive_lock import exclusive_file
 from bulk import archive_batch
 
 
+def queue_http_replays(store,site):
+    """Wake legacy failed transfers only for their refused, checksum-backed capture."""
+    rows=store.db.execute("""SELECT DISTINCT c.* FROM wayback_candidates c JOIN items i ON i.id=c.item_id
+        JOIN attempts t ON t.item_id=i.id AND t.url=c.url
+        WHERE i.site=? AND i.status='failed'
+          AND (length(json_extract(i.data,'$.expected_md5'))=32 OR length(json_extract(i.data,'$.expected_sha256'))=64)
+          AND (t.error LIKE '<urlopen error [Errno 111] Connection refused%'
+            OR t.error LIKE '[Errno 111] Connection refused%')""",(site,)).fetchall()
+    for row in rows:
+        if not row['url'].startswith('https://web.archive.org/web/') or not a.WAYBACK.match(row['url']):continue
+        alternate='http://'+row['url'][8:]
+        store.db.execute('INSERT OR IGNORE INTO wayback_candidates VALUES(?,?,?,?,?)',
+            (row['item_id'],alternate,row['original_url'],row['captured_at'],row['index_digest']))
+
+
 def ready(store,site):
+    queue_http_replays(store,site)
     # A newly discovered dated binary capture is a reason to retry immediately.
     # Previously failed URLs alone do not cause a tight retry loop.
     store.db.execute("""UPDATE items SET status='pending' WHERE site=? AND status='failed'

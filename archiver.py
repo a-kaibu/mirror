@@ -393,7 +393,7 @@ class Fetcher:
 def open_archive_index(fetcher, url):
     """Use the public HTTP CDX endpoint only if its HTTPS port is refused."""
     parts=urlsplit(url)
-    if parts.hostname!="web.archive.org" or parts.path!="/cdx/search/cdx":
+    if parts.netloc!="web.archive.org" or parts.scheme not in {"https","http"} or parts.path!="/cdx/search/cdx":
         raise ValueError("not a Wayback CDX endpoint")
     try:
         return fetcher.open(url)
