@@ -501,8 +501,23 @@ def parse_xgame(html,page):
         if 'このブランド' in node.text() and link.hostname in {'www.xgamedata.com','xgamedata.com'} and fragment:
             brands.add(unicodedata.normalize('NFKC',unquote(fragment)).strip())
         if a.EXT.search(link.path):links.append(target)
+    evidence={}
+    if not brands:
+        # Some later XES pages removed all brand-navigation hyperlinks. Require
+        # agreement between two explicit publisher credits rather than infer a
+        # brand from a filename or a possibly unrelated ownership notice.
+        text=unicodedata.normalize('NFKC',root.text())
+        key=lambda name:re.sub(r'\s+','',name).casefold()
+        owners=re.findall(r'(?:Copyright\s*)?(?:©|\(C\))\s*(?:\d{4}(?:\s*[-–]\s*\d{4})?\s*)?(.{1,160}?)\s+All\s+Rights\s+Reserved',text,re.I|re.S)
+        credits=re.findall(r'※この素材は、\s*(.{1,160}?)\s*様より転載しております',text,re.S)
+        publishers=[re.sub(r'\s+(?:Official\s+Home\s*Page|Official\s+Web\s*Site|on\s+WEB|公式(?:サイト|ホームページ))\s*$','',credit,flags=re.I).strip() for credit in credits]
+        matches={key(owner):(owner.strip(),publisher) for owner in owners for publisher in publishers if key(owner)==key(publisher)}
+        if len(matches)==1:
+            owner,publisher=next(iter(matches.values()));brands.add(owner)
+            evidence={'method':'copyright_and_attribution','copyright_name':owner,'attribution_name':publisher}
     if len(brands)!=1:return []
     brand=brands.pop();result=[]
+    if not evidence:evidence={'method':'brand_navigation','published_name':brand}
     sections=re.split(r'(?=【\s*素\s*材\s*名\s*】)',root.text())
     for section in sections[1:]:
         fields={re.sub(r'\s+','',unicodedata.normalize('NFKC',key)):value.strip().splitlines()[0].strip()
@@ -511,7 +526,7 @@ def parse_xgame(html,page):
         title=re.fullmatch(r'『(.+?)』\s*(.+)',label)
         size=fields.get('ファイルサイズ/MD5','');checksum=re.search(r'MD5\s*[:：]\s*([a-fA-F0-9]{32})(?![a-fA-F0-9])',size,re.I)
         candidates=[target for target in links if unquote(Path(urlsplit(a.original(target)).path).name)==filename]
-        if not title or not filename or not checksum or not candidates:continue
+        if not title or not filename or not a.EXT.search(filename) or not checksum:continue
         mirrors=[]
         for target in candidates:
             raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
@@ -523,7 +538,8 @@ def parse_xgame(html,page):
             'expected_md5':checksum[1].lower(),'expected_size':None,'size_text':size.split('/')[0].strip(),
             'published_at':None,'mirrors':list(dict.fromkeys(mirrors)),
             'fields':{'published_distribution_fields':fields,'動作条件':fields.get('動作条件'),
-                '適用条件':fields.get('動作条件'),'転載条件':fields.get('転載条件')}})
+                '適用条件':fields.get('動作条件'),'転載条件':fields.get('転載条件'),
+                'brand_evidence':evidence,'source_link_missing':not bool(candidates)}})
     return result
 
 

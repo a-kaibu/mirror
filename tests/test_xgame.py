@@ -35,7 +35,10 @@ class XgameTests(unittest.TestCase):
     def test_missing_link_does_not_generate_a_binary_url(self):
         html=HTML.replace('soushin0-taiken.zip"><img','different.zip"><img')
         rows=parse_xgame(html,PAGE)
-        self.assertEqual([r['filename'] for r in rows],['soushin0_1228.zip'])
+        self.assertEqual([r['filename'] for r in rows],['soushin0-taiken.zip','soushin0_1228.zip'])
+        self.assertEqual(rows[0]['mirrors'],[])
+        self.assertTrue(rows[0]['fields']['source_link_missing'])
+        self.assertFalse(any('different.zip' in u for r in rows for u in r['mirrors']))
 
     def test_unidentified_brand_or_unrelated_page_is_not_associated(self):
         self.assertEqual(parse_xgame(HTML.replace('このブランド','別のリンク'),PAGE),[])
@@ -46,3 +49,14 @@ class XgameTests(unittest.TestCase):
         self.assertEqual(len(rows),2)
         self.assertEqual(rows[0]['brand'],'STUDIO邪恋')
         self.assertFalse(any('web.archive.org' in u for u in rows[0]['mirrors']))
+
+    def test_removed_brand_navigation_requires_matching_publisher_credits(self):
+        import re
+        without_navigation=re.sub(r'<a href="http://www.xgamedata.com/ti0/[^>]+>.*?</a>','',HTML)
+        credits='<p>Copyright © 2012 ボクカノProject All Rights Reserved.</p><p>※この素材は、 ボクカノ　Ｐｒｏｊｅｃｔ　ｏｎ　ＷＥＢ 様より転載しております。</p>'
+        rows=parse_xgame(without_navigation+credits,PAGE)
+        self.assertEqual(len(rows),2)
+        self.assertEqual(rows[0]['brand'],'ボクカノProject')
+        self.assertEqual(rows[0]['fields']['brand_evidence']['method'],'copyright_and_attribution')
+        self.assertEqual(parse_xgame(without_navigation+credits.replace('2012 ボクカノProject','2012 DifferentPublisher'),PAGE),[])
+        self.assertEqual(parse_xgame(without_navigation+'<p>Copyright © 2012 ボクカノProject All Rights Reserved.</p>',PAGE),[])
