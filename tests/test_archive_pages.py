@@ -81,7 +81,7 @@ class ArchivePageTests(unittest.TestCase):
 
     def test_multi_inside_navigation_stays_in_distribution_catalogue(self):
         source=m.definitions()['multi_inside'];root='http://www.pachi.ac'
-        for path in ['/~multi/','/~multi/index.shtml','/~multi/demo.mirror.shtml','/~multi/download/index/game.html']:
+        for path in ['/~multi/','/~multi/index.shtml','/~multi/mirror.shtml','/~multi/demo.info.shtml','/~multi/demo.mirror.shtml','/~multi/download/index/game.html','/~multi/mirror/brand.html','/~multi/left.shtml']:
             self.assertTrue(m.navigable(source,root+path),path)
         for path in ['/~multi/diary.shtml','/~multi/diary/201401.shtml','/~multi/bbs.shtml','/~kanisil/index.shtml']:
             self.assertFalse(m.navigable(source,root+path),path)

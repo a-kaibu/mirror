@@ -46,7 +46,10 @@ def enqueue(store,source,mode,urls=None):
 def navigable(source,url):
     path=urlsplit(a.original(url)).path
     key=source["key"]
-    if key=="multi_inside":return path.rstrip('/')=='/~multi' or path=='/~multi/index.shtml' or path.startswith('/~multi/demo.mirror') or path.startswith('/~multi/download/')
+    if key=="multi_inside":
+        if path.rstrip('/')=='/~multi':return True
+        if not path.startswith('/~multi/'):return False
+        return not re.match(r'/~multi/(?:diary|bbs|policy|link)(?:[./]|$)',path)
     if key=="alice_archives":return bool(re.fullmatch(r"/alice/(?:menu|[0-9]+)\.html|/alice/",path))
     if key=="alicefree":return path in {"/","/index.html"}
     if key=="moepedia":return path=="/" or path.startswith("/trial/") or bool(re.fullmatch(r"/game/\d+/?",path))
