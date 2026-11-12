@@ -26,7 +26,7 @@ references = ["https://www.studio-jyaren.jp/mirror.htm"]
 key = "multi_inside"
 name = "まるちいんさいど"
 homes = ["http://www.pachi.ac/~multi/"]
-seeds = ["http://www.pachi.ac/~multi/download/index/soushinjutsu0.html"]
+seeds = ["http://www.pachi.ac/~multi/demo.mirror.shtml", "http://www.pachi.ac/~multi/download/index/soushinjutsu0.html"]
 adapter = "mirror"
 references = ["https://www.studio-jyaren.jp/mirror.htm"]
 
