@@ -107,6 +107,54 @@ class BulkTests(unittest.TestCase):
         self.assertEqual(order,["a","c","b"])
         self.assertEqual(stats["failed"],3)
 
+    def test_three_shards_cover_every_source_exactly_once(self):
+        for ident in range(30):self.add(str(ident))
+        partitions=[]
+        for index in range(3):
+            selected=[]
+            def fail(store,fetcher,site,ident=None,**kwargs):
+                selected.append(ident);store.update(ident,status="failed");return 1
+            with patch.object(bulk,"download",side_effect=fail),patch.object(bulk,"publish_metadata"):
+                bulk.archive_batch(self.store,Fetch([]),reserve_bytes=0,retry_failed=True,shards=3,shard_index=index)
+            partitions.append(set(selected))
+        self.assertTrue(all(partitions))
+        self.assertEqual(set.union(*partitions),{str(i) for i in range(30)})
+        self.assertEqual(sum(map(len,partitions)),30)
+        self.assertFalse(partitions[0]&partitions[1] or partitions[1]&partitions[2] or partitions[0]&partitions[2])
+        for size,index in [(0,0),(2,-1),(2,2)]:
+            with self.assertRaisesRegex(ValueError,"shard"):
+                bulk.archive_batch(self.store,Fetch([]),shards=size,shard_index=index)
+
+    def test_overlapping_batches_claim_one_source_only_once(self):
+        import threading
+        import time
+        self.add("shared")
+        entered=threading.Event();release=threading.Event();second_ready=threading.Event()
+        calls=[];errors=[]
+        def transfer(store,fetcher,site,ident=None,**kwargs):
+            calls.append(ident);entered.set()
+            if not release.wait(5):raise RuntimeError("test release timeout")
+            sha=hashlib.sha256(PAYLOAD).hexdigest()
+            store.update(ident,status="verified",sha256=sha,md5=hashlib.md5(PAYLOAD).hexdigest(),size=len(PAYLOAD))
+            return 0
+        def publish(store,namespace,bucket,profile,site,ident=None,**kwargs):
+            sha=hashlib.sha256(PAYLOAD).hexdigest()
+            store.update(ident,status="archived",path=None,remote_key=f"{namespace}/{bucket}/files/{sha}",remote_sha256=sha,remote_verified_at=a.now())
+            return 1
+        def worker(second=False):
+            store=a.Store(self.store.root)
+            try:
+                if second:second_ready.set()
+                bulk.archive_batch(store,Fetch([]),reserve_bytes=0)
+            except BaseException as error:errors.append(error)
+            finally:store.db.close()
+        with patch.object(bulk,"download",side_effect=transfer),patch.object(bulk,"publish",side_effect=publish),patch.object(bulk,"publish_metadata"):
+            first=threading.Thread(target=worker);second=threading.Thread(target=worker,args=(True,))
+            first.start();self.assertTrue(entered.wait(3));second.start();self.assertTrue(second_ready.wait(3))
+            time.sleep(.1);release.set();first.join(5);second.join(5)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual(errors,[]);self.assertEqual(calls,["shared"])
+
     def test_working_primary_is_tried_before_timing_out_secondary(self):
         record = self.add("a")
         record["mirrors"] = ["http://storage2.lathercraft.net/file.zip", "https://storage1.lathercraft.net/file.zip"]

@@ -1,0 +1,143 @@
+[[sources]]
+key = "lathercraft"
+name = "LatherCraft"
+homes = ["http://www.lathercraft.net/"]
+seeds = ["http://www.lathercraft.net/items?page=1"]
+adapter = "native"
+references = []
+
+[[sources]]
+key = "holyseal"
+name = "Holyseal〜聖封〜"
+homes = ["http://holyseal.net/"]
+seeds = ["http://holyseal.net/cgi-bin/mlistview.cgi?prdcode=9890"]
+adapter = "native"
+references = ["https://www.studio-jyaren.jp/mirror.htm"]
+
+[[sources]]
+key = "kokoron"
+name = "こころんにあるみらー"
+homes = ["http://kokoron.madoka.org/mirror/"]
+seeds = ["http://kokoron.madoka.org/mirror/studio-jyaren.html"]
+adapter = "mirror"
+references = ["https://www.studio-jyaren.jp/mirror.htm"]
+
+[[sources]]
+key = "multi_inside"
+name = "まるちいんさいど"
+homes = ["http://www.pachi.ac/~multi/"]
+seeds = ["http://www.pachi.ac/~multi/download/index/soushinjutsu0.html"]
+adapter = "mirror"
+references = ["https://www.studio-jyaren.jp/mirror.htm"]
+
+[[sources]]
+key = "tsundere"
+name = "つんでれみらー"
+homes = ["http://mirror.tsundere.ne.jp/"]
+seeds = ["http://mirror.tsundere.ne.jp/mirrorinfo/commerce/adult/studio-jyaren/"]
+adapter = "mirror"
+references = ["https://www.studio-jyaren.jp/mirror.htm"]
+
+[[sources]]
+key = "lapistan"
+name = "ラピスたん"
+homes = ["http://lapistan.jp/"]
+seeds = ["http://lapistan.jp/list/PULLTOP/index.htm", "http://lapistan.jp/allage/list/experiense/index.htm"]
+adapter = "mirror"
+references = ["https://pulltop.com/gp09/04_download/", "https://experience.co.jp/xth/downloads/"]
+
+[[sources]]
+key = "nekoneko"
+name = "ねこねこ・うぇぶ．net"
+homes = ["http://nekoneko-web.multi-band.net/", "http://www.nekoneko-web.net/"]
+seeds = ["http://nekoneko-web.multi-band.net/nekoneko-web18/download/movie/PULLTOP/pulltop_dl-menu.html"]
+adapter = "mirror"
+references = ["https://pulltop.com/gp09/04_download/"]
+
+[[sources]]
+key = "d_station"
+name = "D-Station"
+homes = ["http://mirror.studio-ramble.com/"]
+seeds = ["http://mirror.studio-ramble.com/?cid=617"]
+adapter = "mirror"
+references = ["https://experience.co.jp/xth/downloads/", "https://pulltop.com/gp09/04_download/"]
+
+[[sources]]
+key = "suezou"
+name = "すえぞうのギャルゲー補完計画"
+homes = ["http://suezou.dyndns.org/", "http://www.suezou-net.com/"]
+seeds = ["http://suezou.dyndns.org/studio-jyaren.html"]
+adapter = "mirror"
+references = ["https://www.studio-jyaren.jp/mirror.htm"]
+
+[[sources]]
+key = "fuzzy2"
+name = "mirror.fuzzy2.com"
+homes = ["http://mirror.fuzzy2.com/", "http://mirror.fuzzy2.net/"]
+seeds = ["http://mirror.fuzzy2.net/egg3/modules/mymirrors/viewcat.php?op=&cid=1076"]
+adapter = "mirror"
+references = ["https://www.studio-jyaren.jp/mirror.htm"]
+
+[[sources]]
+key = "mimimaid"
+name = "みみめいど"
+homes = ["http://mimimaid.moe.hm/"]
+seeds = ["http://mimimaid.moe.hm/html/x18/studio-jyaren/index.htm"]
+adapter = "mirror"
+references = ["https://www.studio-jyaren.jp/mirror.htm"]
+
+[[sources]]
+key = "magic_mirror"
+name = "Magic Mirror"
+homes = ["http://magics.ddo.jp/"]
+seeds = ["http://magics.ddo.jp/info/studio-jyaren/soushin0-taiken_zip.html"]
+adapter = "mirror"
+references = ["https://www.studio-jyaren.jp/mirror.htm"]
+
+[[sources]]
+key = "redistribution"
+name = "リディストリビュ〜ション"
+homes = ["http://www.redistribution.cc/"]
+seeds = ["http://www.redistribution.cc/studio-jyaren"]
+adapter = "mirror"
+references = ["https://www.studio-jyaren.jp/mirror.htm"]
+
+[[sources]]
+key = "xgame"
+name = "Xgame Electronic Station"
+homes = ["http://www.xgamedata.com/"]
+seeds = ["http://www.xgamedata.com/demo5/g5791/"]
+adapter = "mirror"
+references = ["https://www.studio-jyaren.jp/mirror.htm"]
+
+[[sources]]
+key = "getchu"
+name = "Getchu"
+homes = ["https://www.getchu.com/"]
+seeds = []
+adapter = "platform"
+references = ["https://www.getchu.com/"]
+
+[[sources]]
+key = "dmm"
+name = "DMM/FANZA"
+homes = ["https://www.dmm.co.jp/", "https://dlsoft.dmm.co.jp/", "https://www.dmm.com/", "https://dlsoft.dmm.com/"]
+seeds = []
+adapter = "platform"
+references = ["https://moepedia.net/game/98727/"]
+
+[[sources]]
+key = "moepedia"
+name = "Moepedia"
+homes = ["https://moepedia.net/"]
+seeds = ["https://moepedia.net/trial/", "https://moepedia.net/game/98727/"]
+adapter = "platform"
+references = ["https://moepedia.net/game/98727/"]
+
+[[sources]]
+key = "dlsite"
+name = "DLsite"
+homes = ["https://www.dlsite.com/"]
+seeds = ["https://www.dlsite.com/pro/work/=/product_id/VJ01007035.html"]
+adapter = "platform"
+references = ["https://moepedia.net/game/98727/"]

@@ -1,0 +1,9 @@
+[Unit]
+Description=Check Suezo mirror recovery and capture its live catalogue
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/prj/mirror
+ExecStart=%h/prj/mirror/.venv/bin/python %h/prj/mirror/suezou_watch.py --once
+TimeoutStartSec=2h
+KillSignal=SIGINT

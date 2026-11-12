@@ -813,6 +813,14 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
 
 
 def publish_metadata(store, namespace, bucket, profile="hf"):
+    # Bodies are immutable SHA-256 objects; index.sqlite3 is shared and mutable.
+    # Serialize its complete checkpoint across all collector/batch processes.
+    from archive_lock import exclusive_file
+    with exclusive_file(store.root / ".publish.lock"):
+        return _publish_metadata(store, namespace, bucket, profile)
+
+
+def _publish_metadata(store, namespace, bucket, profile="hf"):
     from boto3.s3.transfer import TransferConfig
     client = s3_client(namespace, profile)
     config = TransferConfig(multipart_threshold=256 * 1024**2, multipart_chunksize=256 * 1024**2, max_concurrency=2)
@@ -923,19 +931,21 @@ def main(argv=None):
     p.add_argument("alias")
     p.add_argument("name")
     p = subs.add_parser("archive-batch", help="download, publish, verify and optionally evict local working copies")
-    p.add_argument("--site", choices=["both", "lathercraft", "holyseal"], default="both")
+    p.add_argument("--site", default="both", help="source key from mirror_sources.toml, official, or both")
     p.add_argument("--namespace", default="vn-archive")
     p.add_argument("--bucket", default="mirrors")
     p.add_argument("--profile", default="hf")
     p.add_argument("--limit", type=positive)
     p.add_argument("--checkpoint-every", type=positive, default=10)
+    p.add_argument("--shards", type=positive, default=1)
+    p.add_argument("--shard-index", type=int, default=0)
     p.add_argument("--delay", type=float, default=1)
     p.add_argument("--keep-local", action="store_true")
     p.add_argument("--retry-failed", action="store_true")
     p.add_argument("--reserve-gib", type=positive, default=16)
     for command in ["crawl", "download", "verify", "upload", "status"]:
         p = subs.add_parser(command)
-        p.add_argument("--site", choices=["both", "lathercraft", "holyseal"], default="both")
+        p.add_argument("--site", choices=["both", "lathercraft", "holyseal"] if command=="crawl" else None, default="both")
         if command in {"download", "upload"}:
             p.add_argument("--limit", type=positive)
         if command == "download":
@@ -953,6 +963,11 @@ def main(argv=None):
             p.add_argument("--bucket", default="mirrors")
             p.add_argument("--profile", default="hf")
     args = parser.parse_args(argv)
+    if hasattr(args,"site") and args.site not in {"both","official"}:
+        from mirror_sources import definitions
+        if args.site not in definitions():parser.error("unregistered source: "+args.site)
+    if args.command == "archive-batch" and not 0 <= args.shard_index < args.shards:
+        parser.error("--shard-index must be between 0 and --shards - 1")
     if args.command == "doctor":
         return doctor()
     if args.command == "bucket-init":
@@ -964,7 +979,7 @@ def main(argv=None):
             from bulk import archive_batch
             stats = archive_batch(store, Fetcher(delay=args.delay, timeout=25, retries=2, tls_pins=source_tls_pins()),
                 args.namespace, args.bucket, args.profile, args.site, args.limit, args.keep_local,
-                args.reserve_gib * 1024**3, args.checkpoint_every, args.retry_failed)
+                args.reserve_gib * 1024**3, args.checkpoint_every, args.retry_failed, args.shards, args.shard_index)
             return int(bool(stats["failed"]))
         if args.command == "build-site":
             from catalog import build_site

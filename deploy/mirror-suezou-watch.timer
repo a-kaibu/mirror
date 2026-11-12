@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Suezo mirror every three hours
+
+[Timer]
+OnCalendar=*-*-* 00/3:00:00
+Persistent=true
+AccuracySec=1m
+Unit=mirror-suezou-watch.service
+
+[Install]
+WantedBy=timers.target

@@ -1,3 +1,4 @@
+from contextlib import closing
 import json
 from html import escape
 import tempfile
@@ -71,7 +72,7 @@ class ErogameScapeTests(unittest.TestCase):
             with self.assertRaises(ValueError):e.verify_counts(store,lambda sql:response([{**expected,"game":2}]))
             import sqlite3
             path=e.export_sqlite(store)
-            with sqlite3.connect(path) as snapshot:
+            with closing(sqlite3.connect(path)) as snapshot:
                 self.assertEqual(snapshot.execute("PRAGMA integrity_check").fetchone()[0],"ok")
                 self.assertEqual(snapshot.execute("SELECT gamename FROM gamelist WHERE id=2").fetchone()[0],"作品")
                 self.assertEqual(snapshot.execute("SELECT count(*) FROM provenance").fetchone()[0],3)

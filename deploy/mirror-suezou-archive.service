@@ -1,0 +1,11 @@
+[Unit]
+Description=Archive recovered Suezo mirror distributions
+
+[Service]
+Type=simple
+WorkingDirectory=%h/prj/mirror
+ExecStart=%h/prj/mirror/.venv/bin/python %h/prj/mirror/archiver.py archive-batch --site suezou --checkpoint-every 25 --retry-failed --delay 3
+Restart=on-failure
+RestartSec=15min
+KillSignal=SIGINT
+TimeoutStopSec=5min

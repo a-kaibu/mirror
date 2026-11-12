@@ -1,10 +1,12 @@
 """Bounded-disk archival batches; only verified public copies permit eviction."""
 import json
+import hashlib
 from pathlib import Path
 import shutil
 from urllib.parse import urlsplit
 
 from archiver import download, now, publish, publish_metadata
+from archive_lock import exclusive_file
 
 
 def publicly_archived(row, namespace, bucket):
@@ -51,7 +53,9 @@ def evict_verified(store, ident, namespace, bucket):
 
 
 def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", profile="hf", site="both",
-                  limit=None, keep_local=False, reserve_bytes=16 * 1024**3, checkpoint_every=10, retry_failed=False):
+                  limit=None, keep_local=False, reserve_bytes=16 * 1024**3, checkpoint_every=10, retry_failed=False, shards=1, shard_index=0):
+    if shards < 1 or not 0 <= shard_index < shards:
+        raise ValueError("invalid shard assignment")
     stats = {"processed": 0, "published": 0, "reused": 0, "failed": 0, "evicted_bytes": 0}
     fetcher.reserve_bytes = reserve_bytes
     # Rank checksum-linked live mirrors ahead of dead historical hosts. This
@@ -70,40 +74,47 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
             record.get("expected_size") or live_sizes.get(record.get("expected_md5")) or 2**63, row["id"])
     visited = set()
     while True:
-        candidates = [r for r in store.rows(site) if r["id"] not in visited and (retry_failed or r["status"] != "failed")]
+        candidates = [r for r in store.rows(site) if r["id"] not in visited and int.from_bytes(hashlib.sha256(r["id"].encode()).digest(), "big") % shards == shard_index and (retry_failed or r["status"] != "failed")]
         if not candidates:
             break
         row = min(candidates, key=priority)
         visited.add(row["id"])
-        if publicly_archived(row, namespace, bucket) and row["status"] in {"verified", "archived"}:
-            if not keep_local:
-                stats["evicted_bytes"] += evict_verified(store, row["id"], namespace, bucket)
-            continue
-        if limit is not None and stats["processed"] >= limit:
-            break
-        stats["processed"] += 1
-        if reuse_verified(store, row, namespace, bucket):
-            stats["reused"] += 1
-        else:
-            record = json.loads(row["data"])
-            required = (record.get("expected_size") or 4 * 1024**3) + reserve_bytes
-            if not keep_local and shutil.disk_usage(store.root).free < required:
-                for candidate in store.rows():
-                    stats["evicted_bytes"] += evict_verified(store, candidate["id"], namespace, bucket)
-                    if shutil.disk_usage(store.root).free >= required:
-                        break
-            if shutil.disk_usage(store.root).free < required:
-                raise OSError("insufficient disk space; verified public files retained, partial transfers preserved")
-            if download(store, fetcher, site, ident=row["id"], export=False):
-                stats["failed"] += 1
+        # Claims protect managed partial files even if two callers choose
+        # overlapping shard configurations. Re-read state after waiting.
+        claim = store.root / ".claims" / (hashlib.sha256(row["id"].encode()).hexdigest()+".lock")
+        with exclusive_file(claim):
+            row = store.db.execute("SELECT * FROM items WHERE id=?",(row["id"],)).fetchone()
+            if row is None or (row["status"]=="failed" and not retry_failed):
                 continue
-            # Publishing failures stop the batch; do not fill disk with a queue
-            # that cannot be uploaded. Source failures above remain retryable.
-            stats["published"] += publish(store, namespace, bucket, profile, site, ident=row["id"], metadata=False)
-            if not keep_local:
-                stats["evicted_bytes"] += evict_verified(store, row["id"], namespace, bucket)
-        print("batch", now(), json.dumps(stats), flush=True)
-        if (stats["published"] + stats["reused"]) % checkpoint_every == 0:
-            publish_metadata(store, namespace, bucket, profile)
+            if publicly_archived(row, namespace, bucket) and row["status"] in {"verified", "archived"}:
+                if not keep_local:
+                    stats["evicted_bytes"] += evict_verified(store, row["id"], namespace, bucket)
+                continue
+            if limit is not None and stats["processed"] >= limit:
+                break
+            stats["processed"] += 1
+            if reuse_verified(store, row, namespace, bucket):
+                stats["reused"] += 1
+            else:
+                record = json.loads(row["data"])
+                required = (record.get("expected_size") or 4 * 1024**3) + reserve_bytes
+                if not keep_local and shutil.disk_usage(store.root).free < required:
+                    for candidate in store.rows():
+                        stats["evicted_bytes"] += evict_verified(store, candidate["id"], namespace, bucket)
+                        if shutil.disk_usage(store.root).free >= required:
+                            break
+                if shutil.disk_usage(store.root).free < required:
+                    raise OSError("insufficient disk space; verified public files retained, partial transfers preserved")
+                if download(store, fetcher, site, ident=row["id"], export=False):
+                    stats["failed"] += 1
+                    continue
+                # Publishing failures stop the batch; do not fill disk with a queue
+                # that cannot be uploaded. Source failures above remain retryable.
+                stats["published"] += publish(store, namespace, bucket, profile, site, ident=row["id"], metadata=False)
+                if not keep_local:
+                    stats["evicted_bytes"] += evict_verified(store, row["id"], namespace, bucket)
+            print("batch", now(), json.dumps(stats), flush=True)
+            if (stats["published"] + stats["reused"]) % checkpoint_every == 0:
+                publish_metadata(store, namespace, bucket, profile)
     publish_metadata(store, namespace, bucket, profile)
     return stats

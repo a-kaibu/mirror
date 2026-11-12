@@ -1,3 +1,4 @@
+from contextlib import closing
 from html import escape
 import json
 import sqlite3
@@ -80,7 +81,7 @@ class FullExportTests(unittest.TestCase):
             db.execute("INSERT INTO _capture_state(name,status,rows,source_count) VALUES('games','complete',1,1)");db.commit();db.close()
             def upload(file):
                 copied=Path(tmp)/"readback.sqlite3";copied.write_bytes(file.read_bytes())
-                with sqlite3.connect(copied) as actual:
+                with closing(sqlite3.connect(copied)) as actual:
                     self.assertEqual(actual.execute("PRAGMA integrity_check").fetchone()[0],"ok")
                     self.assertEqual(actual.execute("SELECT count(*) FROM games").fetchone()[0],1)
             with patch.object(f.e,"upload_snapshot",side_effect=upload) as send:

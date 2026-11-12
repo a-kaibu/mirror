@@ -302,3 +302,31 @@ an empty availability response is not proof that no capture ever existed.
 `--retry` rechecks unresolved IDs; `--limit N` bounds validation runs.
 This complements list pagination rather than treating a partial listing scan as
 proof of full coverage. Source HTML and metadata remain in the archive SQLite.
+
+### Additional mirrors and distribution portals
+
+`mirror_sources.toml` registers the legacy mirrors and Getchu, DMM/FANZA,
+Moepedia and DLsite. Run `python mirror_sources.py --site all --max-pages 100`
+to resume persistent discovery. Native LatherCraft/Holyseal crawlers run separately.
+Legacy sources use actual Wayback availability timestamps; platform seeds come
+from imported game metadata. Unmatched files and unsupported pages remain in
+`mirror_links` and `mirror_frontier` for review, rather than implying completeness.
+Moepedia trial sections have a dedicated parser that excludes purchase links.
+Discovered records use the usual verified upload pipeline, for example
+`python archiver.py archive-batch --site moepedia`.
+
+For parallel transfers use the same `--shards N` and distinct `--shard-index`
+values from zero through N-1. Per-record process locks protect partial files
+against overlapping batches; metadata publication is serialized separately.
+
+### Suezo recovery monitoring
+
+The units in `deploy/` check Suezo every three hours at 00:00, 03:00, etc.
+They require the checkout and virtualenv at `%h/prj/mirror`. Register all three
+units with `systemctl --user link` using absolute paths, then run
+`systemctl --user enable --now mirror-suezou-watch.timer`.
+The probe requires recognizable catalogue content and binary links, not merely
+HTTP 200. Recovery triggers live discovery and the separate archive worker.
+Health checks are recorded in SQLite. The persistent timer catches missed runs
+when the user manager returns; checks require the host to be running.
+HF credentials remain in the local AWS profile and are not copied into CI.
