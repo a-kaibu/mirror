@@ -757,7 +757,7 @@ def matching_mirrors(store, row, record):
     Original source metadata remains unchanged. Actual selected URLs and every
     failed attempt are recorded by download; all bytes still pass validate().
     """
-    if record["site"] != "holyseal" or not record.get("expected_md5") or not record.get("brand"):
+    if record["site"] == "lathercraft" or not record.get("expected_md5") or not record.get("brand"):
         return []
     candidates = store.db.execute("""SELECT i.data FROM items i
         JOIN item_catalog c ON c.item_id=i.id JOIN products p ON p.id=c.product_id

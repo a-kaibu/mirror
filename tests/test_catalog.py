@@ -109,6 +109,27 @@ class CatalogTests(unittest.TestCase):
         other_row = self.store.db.execute("SELECT * FROM items WHERE id='other'").fetchone()
         self.assertEqual(a.matching_mirrors(self.store, other_row, other), [])
 
+    def test_closed_mirror_sources_can_recover_checksum_bound_live_copy(self):
+        donor=self.record("donor")
+        donor["mirrors"]=["https://storage1.lathercraft.net/recovered.zip"]
+        self.store.add(donor)
+        for site in ["kokoron","lapistan","mimimaid","suezou","xgame","magic_mirror","redistribution"]:
+            with self.subTest(site=site):
+                record=self.record(site,"Ｂｒａｎｄ",site)
+                record["mirrors"]=["https://closed.test/old.zip"]
+                self.store.add(record)
+                fetch=Fetch([Response(PAYLOAD)])
+                self.assertEqual(a.download(self.store,fetch,ident=site,export=False),0)
+                self.assertEqual(fetch.requests[0][0],donor["mirrors"][0])
+                updated=self.store.db.execute("SELECT * FROM items WHERE id=?",(site,)).fetchone()
+                self.assertEqual(updated["status"],"verified")
+                self.assertEqual(json.loads(updated["data"])["mirrors"],record["mirrors"])
+                self.assertEqual(a.matching_mirrors(self.store,updated,{**record,"expected_md5":None}),[])
+                self.assertEqual(a.matching_mirrors(self.store,updated,{**record,"expected_size":1}),[])
+        other=self.record("other","Other","kokoron");self.store.add(other)
+        row=self.store.db.execute("SELECT * FROM items WHERE id='other'").fetchone()
+        self.assertEqual(a.matching_mirrors(self.store,row,other),[])
+
     def test_repaired_movies_are_not_game_patches(self):
         record = self.record("movie")
         record["filename"] = "opening_movie.zip"
