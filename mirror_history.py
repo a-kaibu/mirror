@@ -36,7 +36,7 @@ def discover(store,fetcher,source):
             if cached and cached['status']=='ok':payload=json.loads(cached['data'])
             else:
                 endpoint='https://web.archive.org/cdx/search/cdx?'+urlencode({'url':url,'output':'json','filter':'statuscode:200','fl':'timestamp,original,mimetype,statuscode,digest','limit':10000})
-                with fetcher.open(endpoint) as response:raw=response.read(16*1024*1024+1)
+                with a.open_archive_index(fetcher,endpoint) as response:raw=response.read(16*1024*1024+1)
                 if len(raw)>16*1024*1024:raise ValueError('CDX response exceeds bound')
                 payload=json.loads(raw)
                 if isinstance(payload,list) and len(payload)>=10001:raise ValueError('CDX truncation requires pagination')

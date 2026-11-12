@@ -25,7 +25,7 @@ def parse_moepedia(html,page):
             from mirror_sources import clean
             raw=clean(target)
             stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
-            mirrors=([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw]
+            mirrors=([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw]
             if raw!=a.original(target):mirrors.append(a.original(target))
             if ident in result:
                 result[ident]["mirrors"]=list(dict.fromkeys(result[ident]["mirrors"]+mirrors));continue
@@ -60,7 +60,7 @@ def parse_multi_inside(html,page):
             if not target or unquote(Path(urlsplit(a.original(target)).path).name)!=filename:continue
             stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
             raw=a.original(target)
-            mirrors.extend(([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw])
+            mirrors.extend(([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw])
         if not mirrors:continue
         materials=[n.text().replace("◇", "").strip() for n in block.all({"span"}) if classified(n,"material")]
         dates=[n.text().strip("[]").replace("/","-") for n in block.all({"span"}) if classified(n,"date")]
@@ -98,7 +98,7 @@ def parse_mimimaid(html,page):
                 if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
                 raw=a.original(target);filename=unquote(Path(urlsplit(raw).path).name)
                 stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
-                mirrors=([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw]
+                mirrors=([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw]
                 ident=hashlib.sha256(("mimimaid\n"+a.original(page)+"\n"+filename).encode()).hexdigest()
                 results.append({"id":ident,"site":"mimimaid","page_url":page,"original_page_url":a.original(page),
                     "title":title,"brand":brand,"release_name":fields["素材名"],"filename":filename,"mirrors":mirrors,
@@ -135,7 +135,7 @@ def parse_nekoneko(html,page):
         ident=hashlib.sha256(("nekoneko\n"+a.original(page)+"\n"+filename).encode()).hexdigest()
         results.append({"id":ident,"site":"nekoneko","page_url":page,"original_page_url":a.original(page),
             "title":title,"brand":brand,"release_name":release,"filename":filename,
-            "mirrors":([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+            "mirrors":([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
             "expected_md5":digest[1].lower(),"expected_size":None,"size_text":size[1],"published_at":None,
             "fields":{"parser":"nekoneko","size_is_rounded":True}})
     return list({r["id"]:r for r in results}.values())
@@ -161,7 +161,7 @@ def parse_tsundere(html,page):
             ident=hashlib.sha256(("tsundere\n"+a.original(page)+"\n"+filename).encode()).hexdigest()
             results.append({"id":ident,"site":"tsundere","page_url":page,"original_page_url":a.original(page),
                 "title":title,"brand":brand,"release_name":release,"filename":filename,
-                "mirrors":([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+                "mirrors":([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
                 "expected_md5":digest[1].lower() if digest else None,"expected_size":int(size[1].replace(",", "")) if size else None,
                 "size_text":fields.get("ファイルサイズ"),"published_at":fields.get("当サイト公開日"),"fields":fields})
     return list({r["id"]:r for r in results}.values())
@@ -185,7 +185,7 @@ def parse_dlsite(html,page):
         ident=hashlib.sha256(('dlsite\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
         results.append({'id':ident,'site':'dlsite','page_url':page,'original_page_url':a.original(page),
             'title':titles[0],'brand':brand,'release_name':'体験版','filename':filename,
-            'mirrors':([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+            'mirrors':([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
             'expected_md5':None,'expected_size':None,'size_text':None,'published_at':None,
             'fields':{'dlsite_product_id':product[1],'published_link':target}})
     return list({r['id']:r for r in results}.values())
@@ -216,7 +216,7 @@ def parse_d_station(html,page):
         date=re.search(r'\b(\d{4})/(\d{1,2})/(\d{1,2})\b',text)
         results.append({'id':ident,'site':'d_station','page_url':page,'original_page_url':a.original(page),
             'title':title,'brand':brand,'release_name':release,'filename':None,
-            'mirrors':([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+            'mirrors':([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
             'expected_md5':digest[1].lower(),'expected_size':int(size[1].replace(',','')),'size_text':size[0],
             'published_at':f'{date[1]}-{int(date[2]):02}-{int(date[3]):02}' if date else None,
             'fields':{'parser':'d_station','download_endpoint':raw}})
@@ -257,7 +257,7 @@ def parse_lapistan(html,page):
         ident=hashlib.sha256(('lapistan\n'+a.original(page)+'\n'+filename+'\n'+digest[1].lower()).encode()).hexdigest()
         results.append({'id':ident,'site':'lapistan','page_url':page,'original_page_url':a.original(page),
             'title':title,'brand':brand,'release_name':release,'filename':filename,
-            'mirrors':([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+            'mirrors':([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
             'expected_md5':digest[1].lower(),'expected_size':None,'size_text':size[1] if size else None,
             'published_at':f'{date[1]}-{int(date[2]):02}-{int(date[3]):02}' if date else None,
             'fields':{'parser':'lapistan','size_is_rounded':True}})
@@ -288,7 +288,7 @@ def parse_kokoron(html,page):
                 target=a.resolve(page,link.attrs.get('href',''))
                 if not target or unquote(Path(urlsplit(a.original(target)).path).name)!=filename:continue
                 raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
-                mirrors.extend(([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw])
+                mirrors.extend(([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw])
         sha=re.search(r'SHA256\s*\('+re.escape(filename)+r'\)\s*=\s*([a-fA-F0-9]{64})',text)
         ident=hashlib.sha256(('kokoron\n'+a.original(page)+'\n'+filename+'\n'+digest[2].lower()).encode()).hexdigest()
         results.append({'id':ident,'site':'kokoron','page_url':page,'original_page_url':a.original(page),
@@ -330,7 +330,7 @@ def parse_dmm(html,page):
         ident=hashlib.sha256(('dmm\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
         results.append({'id':ident,'site':'dmm','page_url':page,'original_page_url':a.original(page),
             'title':titles[0],'brand':brand,'release_name':'体験版','filename':filename,
-            'mirrors':([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+            'mirrors':([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
             'expected_md5':None,'expected_size':None,'size_text':None,'published_at':None,
             'fields':{'dmm_content_id':parts.path.strip('/').split('/')[-1],'published_link':target}})
     return list({r['id']:r for r in results}.values())
@@ -365,7 +365,7 @@ def parse_alice_archives(html, page):
         platform = re.match(r"(.+?版)", label)
         ident = hashlib.sha256(("alice_archives\n"+original+"\n"+binary.path).encode()).hexdigest()
         stamp = a.WAYBACK.match(target) or a.WAYBACK.match(page)
-        mirrors = ([a.replay(raw,stamp[1],raw=True)] if stamp else []) + [raw]
+        mirrors = ([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else []) + [raw]
         record = {"id":ident,"site":"alice_archives","page_url":page,"original_page_url":original,
             "title":titles[0],"brand":brand,"release_name":"本編 "+(platform[1] if platform else label),
             "filename":filename,"mirrors":mirrors,"expected_md5":None,
@@ -421,7 +421,7 @@ def parse_alicefree(html, page):
             stamp = a.WAYBACK.match(target) or a.WAYBACK.match(page)
             result[ident] = {"id":ident,"site":"alicefree","page_url":page,"original_page_url":original,
                 "title":title,"brand":"アリスソフト","release_name":("資料 ブックレット " if book else "本編 ")+label,
-                "filename":filename,"mirrors":([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+                "filename":filename,"mirrors":([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
                 "expected_md5":None,"expected_size":None,"size_text":None,"published_at":None,"fields":fields}
     return list(result.values())
 
@@ -454,7 +454,7 @@ def parse_getchu(html, page):
         stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
         result[ident]={"id":ident,"site":"getchu","page_url":page,"original_page_url":a.original(page),
             "title":titles[0],"brand":brand[1],"release_name":"ムービー","filename":filename,
-            "mirrors":([a.replay(raw,stamp[1],raw=True)] if stamp else [])+[raw],
+            "mirrors":([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
             "expected_md5":None,"expected_size":None,"size_text":None,"published_at":None,
             "fields":{"published_media_label":label,"getchu_product_url":a.original(page)}}
     return list(result.values())

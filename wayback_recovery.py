@@ -52,7 +52,7 @@ def discover(store, fetcher, limit=None, refresh=False, site="both"):
                 endpoint = "https://web.archive.org/cdx/search/cdx?" + urlencode({"url": target,
                     "output": "json", "filter": "statuscode:200", "fl": "timestamp,original,mimetype,statuscode,digest,length", "limit": "10000"})
                 try:
-                    with fetcher.open(endpoint) as response:
+                    with a.open_archive_index(fetcher,endpoint) as response:
                         raw = response.read(16 * 1024 * 1024 + 1)
                     if len(raw) > 16 * 1024 * 1024:
                         raise ValueError("CDX response exceeds 16 MiB")

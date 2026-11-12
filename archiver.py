@@ -57,8 +57,9 @@ def original(url):
     return match[2] if match else url
 
 
-def replay(url, timestamp="20181025223313", raw=False):
-    return f"https://web.archive.org/web/{timestamp}{'id_' if raw else ''}/{original(url)}"
+def replay(url, timestamp="20181025223313", raw=False, scheme="https"):
+    if scheme not in {"http", "https"}:raise ValueError("unsupported archive transport")
+    return f"{scheme}://web.archive.org/web/{timestamp}{'id_' if raw else ''}/{original(url)}"
 
 
 def canonical(url):
@@ -75,8 +76,8 @@ def resolve(base, href):
             target = urljoin(base, href)
             if not WAYBACK.match(target):
                 return None
-            return replay(original(target), stamp)
-        return replay(urljoin(original(base), href), stamp)
+            return replay(original(target), stamp, scheme=urlsplit(base).scheme)
+        return replay(urljoin(original(base), href), stamp, scheme=urlsplit(base).scheme)
     result = canonical(urljoin(base, href))
     return result if urlsplit(result).scheme in {"http", "https"} else None
 
@@ -233,7 +234,7 @@ def parse_detail(html, url, site):
             meta[key] = meta[key] or page_meta[key]
         mirrors = list(dict.fromkeys(target for _, target in candidates))
         if site == "holyseal":
-            mirrors = [replay(u, WAYBACK.match(url)[1], raw=True) for u in mirrors] + [original(u) for u in mirrors]
+            mirrors = [replay(u, WAYBACK.match(url)[1], raw=True, scheme=urlsplit(url).scheme) for u in mirrors] + [original(u) for u in mirrors]
         ident = hashlib.sha256((site + "\n" + original(url) + "\n" + name).encode()).hexdigest()
         result.append({"id": ident, "site": site, "page_url": url, "original_page_url": original(url),
                        "title": meta["fields"].get("作品") or title,
@@ -387,6 +388,19 @@ class Fetcher:
                 if attempt + 1 == self.retries:
                     raise
                 time.sleep(2 ** attempt)
+
+
+def open_archive_index(fetcher, url):
+    """Use the public HTTP CDX endpoint only if its HTTPS port is refused."""
+    parts=urlsplit(url)
+    if parts.hostname!="web.archive.org" or parts.path!="/cdx/search/cdx":
+        raise ValueError("not a Wayback CDX endpoint")
+    try:
+        return fetcher.open(url)
+    except (URLError,ConnectionRefusedError) as error:
+        reason=error.reason if isinstance(error,URLError) else error
+        if parts.scheme!="https" or not isinstance(reason,ConnectionRefusedError):raise
+        return fetcher.open(urlunsplit(("http",parts.netloc,parts.path,parts.query,"")))
 
 
 class CachedPageFetcher:
@@ -722,6 +736,17 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
                 print(f"verified {rel} ({result['size']} bytes)")
             except (OSError, ValueError, http.client.HTTPException) as e:
                 error = str(e)
+                # Some Wayback endpoints currently refuse TCP/443 while their
+                # published HTTP replay remains available. Try the exact same
+                # capture only when an independent expected checksum can still
+                # authenticate the bytes. TLS failures/HTTP denials never trigger it.
+                reason = e.reason if isinstance(e, URLError) else e
+                if (isinstance(reason, ConnectionRefusedError) and WAYBACK.match(url)
+                        and urlsplit(url).scheme == "https"
+                        and (record.get("expected_md5") or record.get("expected_sha256"))):
+                    alternate = "http://" + urlsplit(url).netloc + urlsplit(url).path
+                    if urlsplit(url).query:alternate += "?" + urlsplit(url).query
+                    if alternate not in mirrors:mirrors.insert(mirrors.index(url)+1,alternate)
                 store.update_if_current(row["id"], row["data"], status="failed", error=error)
                 print(f"download failed {url}: {error}", file=sys.stderr)
             store.db.execute("INSERT INTO attempts(item_id,url,attempted_at,error,tls_pin) VALUES(?,?,?,?,?)", (row["id"], url, now(), error, getattr(source_fetcher, "last_tls_pin", None)))

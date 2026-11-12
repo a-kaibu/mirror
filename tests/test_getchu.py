@@ -20,6 +20,13 @@ class GetchuTests(unittest.TestCase):
         self.assertEqual(rows[0]["mirrors"],["https://web.archive.org/web/20190611134157id_/http://trial.getchu.com/D100/123/123.mp4","http://trial.getchu.com/D100/123/123.mp4"])
         self.assertEqual(parse_getchu(html,"https://www.getchu.com/all/demo.html"),[])
 
+    def test_published_http_replay_transport_is_preserved(self):
+        page="http://web.archive.org/web/20190611134157/http://www.getchu.com/soft.phtml?id=123"
+        html='<meta property="og:title" content="Game (Brand)"><h1 id="soft-title">Game</h1><video getchutitle="Game デモムービー" src="http://trial.getchu.com/123.mp4"></video>'
+        rows=parse_getchu(html,page)
+        self.assertEqual(rows[0]["mirrors"][0],"http://web.archive.org/web/20190611134157id_/http://trial.getchu.com/123.mp4")
+        self.assertEqual(a.resolve(page,"other.html"),"http://web.archive.org/web/20190611134157/http://www.getchu.com/other.html")
+
     def test_known_capture_precedes_unverified_availability_requests(self):
         source=m.definitions()["getchu"]
         capture="https://web.archive.org/web/20190611134157/http://www.getchu.com/soft.phtml?id=123"

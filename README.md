@@ -452,3 +452,11 @@ continues later tables:
 ```sh
 python erogamescape_ranges.py --table fanza_doujin_sales
 ```
+
+Wayback transport retains the protocol of published replay pages and their
+relative links. If a replay's HTTPS TCP port is explicitly refused, a binary
+transfer may try the identical HTTP capture only when an expected MD5 or
+SHA-256 is present; both attempts are logged and the digest must match. CDX
+index lookups likewise try their public HTTP endpoint on connection refusal.
+Certificate failures, HTTP access denials and rate limits do not trigger a
+transport change. This does not relax validation for other source hosts.
