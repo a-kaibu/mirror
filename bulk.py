@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import shutil
+from urllib.parse import urlsplit
 
 from archiver import download, now, publish, publish_metadata
 
@@ -53,11 +54,20 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
                   limit=None, keep_local=False, reserve_bytes=16 * 1024**3, checkpoint_every=10, retry_failed=False):
     stats = {"processed": 0, "published": 0, "reused": 0, "failed": 0, "evicted_bytes": 0}
     fetcher.reserve_bytes = reserve_bytes
+    # Rank checksum-linked live mirrors ahead of dead historical hosts. This
+    # only schedules work; matching_mirrors still enforces manufacturer and MD5.
+    live_sizes = {}
+    for source in store.rows("lathercraft"):
+        data = json.loads(source["data"])
+        if data.get("expected_md5") and any("storage1.lathercraft.net" == urlsplit(u).hostname for u in data["mirrors"]):
+            live_sizes[data["expected_md5"]] = data.get("expected_size")
     def priority(row):
         record = json.loads(row["data"])
         from catalog import release_info
         kind = release_info(record)[0]
-        return (0 if kind in {"trial", "patch"} else (1 if kind == "movie" else 2), record.get("expected_size") or 2**63, row["id"])
+        return (0 if kind in {"trial", "patch"} else (1 if kind == "movie" else 2),
+            0 if record.get("expected_md5") in live_sizes else 1,
+            record.get("expected_size") or live_sizes.get(record.get("expected_md5")) or 2**63, row["id"])
     visited = set()
     while True:
         candidates = [r for r in store.rows(site) if r["id"] not in visited and (retry_failed or r["status"] != "failed")]

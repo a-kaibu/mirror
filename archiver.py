@@ -613,6 +613,30 @@ def transfer(fetcher, url, destination, record):
     return result
 
 
+def matching_mirrors(store, row, record):
+    """Recover URLs only from an explicit same-maker published MD5 match.
+
+    Original source metadata remains unchanged. Actual selected URLs and every
+    failed attempt are recorded by download; all bytes still pass validate().
+    """
+    if record["site"] != "holyseal" or not record.get("expected_md5") or not record.get("brand"):
+        return []
+    candidates = store.db.execute("""SELECT i.data FROM items i
+        JOIN item_catalog c ON c.item_id=i.id JOIN products p ON p.id=c.product_id
+        WHERE i.site='lathercraft' AND p.manufacturer_id=(SELECT p2.manufacturer_id
+        FROM item_catalog c2 JOIN products p2 ON p2.id=c2.product_id WHERE c2.item_id=?)""", (row["id"],))
+    mirrors = []
+    for candidate in candidates:
+        donor = json.loads(candidate[0])
+        if donor.get("expected_md5") != record["expected_md5"]:
+            continue
+        if (record.get("expected_size") is not None and donor.get("expected_size") is not None
+                and record["expected_size"] != donor["expected_size"]):
+            continue
+        mirrors.extend(sorted(donor["mirrors"], key=lambda u: urlsplit(u).hostname != "storage1.lathercraft.net"))
+    return list(dict.fromkeys(mirrors))
+
+
 def download(store, fetcher, site="both", limit=None, ident=None, export=True):
     failures = processed = 0
     if ident is not None and not any(row["id"] == ident for row in store.rows(site)):
@@ -640,9 +664,9 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
         rel = f"files/{row['site']}/{row['id']}/{name}"
         path = store.root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        if not record["mirrors"]:
+        mirrors = list(dict.fromkeys(matching_mirrors(store, row, record) + record["mirrors"]))
+        if not mirrors:
             store.update(row["id"], status="failed", error="No mirror link preserved on source page")
-        mirrors = record["mirrors"]
         if record["site"] == "lathercraft":
             # storage2 repeatedly timed out in live collection; try the working
             # primary first without changing the source's recorded mirror list.

@@ -88,6 +88,27 @@ class CatalogTests(unittest.TestCase):
         r = a.parse_detail(HTML, "https://example.test/items/" + ident, "lathercraft")[0]
         return {**r, "id": ident, "brand": brand, "site": site, "filename": "日本語 体験版.zip", "release_name": "体験版"}
 
+    def test_recover_mirrors_requires_published_digest_and_same_maker(self):
+        donor = self.record("donor")
+        donor["mirrors"] = ["https://storage1.lathercraft.net/recovered.zip"]
+        self.store.add(donor)
+        holy = self.record("holy", "Ｂｒａｎｄ", "holyseal")
+        holy["mirrors"] = []
+        self.store.add(holy)
+        row = self.store.db.execute("SELECT * FROM items WHERE id='holy'").fetchone()
+        self.assertEqual(a.matching_mirrors(self.store, row, holy), donor["mirrors"])
+        a.download(self.store, Fetch([Response(PAYLOAD)]), ident="holy")
+        updated = self.store.db.execute("SELECT * FROM items WHERE id='holy'").fetchone()
+        self.assertEqual(updated["status"], "verified")
+        self.assertEqual(updated["source_url"], donor["mirrors"][0])
+        self.assertEqual(json.loads(updated["data"])["mirrors"], [])
+        for changes in [{"expected_md5": None}, {"expected_md5": "f" * 32}, {"expected_size": 99999}]:
+            self.assertEqual(a.matching_mirrors(self.store, row, {**holy, **changes}), [])
+        other = self.record("other", "Other", "holyseal")
+        self.store.add(other)
+        other_row = self.store.db.execute("SELECT * FROM items WHERE id='other'").fetchone()
+        self.assertEqual(a.matching_mirrors(self.store, other_row, other), [])
+
     def test_cross_site_merge_only_after_matching_bytes(self):
         self.store.add(self.record("a"))
         self.store.add(self.record("b", "Ｂｒａｎｄ", "holyseal"))
