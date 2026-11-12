@@ -419,6 +419,21 @@ def open_archive_index(fetcher, url):
         return fetcher.open(urlunsplit(("http",parts.netloc,parts.path,parts.query,"")))
 
 
+
+def open_archive_page(fetcher, url, headers=None):
+    """Fetch catalogue HTML at the same capture if Wayback HTTPS is refused."""
+    parts=urlsplit(url)
+    try:
+        return fetcher.open(url, headers)
+    except (URLError,ConnectionRefusedError) as error:
+        reason=error.reason if isinstance(error,URLError) else error
+        if (parts.scheme!='https' or parts.netloc!='web.archive.org'
+                or not re.match(r'^/web/\d{14}(?:id_)?/',parts.path)
+                or not isinstance(reason,ConnectionRefusedError)):
+            raise
+        return fetcher.open(urlunsplit(('http',parts.netloc,parts.path,parts.query,'')),headers)
+
+
 def archive_index_scheme(store,target_url,index_url=None):
     """Retain the actual public CDX transport when deriving replay URLs."""
     if index_url is not None:
@@ -555,7 +570,7 @@ def crawl(store, fetcher, site, seed, max_pages=None, max_items=None, export=Tru
         rel = "html/" + hashlib.sha256(url.encode()).hexdigest() + ".html"
         effective_url = None
         try:
-            with fetcher.open(url) as response:
+            with open_archive_page(fetcher,url) as response:
                 if site == "holyseal":
                     final = WAYBACK.match(response.geturl())
                     if not final or urlsplit(original(response.geturl())).hostname != urlsplit(original(seed)).hostname:

@@ -193,7 +193,7 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
             target=url if mode=="live" or a.WAYBACK.match(url) else availability(fetcher,url,source)
             if target is None:
                 store.db.execute("UPDATE mirror_frontier SET status='no_capture_returned',checked_at=? WHERE site=? AND url=? AND mode=?",(a.now(),source["key"],url,mode));store.db.commit();print("mirror",source["key"],"no capture",url,flush=True);continue
-            with fetcher.open(target, {"Referer":"http://retropc.net/alice/" if urlsplit(target).path.endswith("/menu.html") else "http://retropc.net/alice/menu.html"} if source["key"]=="alice_archives" and mode=="live" else None) as response:
+            with a.open_archive_page(fetcher,target, {"Referer":"http://retropc.net/alice/" if urlsplit(target).path.endswith("/menu.html") else "http://retropc.net/alice/menu.html"} if source["key"]=="alice_archives" and mode=="live" else None) as response:
                 actual=a.canonical(response.geturl())
                 if not allowed(source,actual):raise ValueError("mirror redirected outside registered hosts")
                 if mode=="archive" and not a.WAYBACK.match(actual):raise ValueError("archive left Wayback")

@@ -57,3 +57,23 @@ class WaybackTransportTests(unittest.TestCase):
         with self.assertRaises(HTTPError):a.open_archive_index(denied,url)
         self.assertEqual(len(denied.requests),1)
         with self.assertRaises(ValueError):a.open_archive_index(Fetch([]),"https://other.test/cdx/search/cdx")
+
+    def test_catalogue_refusal_preserves_capture_query_and_headers(self):
+        url='https://web.archive.org/web/20190531095306/http://www.getchu.com/all/demo.html?genre=doujin&page=2'
+        headers={'Referer':'https://source.test/'}
+        fetch=Fetch([URLError(ConnectionRefusedError(111,'refused')),Response(b'<html>catalogue</html>')])
+        with a.open_archive_page(fetch,url,headers) as response:self.assertIn(b'catalogue',response.read())
+        self.assertEqual(fetch.requests,[(url,headers),(url.replace('https://','http://',1),headers)])
+
+    def test_catalogue_fallback_is_limited_to_refused_wayback_capture(self):
+        import ssl
+        url='https://web.archive.org/web/20190531095306/http://www.getchu.com/'
+        cases=[(url,HTTPError(url,429,'slow down',{},None)),
+               (url,URLError(ssl.SSLCertVerificationError('invalid certificate'))),
+               ('https://publisher.test/web/20190531095306/',URLError(ConnectionRefusedError(111,'refused'))),
+               ('https://web.archive.org/save',URLError(ConnectionRefusedError(111,'refused')))]
+        for target,error in cases:
+            with self.subTest(target=target,error=str(error)):
+                fetch=Fetch([error])
+                with self.assertRaises(type(error)):a.open_archive_page(fetch,target)
+                self.assertEqual(len(fetch.requests),1)
