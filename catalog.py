@@ -44,9 +44,12 @@ def initialize(store):
       CREATE TABLE IF NOT EXISTS manufacturer_aliases(alias TEXT PRIMARY KEY, manufacturer_id TEXT NOT NULL REFERENCES manufacturers(id));
       CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY, manufacturer_id TEXT NOT NULL REFERENCES manufacturers(id), title TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS item_catalog(item_id TEXT PRIMARY KEY REFERENCES items(id), product_id TEXT NOT NULL REFERENCES products(id), kind TEXT NOT NULL, version TEXT, platform TEXT, requirements TEXT);
+      CREATE TABLE IF NOT EXISTS published_objects(key TEXT PRIMARY KEY, sha256 TEXT NOT NULL, size INTEGER NOT NULL, verified_at TEXT NOT NULL);
     """)
     if "remote_verified_at" not in {r[1] for r in db.execute("PRAGMA table_info(items)")}:
         db.execute("ALTER TABLE items ADD COLUMN remote_verified_at TEXT")
+    if "reused_from" not in {r[1] for r in db.execute("PRAGMA table_info(items)")}:
+        db.execute("ALTER TABLE items ADD COLUMN reused_from TEXT")
     if "response_url" not in {r[1] for r in db.execute("PRAGMA table_info(pages)")}:
         db.execute("ALTER TABLE pages ADD COLUMN response_url TEXT")
     if "tls_pin" not in {r[1] for r in db.execute("PRAGMA table_info(attempts)")}:
@@ -104,12 +107,13 @@ def manifest(store):
             "name": data.get("release_name") or data["title"], "version": r["version"], "platform": r["platform"],
             "requirements": r["requirements"], "filename": data["filename"], "size": r["size"], "md5": r["md5"],
             "sha256": r["sha256"], "download_url": None, "remote_key": None, "public_verified_at": None, "sources": []})
-        if r["status"] == "verified" and r["sha256"] and r["remote_sha256"] == r["sha256"] and r["remote_verified_at"]:
+        if r["status"] in {"verified", "archived"} and r["sha256"] and r["remote_sha256"] == r["sha256"] and r["remote_verified_at"]:
             namespace, bucket, key = r["remote_key"].split("/", 2)
             item.update(download_url=public_url(namespace, bucket, key, download=True), remote_key=r["remote_key"], public_verified_at=r["remote_verified_at"])
         item["sources"].append({"id": r["id"], "site": r["site"], "page_url": data["page_url"],
             "release_name": data.get("release_name"), "kind": r["kind"], "version": r["version"],
             "platform": r["platform"], "requirements": r["requirements"],
+            "reused_from": r["reused_from"],
             "original_page_url": data.get("original_page_url"), "filename": data["filename"],
             "published_at": data.get("published_at"), "mirrors": data["mirrors"], "expected_md5": data.get("expected_md5"),
             "expected_size": data.get("expected_size"), "size_text": data.get("size_text"), "fields": data.get("fields", {}),

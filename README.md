@@ -52,6 +52,24 @@ Pass `--root /path/to/archive` **before** the subcommand. Only one writer should
 operate on an archive at a time. `download --id <source-record-id>` selects a
 specific source record; IDs appear in the manifest and SQLite.
 
+## Large collections
+
+After crawling, `uv run python archiver.py archive-batch --site lathercraft`
+processes trials and patches before movies, starting with smaller known files.
+Each file is downloaded, validated, uploaded and fully read back before its local
+working copy can be removed. `--keep-local` retains copies. A 16 GiB disk reserve
+is enforced during transfers; partial downloads are preserved for resumption.
+Checkpoint metadata is published every ten successes and at batch completion.
+Upload failures stop the batch; individual source failures remain recorded for retry.
+
+A source entry with the same published MD5 and compatible exact size can reference
+an unambiguous, already publicly verified file for the same manufacturer. The
+`reused_from` field records this association without claiming a fresh source fetch.
+Files with differing hashes or makers are not merged this way. `archived` status
+means the public copy is verified and the local working copy need not exist.
+Repeated uploads skip previously verified objects, and unchanged source HTML is
+not repeatedly uploaded. SQLite remains the only authoritative state.
+
 ## Current sources
 
 - **LatherCraft**: real `/items?page=N` listings and `/items/{id}` detail pages.

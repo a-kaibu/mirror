@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import shutil
 import sqlite3
 import ssl
 import sys
@@ -194,6 +195,12 @@ def parse_detail(html, url, site):
         if not EXT.search(name):
             name = next((v for k, v in labels(root).items() if k in {"ファイル名", "Filename", "filename"}), name or "download.bin")
         groups.setdefault(name, []).append((a, target))
+    if site == "lathercraft" and not groups:
+        filename = labels(root).get("ファイル名")
+        if filename:
+            # Removed/preparing downloads can still have authoritative metadata.
+            # Retain them for recovery from other mirrors rather than dropping them.
+            groups[filename] = []
     result = []
     for name, candidates in groups.items():
         context = root
@@ -521,6 +528,9 @@ def transfer(fetcher, url, destination, record):
         count = 0
         with part.open("ab" if offset else "wb") as f:
             while chunk := response.read(1024 * 1024):
+                reserve = getattr(fetcher, "reserve_bytes", 0)
+                if reserve and shutil.disk_usage(destination.parent).free < reserve + len(chunk):
+                    raise OSError("disk reserve reached; resumable partial preserved")
                 f.write(chunk)
                 count += len(chunk)
         if expected_body is not None and count != int(expected_body):
@@ -538,7 +548,7 @@ def transfer(fetcher, url, destination, record):
     return result
 
 
-def download(store, fetcher, site="both", limit=None, ident=None):
+def download(store, fetcher, site="both", limit=None, ident=None, export=True):
     failures = processed = 0
     if ident is not None and not any(row["id"] == ident for row in store.rows(site)):
         raise ValueError("source record ID not found for selected site: " + ident)
@@ -546,11 +556,14 @@ def download(store, fetcher, site="both", limit=None, ident=None):
         if ident is not None and row["id"] != ident:
             continue
         record = json.loads(row["data"])
+        if row["status"] == "archived" and row["sha256"] and row["remote_sha256"] == row["sha256"] and row["remote_verified_at"]:
+            continue
         source_fetcher = fetcher
         if getattr(fetcher, "tls_pins", {}) and not record.get("expected_md5"):
             # A file without a publisher digest must use ordinary TLS on all
             # mirrors, including redirects into a configured legacy host.
             source_fetcher = Fetcher(fetcher.delay, fetcher.timeout, fetcher.retries)
+            source_fetcher.reserve_bytes = getattr(fetcher, "reserve_bytes", 0)
         if row["status"] == "verified":
             try:
                 validate(store.root / row["path"], record, dict(row))
@@ -582,7 +595,8 @@ def download(store, fetcher, site="both", limit=None, ident=None):
                 break
         else:
             failures += 1
-    store.export()
+    if export:
+        store.export()
     return failures
 
 
@@ -649,7 +663,7 @@ def init_bucket(namespace, bucket, profile="hf"):
     print(f"create/write/public read verified: https://huggingface.co/buckets/{namespace}/{bucket}")
 
 
-def publish(store, namespace, bucket, profile="hf", site="both", limit=None):
+def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ident=None, metadata=True, recheck=False):
     from boto3.s3.transfer import TransferConfig
     from botocore.exceptions import ClientError
     client = s3_client(namespace, profile)
@@ -663,18 +677,26 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None):
     count = 0
     checked = {}
     for row in store.rows(site):
-        if row["status"] != "verified":
+        if ident is not None and row["id"] != ident:
+            continue
+        if row["status"] not in {"verified", "archived"}:
+            continue
+        expected_key = f"{namespace}/{bucket}/files/{row['sha256']}"
+        published = row["sha256"] and row["remote_sha256"] == row["sha256"] and row["remote_verified_at"] and row["remote_key"] == expected_key
+        if published and not recheck:
             continue
         if limit is not None and count >= limit:
             break
-        path = store.root / row["path"]
-        result = validate(path, json.loads(row["data"]), dict(row))
+        path = store.root / row["path"] if row["path"] else None
+        result = validate(path, json.loads(row["data"]), dict(row)) if path else {"sha256": row["sha256"], "size": row["size"]}
         key = "files/" + result["sha256"]
         count += 1
         # A successful upload alone is insufficient. Always anonymously read
         # back the complete object, including on a rerun after interruption.
         known = store.db.execute("SELECT 1 FROM items WHERE remote_key=? AND remote_sha256=? AND remote_verified_at IS NOT NULL", (f"{namespace}/{bucket}/{key}", result["sha256"])).fetchone()
         if key not in checked and not known:
+            if path is None:
+                raise ValueError("local file unavailable for unpublished object: " + row["id"])
             client.upload_file(str(path), bucket, key, ExtraArgs={"Metadata": {"sha256": result["sha256"]}}, Config=config)
         remote_sha, remote_size = checked.get(key) or public_digest(namespace, bucket, key)
         if (remote_sha, remote_size) != (result["sha256"], result["size"]):
@@ -683,6 +705,16 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None):
         checked[key] = remote_sha, remote_size
         store.update(row["id"], remote_key=f"{namespace}/{bucket}/{key}", remote_sha256=remote_sha, remote_verified_at=now())
         print(f"public read-back verified: {namespace}/{bucket}/{key}")
+    if metadata:
+        publish_metadata(store, namespace, bucket, profile)
+    print(f"published {count} file(s); https://huggingface.co/buckets/{namespace}/{bucket}")
+    return count
+
+
+def publish_metadata(store, namespace, bucket, profile="hf"):
+    from boto3.s3.transfer import TransferConfig
+    client = s3_client(namespace, profile)
+    config = TransferConfig(multipart_threshold=256 * 1024**2, multipart_chunksize=256 * 1024**2, max_concurrency=2)
     store.export()
     # Publish provenance and saved HTML, never credentials, SQLite journals,
     # partial files, or arbitrary files from the workspace.
@@ -690,10 +722,16 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None):
     provenance += [store.root / r[0] for r in store.db.execute("SELECT path FROM pages WHERE path IS NOT NULL")]
     for path in dict.fromkeys(provenance):
         key = path.relative_to(store.root).as_posix()
-        client.upload_file(str(path), bucket, key, Config=config)
         expected = digest(path)
+        identity = f"{namespace}/{bucket}/{key}"
+        previous = store.db.execute("SELECT sha256 FROM published_objects WHERE key=?", (identity,)).fetchone()
+        if previous and previous[0] == expected["sha256"]:
+            continue
+        client.upload_file(str(path), bucket, key, Config=config)
         if public_digest(namespace, bucket, key) != (expected["sha256"], expected["size"]):
             raise ValueError(f"public provenance read-back mismatch: {key}")
+        store.db.execute("INSERT OR REPLACE INTO published_objects VALUES(?,?,?,?)", (identity, expected["sha256"], expected["size"], now()))
+        store.db.commit()
     # Consistent SQLite backup, not a copy of a live DB/WAL. Pages builds derive
     # HTML and their single JSON export from this same source of truth.
     with tempfile.TemporaryDirectory() as tmp:
@@ -704,7 +742,7 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None):
         expected = digest(snapshot)
         if public_digest(namespace, bucket, "index.sqlite3") != (expected["sha256"], expected["size"]):
             raise ValueError("public SQLite snapshot read-back mismatch")
-    print(f"published {count} file(s); https://huggingface.co/buckets/{namespace}/{bucket}")
+    print("catalog checkpoint published")
 
 
 def doctor():
@@ -750,6 +788,15 @@ def main(argv=None):
     p = subs.add_parser("alias-maker", help="merge manufacturer spelling variants in SQLite")
     p.add_argument("alias")
     p.add_argument("name")
+    p = subs.add_parser("archive-batch", help="download, publish, verify and optionally evict local working copies")
+    p.add_argument("--site", choices=["both", "lathercraft", "holyseal"], default="both")
+    p.add_argument("--namespace", default="vn-archive")
+    p.add_argument("--bucket", default="mirrors")
+    p.add_argument("--profile", default="hf")
+    p.add_argument("--limit", type=positive)
+    p.add_argument("--checkpoint-every", type=positive, default=10)
+    p.add_argument("--keep-local", action="store_true")
+    p.add_argument("--reserve-gib", type=positive, default=16)
     for command in ["crawl", "download", "verify", "upload", "status"]:
         p = subs.add_parser(command)
         p.add_argument("--site", choices=["both", "lathercraft", "holyseal"], default="both")
@@ -776,6 +823,12 @@ def main(argv=None):
         return 0
     store = Store(args.root)
     try:
+        if args.command == "archive-batch":
+            from bulk import archive_batch
+            stats = archive_batch(store, Fetcher(delay=1, timeout=25, retries=2, tls_pins=source_tls_pins()),
+                args.namespace, args.bucket, args.profile, args.site, args.limit, args.keep_local,
+                args.reserve_gib * 1024**3, args.checkpoint_every)
+            return int(bool(stats["failed"]))
         if args.command == "build-site":
             from catalog import build_site
             build_site(store, Path(args.output))
