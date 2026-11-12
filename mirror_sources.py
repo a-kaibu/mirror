@@ -47,7 +47,7 @@ def navigable(source,url):
     path=urlsplit(a.original(url)).path
     key=source["key"]
     if key=="moepedia":return path=="/" or path.startswith("/trial/") or bool(re.fullmatch(r"/game/\d+/?",path))
-    if key=="getchu":return path=="/" or path.endswith("/soft.phtml")
+    if key=="getchu":return path=="/" or path.endswith("/soft.phtml") or bool(re.fullmatch(r"/item/\d+/?",path))
     if key=="dmm":return path=="/" or "/detail/" in path
     if key=="dlsite":return path=="/" or "/work/" in path
     return True
@@ -93,6 +93,27 @@ def availability(fetcher,url,source):
     capture=closest.get("url","")
     if not a.WAYBACK.match(capture) or not allowed(source,capture):raise ValueError("capture outside registered mirror")
     return a.canonical(capture)
+
+
+def platform_page(source,fetcher,raw,actual,charset):
+    """Follow the site's published age confirmation link using its cookie jar."""
+    for _ in range(2):
+        path=urlsplit(actual).path
+        gate=source["key"]=="getchu" and path.endswith("/attestation.html") or source["key"]=="dmm" and "/age_check/" in path
+        if not gate:return raw,actual,charset
+        root=a.DOM(a.decode_html(raw,charset)).root;target=None
+        for link in root.all({"a"}):
+            href=a.resolve(actual,link.attrs.get("href", ""))
+            if not href or not allowed(source,href):continue
+            if source["key"]=="getchu" and link.text().strip()=="【すすむ】" and "/item/" in urlsplit(href).path:target=href;break
+            if source["key"]=="dmm" and link.text().strip()=="はい" and "/declared=yes/" in urlsplit(href).path:target=href;break
+        if not target:raise ValueError("age confirmation page has no supported continuation")
+        with fetcher.open(target) as response:
+            actual=a.canonical(response.geturl());raw=response.read(16*1024*1024+1);charset=response.headers.get_content_charset()
+        if not allowed(source,actual):raise ValueError("platform continuation left registered hosts")
+        if len(raw)>16*1024*1024:raise ValueError("platform HTML exceeds 16 MiB")
+    if "/age_check/" in urlsplit(actual).path or urlsplit(actual).path.endswith("/attestation.html"):raise ValueError("age confirmation did not reach product")
+    return raw,actual,charset
 
 
 def known_files(store,site):
@@ -146,6 +167,7 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
                 if mode=="archive" and not a.WAYBACK.match(actual):raise ValueError("archive left Wayback")
                 raw=response.read(16*1024*1024+1);charset=response.headers.get_content_charset()
             if len(raw)>16*1024*1024:raise ValueError("mirror HTML exceeds 16 MiB")
+            if mode=="live":raw,actual,charset=platform_page(source,fetcher,raw,actual,charset)
             html=a.decode_html(raw,charset);root=a.DOM(html).root
             rel="html/"+hashlib.sha256(actual.encode()).hexdigest()+".html"
             (store.root/rel).parent.mkdir(parents=True,exist_ok=True);(store.root/rel).write_bytes(raw)

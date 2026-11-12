@@ -135,3 +135,18 @@ class ParallelDiscoveryTests(unittest.TestCase):
             result=m.parallel_crawl(tmp,[m.definitions()[key] for key in ["getchu","dmm"]],max_pages=1)
             self.assertEqual(result,{"getchu":(1,0),"dmm":(1,0)})
             self.assertEqual(len({id(c) for c in connections}),2)
+
+
+class PlatformContinuationTests(unittest.TestCase):
+    def test_getchu_uses_published_link_and_retains_session(self):
+        url="https://www.getchu.com/php/attestation.html?aurl=product"
+        gate=b'<a href="https://www.getchu.com/item/123/?gc=gc">'
+        gate+='【すすむ】'.encode()+b'</a>'
+        network=Fetch([Response(b'<h1>Product</h1>',url="https://www.getchu.com/item/123/?gc=gc")])
+        raw,actual,_=m.platform_page(m.definitions()["getchu"],network,gate,url,None)
+        self.assertEqual(actual,"https://www.getchu.com/item/123/?gc=gc")
+        self.assertIn(b'Product',raw)
+
+    def test_stuck_gate_and_external_continuation_fail(self):
+        gate='<a href="https://evil.test/item/123/">【すすむ】</a>'.encode()
+        with self.assertRaises(ValueError):m.platform_page(m.definitions()["getchu"],Fetch([]),gate,"https://www.getchu.com/php/attestation.html",None)
