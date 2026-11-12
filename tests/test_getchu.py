@@ -41,3 +41,21 @@ class GetchuTests(unittest.TestCase):
             finally:store.db.close()
         self.assertEqual(fetch.requests[0][0],capture)
         self.assertTrue(m.navigable(source,"http://www.getchu.com/all/demo.html?genre=doujin"))
+
+    def test_trial_image_button_and_doujin_suffix(self):
+        page='http://web.archive.org/web/20140806140345/http://www.getchu.com/soft.phtml?id=783919'
+        html='''<meta property="og:title" content="Game (Brand)"><h1 id="soft-title">Game <span>[同人]</span></h1>
+        <a href="http://trial.getchu.com/783919/game_trial.zip"><img src="/common/images/demo_t.gif"></a>
+        <a href="http://trial.getchu.com/999/unrelated.zip"><img src="/common/images/demo_t.gif"></a>
+        <a href="https://other.test/783919/ad.zip">体験版</a>
+        <a href="http://trial.getchu.com/783919/unknown.zip">unknown</a>'''
+        rows=parse_getchu(html,page)
+        self.assertEqual(len(rows),1)
+        self.assertEqual((rows[0]['title'],rows[0]['brand'],rows[0]['release_name']),('Game','Brand','体験版'))
+        self.assertEqual(rows[0]['mirrors'][0],'http://web.archive.org/web/20140806140345id_/http://trial.getchu.com/783919/game_trial.zip')
+
+    def test_compromised_filename_requires_separate_checksum_association(self):
+        page='http://www.getchu.com/soft.phtml?id=1197909'
+        html='''<meta property="og:title" content="Game (Brand)"><h1 id="soft-title">Game</h1>
+        <a href="http://trial.getchu.com/D100/1197909/1197909.zip"><img src="/common/images/demo_t.gif"></a>'''
+        self.assertEqual(parse_getchu(html,page),[])

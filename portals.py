@@ -2,7 +2,7 @@
 import hashlib
 from pathlib import Path
 import re
-from urllib.parse import urlsplit,unquote
+from urllib.parse import urlsplit,unquote,parse_qs
 import archiver as a
 
 
@@ -431,7 +431,7 @@ def parse_getchu(html, page):
     if parts.hostname not in {"www.getchu.com","getchu.com"} or not (parts.path.endswith("/soft.phtml") or re.fullmatch(r"/item/\d+/?",parts.path)):
         return []
     root=a.DOM(html).root
-    titles=[n.text().strip() for n in root.all({"h1"}) if n.attrs.get("id")=="soft-title"]
+    titles=[re.sub(r"\s+\[同人\]$", "", n.text().strip()) for n in root.all({"h1"}) if n.attrs.get("id")=="soft-title"]
     og=[n.attrs.get("content","") for n in root.all({"meta"}) if n.attrs.get("property")=="og:title"]
     if len(titles)!=1 or len(og)!=1:
         return []
@@ -457,4 +457,30 @@ def parse_getchu(html, page):
             "mirrors":([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
             "expected_md5":None,"expected_size":None,"size_text":None,"published_at":None,
             "fields":{"published_media_label":label,"getchu_product_url":a.original(page)}}
+    product_id=(parse_qs(parts.query).get('id') or [parts.path.strip('/').split('/')[-1]])[0]
+    from mirror_sources import definitions
+    restricted={name.casefold() for name in definitions()['getchu'].get('checksum_required_filenames',[])}
+    for node in root.all({'a'}):
+        target=a.resolve(page,node.attrs.get('href',''))
+        if not target:continue
+        raw=a.original(target);binary=urlsplit(raw)
+        if binary.hostname!='trial.getchu.com' or not a.EXT.search(binary.path):continue
+        if not product_id.isdigit() or product_id not in binary.path.split('/'):continue
+        filename=unquote(Path(binary.path).name)
+        # The separate checksum-linked importer handles the publisher's listed
+        # compromised filenames; a labelled button alone cannot identify a build.
+        if filename.casefold() in restricted:continue
+        labels=[node.text()]+[image.attrs.get('alt','') for image in node.all({'img'})]
+        trial_button=any(Path(urlsplit(a.original(image.attrs.get('src',''))).path).name=='demo_t.gif' for image in node.all({'img'}))
+        label=' '.join(labels).strip()
+        if trial_button or '体験版' in label:release='体験版'
+        elif '修正' in label or 'パッチ' in label:release='修正パッチ'
+        else:continue
+        ident=hashlib.sha256(('getchu\n'+a.original(page)+'\n'+binary.path).encode()).hexdigest()
+        stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        result[ident]={'id':ident,'site':'getchu','page_url':page,'original_page_url':a.original(page),
+            'title':titles[0],'brand':brand[1],'release_name':release,'filename':filename,
+            'mirrors':([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
+            'expected_md5':None,'expected_size':None,'size_text':None,'published_at':None,
+            'fields':{'published_media_label':label,'published_button':'demo_t.gif' if trial_button else None,'getchu_product_url':a.original(page)}}
     return list(result.values())
