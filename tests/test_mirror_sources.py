@@ -51,3 +51,19 @@ class MirrorSourcesTests(unittest.TestCase):
                 self.assertIn("mirror-suezou-archive.service",run.call_args.args[0])
             self.assertEqual(store.db.execute("SELECT healthy FROM source_health").fetchone()[0],1)
             store.db.close()
+
+
+class MultiInsideTests(unittest.TestCase):
+    def test_real_detail_preserves_versions_and_rounded_size(self):
+        from pathlib import Path
+        from portals import parse_multi_inside
+        html=Path("tests/fixtures/multi-inside.html").read_text()
+        records=parse_multi_inside(html,"https://web.archive.org/web/20190101085507/http://www.pachi.ac/~multi/download/index/soushinjutsu0.html")
+        self.assertEqual(len(records),2)
+        self.assertEqual({r["title"] for r in records},{"操心術0"})
+        self.assertEqual({r["brand"] for r in records},{"STUDIO邪恋"})
+        self.assertEqual(records[1]["expected_md5"],"c1b79bcf1f0d79ec2ec8102f884f8575")
+        self.assertEqual(records[1]["release_name"],"体験版")
+        self.assertIsNone(records[1]["expected_size"])
+        self.assertEqual(records[1]["size_text"],"471MB")
+        self.assertEqual(len(records[1]["mirrors"]),6)
