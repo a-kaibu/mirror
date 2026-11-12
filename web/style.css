@@ -33,3 +33,11 @@ footer { border-top: 1px solid #c7d5e3; padding-block: 1rem; }
 [hidden] { display: none !important; }
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #185b91; outline-offset: 3px; }
 @media (max-width: 600px) { nav { flex-wrap: wrap; } button { display: block; width: 100%; margin-bottom: .75rem; } }
+
+.kind-filters { display: flex; flex-wrap: wrap; gap: .4rem; padding: 0; border: 0; margin-bottom: .8rem; }
+.kind-filters legend { font-size: .85rem; margin-bottom: .35rem; }
+.kind-filters label { position: relative; margin: 0; cursor: pointer; }
+.kind-filters input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.kind-filters span { display: inline-block; border: 1px solid #9eafbf; border-radius: 999px; padding: .25rem .8rem; background: #fff; color: #23364a; }
+.kind-filters input:checked + span { background: #185b91; border-color: #185b91; color: #fff; }
+.kind-filters input:focus-visible + span { outline: 3px solid #185b91; outline-offset: 3px; }
