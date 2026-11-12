@@ -22,7 +22,7 @@ class VndbTests(unittest.TestCase):
             root=Path(tmp);dump=root/'dump.tar.zst';plain=root/'dump.tar'
             schema='CREATE TABLE vn (\n  id text NOT NULL,\n  title text NOT NULL,\n  patch boolean,\n  labels smallint[],\n  PRIMARY KEY(id)\n);\nCREATE TABLE empty (\n  id integer NOT NULL,\n  PRIMARY KEY(id)\n);\n'
             with tarfile.open(plain,'w') as archive:
-                for name,data in [('README.txt',b'Official fixture'),('LICENSE-ODBL.txt',b'License'),('TIMESTAMP',b'2026-11-12'),('schema_plain.sql',schema.encode()),('db/vn','v1\t日本語\\nタイトル\tt\t{1,2}\nv2\t\\\\N\t\\N\t{}\n'.encode()),('db/empty',b'')]:
+                for name,data in [('README.txt',b'Official fixture'),('LICENSE-ODBL.txt',b'License'),('TIMESTAMP',b'2026-11-12'),('schema_plain.sql',schema.encode()),('db/vn','v1\t日本語\\nタイトル\tt\t{1,2}\nv2\t\\\\N\t\\N\t{}\n'.encode()),('db/vn.header',b'id\ttitle\tpatch\tlabels\n'),('db/empty',b''),('db/empty.header',b'id\n')]:
                     info=tarfile.TarInfo(name);info.size=len(data);archive.addfile(info,io.BytesIO(data))
             subprocess.run(['zstd','-q',str(plain),'-o',str(dump)],check=True)
             target=vndb.convert(dump,root/'data.sqlite3','https://dl.vndb.org/dump/fixture')

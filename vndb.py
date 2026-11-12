@@ -64,7 +64,7 @@ def convert(source,target,source_url=None):
     target.parent.mkdir(parents=True,exist_ok=True);temp.unlink(missing_ok=True)
     db=sqlite3.connect(temp)
     process=subprocess.Popen(['zstd','-dc',str(source)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-    tables=None;seen=set();documents={}
+    tables=None;seen=set();headers=set();documents={}
     try:
         db.execute('CREATE TABLE _archive_info(key TEXT PRIMARY KEY,value TEXT NOT NULL)')
         db.execute('CREATE TABLE _source_tables(name TEXT PRIMARY KEY,columns_json TEXT,rows INTEGER)')
@@ -73,7 +73,15 @@ def convert(source,target,source_url=None):
             for member in archive:
                 if not member.isfile():continue
                 name=member.name
-                if name.startswith('db/'):
+                if name.startswith('db/') and name.endswith('.header'):
+                    table=name[3:-7]
+                    if tables is None or table not in tables or table in headers:raise ValueError('unexpected COPY header '+name)
+                    if member.size>65536:raise ValueError('oversized COPY header')
+                    raw=archive.extractfile(member).read()
+                    columns=raw.decode('utf-8').rstrip('\n').split('\t')
+                    if columns!=[column[0] for column in tables[table][0]]:raise ValueError('COPY header/schema mismatch '+table)
+                    headers.add(table);db.execute('INSERT INTO _source_documents VALUES(?,?)',(name,raw.decode('utf-8')))
+                elif name.startswith('db/'):
                     table=name[3:]
                     if tables is None or table not in tables or table in seen:raise ValueError('unexpected table '+name)
                     columns,primary=tables[table];seen.add(table)
@@ -108,6 +116,7 @@ def convert(source,target,source_url=None):
         process.stdout.close();errors=process.stderr.read();code=process.wait()
         if code:raise ValueError('zstd failed: '+errors.decode(errors='replace')[:500])
         if tables is None or seen!=set(tables):raise ValueError('dump missing tables: '+str(set(tables or {})-seen))
+        if headers!=set(tables):raise ValueError('dump missing COPY headers: '+str(set(tables)-headers))
         for name,count in db.execute('SELECT name,rows FROM _source_tables').fetchall():
             if db.execute('SELECT count(*) FROM '+quote(name)).fetchone()[0]!=count:raise ValueError('row count mismatch')
         if db.execute('PRAGMA integrity_check').fetchone()[0]!='ok':raise ValueError('SQLite integrity failed')
