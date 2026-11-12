@@ -398,3 +398,11 @@ remain available for the native client's normal resume.
 
 The VNDB snapshot is available at
 https://huggingface.co/buckets/vn-archive/mirrors/resolve/vndb.sqlite3?download=true.
+
+`python alice_support.py` supplements the product crawl with the official support
+pages linked by the Rance guide: Rance 03, Sengoku Rance, Rance 10, and GALZOO
+Island (including its hard-mode add-on). Each updater section retains its own
+version and application conditions, including required earlier updates. The
+collector uses ErogameScape game/brand identities and records its coverage in
+`official_support_scans`, leaving the primary product scans intact. Files enter
+the normal `official` download/publication queue.
