@@ -289,3 +289,16 @@ counts, and `PRAGMA integrity_check`. The database is checkpointed and held stab
 while uploaded as `erogamescape.sqlite3`; full anonymous SHA-256/size read-back is
 required. Until full capture finishes, HF retains the previous catalog snapshot.
 Use `--max-tables N --max-pages N` for bounded validation; reruns resume.
+
+### Holyseal inventory coverage
+
+`python holy_inventory.py` checks missing product IDs from the imported ErogameScape
+Holyseal mapping. It asks the official Wayback availability API for actual capture
+dates, tries both documented Holyseal host spellings, validates the returned host,
+CGI path and product ID, then runs the same detail parser on the saved capture.
+There is no fixed-year assumption. IDs already represented in source records are
+skipped. `holy_inventory` distinguishes parsed, failed and `no_capture_returned`;
+an empty availability response is not proof that no capture ever existed.
+`--retry` rechecks unresolved IDs; `--limit N` bounds validation runs.
+This complements list pagination rather than treating a partial listing scan as
+proof of full coverage. Source HTML and metadata remain in the archive SQLite.

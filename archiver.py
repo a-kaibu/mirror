@@ -468,7 +468,7 @@ def is_detail(url, site):
     return p.path.endswith("mlistview.cgi") and "prdcode" in parse_qs(p.query)
 
 
-def crawl(store, fetcher, site, seed, max_pages=None, max_items=None):
+def crawl(store, fetcher, site, seed, max_pages=None, max_items=None, export=True):
     queue, seen, details = deque([seed]), set(), set()
     list_count = item_count = failures = 0
     seed_host = urlsplit(original(seed)).netloc
@@ -540,7 +540,8 @@ def crawl(store, fetcher, site, seed, max_pages=None, max_items=None):
             store.db.execute("INSERT OR REPLACE INTO pages(url,site,path,fetched_at,status,error,response_url) VALUES(?,?,?,?,?,?,?)", (url, site, rel if (store.root / rel).exists() else None, now(), "failed", str(e), effective_url))
             print(f"{site}: failed {url}: {e}", file=sys.stderr)
         store.db.commit()
-    store.export()
+    if export:
+        store.export()
     return failures
 
 
