@@ -10,6 +10,7 @@ import hmac
 import http.client
 import io
 from email.message import Message
+from email.utils import parsedate_to_datetime
 import json
 import os
 from pathlib import Path
@@ -245,7 +246,12 @@ def parse_holyseal(root, url):
             strong = next(iter(row.all({"strong"})), None)
             if strong is not None:
                 text = row.text()
-                match = re.search(r"([^\s()]+\.(?:zip|exe|rar|7z|lzh|lha|cab|mpg|mpeg|wmv|avi|mp4|mov|webm))\s*(?:\(([^)]+)\))?", text, re.I)
+                cells = [n for n in row.children if isinstance(n, Node) and n.tag in {"td", "th"}]
+                file_text = cells[-1].text() if len(cells) >= 2 else text
+                # Real patches can be loose XP3/DLL files, and these tables also
+                # contain MP3 extras. Read the filename cell rather than reject
+                # the whole product or mistake a version label for a filename.
+                match = re.search(r"([^\s()]+\.[^\s()]+)\s*(?:\(([^)]+)\))?", file_text, re.I)
                 if not match:
                     raise ValueError("Holyseal release has no recognized filename: " + text[:200])
                 name = match[1]
@@ -264,7 +270,7 @@ def parse_holyseal(root, url):
                 current["expected_md5"] = md5[1].lower()
             for link in row.all({"a"}):
                 target = resolve(url, link.attrs.get("href", ""))
-                if target and EXT.search(original(target)):
+                if target:
                     current["mirrors"].extend(([replay(target, stamp, raw=True)] if stamp else []) + [original(target)])
         for record in records:
             record["mirrors"] = list(dict.fromkeys(record["mirrors"]))
@@ -315,10 +321,25 @@ class SourceHTTPSHandler(HTTPSHandler):
         return self.do_open(connection, req, context=self._context)
 
 
+def retry_after_delay(value, minimum):
+    try:
+        delay = float(value)
+    except (TypeError, ValueError):
+        try:
+            date = parsedate_to_datetime(value)
+            if date.tzinfo is None:
+                date = date.replace(tzinfo=timezone.utc)
+            delay = date.timestamp() - time.time()
+        except (TypeError, ValueError, OverflowError):
+            delay = 0
+    return max(minimum, delay)
+
+
 class Fetcher:
     def __init__(self, delay=1, timeout=45, retries=3, tls_pins=None):
         self.delay, self.timeout, self.retries = delay, timeout, retries
         self.last = 0.0
+        self.not_before = 0.0
         self.tls_pins, self.last_tls_pin = dict(tls_pins or {}), None
         self.opener = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()), SourceHTTPSHandler(self.tls_pins, self._record_pin))
 
@@ -330,16 +351,24 @@ class Fetcher:
         if urlsplit(url).scheme not in {"http", "https"}:
             raise ValueError("only HTTP(S) URLs are supported")
         for attempt in range(self.retries):
-            time.sleep(max(0, self.delay - (time.monotonic() - self.last)))
+            current = time.monotonic()
+            time.sleep(max(0, self.delay - (current - self.last), self.not_before - current))
             self.last = time.monotonic()
             try:
                 return self.opener.open(Request(url, headers={"User-Agent": "VN-Mirror-Archiver/0.1 (cultural preservation)",
                     "Accept-Encoding": "identity", **(headers or {})}), timeout=self.timeout)
             except HTTPError as e:
-                if e.code not in {408, 429, 500, 502, 503, 504} or attempt + 1 == self.retries:
+                if e.code not in {408, 429, 500, 502, 503, 504}:
                     raise
-                retry_after = e.headers.get("Retry-After", "")
-                time.sleep(min(120, int(retry_after)) if retry_after.isdigit() else 2 ** attempt)
+                delay = retry_after_delay(e.headers.get("Retry-After", ""), 60 if e.code == 429 else 2 ** attempt)
+                # A cooldown also applies to the next URL if this request uses
+                # its last retry; otherwise a crawler immediately hits the host again.
+                self.not_before = max(self.not_before, time.monotonic() + delay)
+                if e.code == 429:
+                    print(f"rate limited: waiting {delay:.0f}s before retrying {urlsplit(url).hostname}", file=sys.stderr, flush=True)
+                e.close()
+                if attempt + 1 == self.retries:
+                    raise
             except (URLError, TimeoutError, ConnectionError):
                 if attempt + 1 == self.retries:
                     raise
@@ -353,7 +382,7 @@ class CachedPageFetcher:
 
     def open(self, url, headers=None):
         row = self.store.db.execute("SELECT * FROM pages WHERE url=?", (canonical(url),)).fetchone()
-        recoverable = row and (row["status"] == "ok" or (row["error"] or "").startswith("no downloadable links"))
+        recoverable = row and (row["status"] == "ok" or (row["error"] or "").startswith(("no downloadable links", "Holyseal release has no recognized filename")))
         if not headers and recoverable and row["path"] and (self.store.root / row["path"]).is_file():
             response = io.BytesIO((self.store.root / row["path"]).read_bytes())
             response.status = 200

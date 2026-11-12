@@ -57,7 +57,7 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
         record = json.loads(row["data"])
         from catalog import release_info
         kind = release_info(record)[0]
-        return (0 if kind in {"trial", "patch"} else 1, record.get("expected_size") or 2**63, row["id"])
+        return (0 if kind in {"trial", "patch"} else (1 if kind == "movie" else 2), record.get("expected_size") or 2**63, row["id"])
     visited = set()
     while True:
         candidates = [r for r in store.rows(site) if r["id"] not in visited and (retry_failed or r["status"] != "failed")]
