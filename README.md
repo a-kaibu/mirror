@@ -424,3 +424,12 @@ Each source has one sequential transfer worker. RetroPC page navigation and
 file requests retain their actual same-site referring page as documented by
 the public download site. Publisher support patches remain in the `official`
 queue and are collected before full games within that queue.
+
+Getchu's trial download service ended in June 2023 and removed all product-page
+download links ([official notice](https://www.getchu.com/getchu/news20230623001.html)).
+The default discovery mode therefore follows archived product pages, asking
+Wayback for a capture near January 2022. This timestamp is a discovery hint,
+not proof that a file is intact: actual capture dates remain in provenance,
+and independent publisher checksums are still required for matching builds.
+Previously queued current-page requests are retained as
+`deferred_service_ended` rather than repeatedly fetching pages without files.

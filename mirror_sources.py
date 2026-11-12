@@ -82,7 +82,11 @@ def seed_platform(store,source,mode):
 
 
 def availability(fetcher,url,source):
-    endpoint="https://archive.org/wayback/available?"+urlencode({"url":url})
+    params={"url":url}
+    if source.get("archive_timestamp"):
+        if not re.fullmatch(r"\d{14}",source["archive_timestamp"]):raise ValueError("invalid archive timestamp")
+        params["timestamp"]=source["archive_timestamp"]
+    endpoint="https://archive.org/wayback/available?"+urlencode(params)
     with fetcher.open(endpoint) as response:raw=response.read(2*1024*1024+1)
     if len(raw)>2*1024*1024:raise ValueError("availability response too large")
     payload=json.loads(raw)
@@ -153,6 +157,11 @@ def match_records(store,source,html,page,index):
                 if candidate.get("expected_size") is None or d.get("expected_size") is None or candidate["expected_size"]==d["expected_size"]]
         products={(d.get("brand"),d["title"]) for d in donors}
         if len(products)!=1:continue
+        if candidate["filename"].casefold() in {n.casefold() for n in source.get("checksum_required_filenames", [])}:
+            # The publisher documented compromised downloads under these names.
+            # A matching URL alone cannot identify the unmodified original.
+            donors=[d for d in donors if d.get("expected_md5") or d.get("expected_sha256")]
+            if not donors:continue
         donor=sorted(donors,key=lambda d:d["id"])[0]
         mirrors=[]
         for url in candidate["mirrors"]:

@@ -19,6 +19,35 @@ class MirrorSourcesTests(unittest.TestCase):
         self.assertEqual(m.clean("https://trial.test/file.zip?_gl=tracking&id=12&utm_source=ignore"),"https://trial.test/file.zip?id=12")
         self.assertEqual(m.clean("https://trial.test/file.zip?token=keep"),"https://trial.test/file.zip?token=keep")
 
+
+    def test_retired_getchu_service_uses_dated_archive_lookup(self):
+        from urllib.parse import parse_qs,urlsplit
+        source=m.definitions()["getchu"]
+        self.assertEqual(source["adapter"],"mirror")
+        target="https://www.getchu.com/soft.phtml?id=123"
+        capture="https://web.archive.org/web/20190102030405/https://www.getchu.com/soft.phtml?id=123"
+        payload={"archived_snapshots":{"closest":{"status":"200","available":True,"url":capture}}}
+        fetch=Fetch([Response(json.dumps(payload).encode())])
+        self.assertEqual(m.availability(fetch,target,source),capture)
+        self.assertEqual(parse_qs(urlsplit(fetch.requests[0][0]).query)["timestamp"],["20220101000000"])
+
+    def test_compromised_getchu_names_require_independent_checksum(self):
+        url="https://trial.getchu.com/haison_trial.zip"
+        html='<h1>Game</h1><a href="'+url+'">体験版</a>'
+        donor={"id":"donor","site":"official","title":"Game","brand":"Brand",
+               "page_url":"https://brand.test/download.html","original_page_url":"https://brand.test/download.html",
+               "filename":"haison_trial.zip","mirrors":[url],"expected_md5":None,"expected_size":None,"fields":{}}
+        source=m.definitions()["getchu"]
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);m.initialize(store)
+            try:
+                index=({}, {m.clean(url):[donor]})
+                self.assertEqual(m.match_records(store,source,html,"https://www.getchu.com/soft.phtml?id=1",index),0)
+                donor["expected_md5"]="a"*32
+                self.assertEqual(m.match_records(store,source,html,"https://www.getchu.com/soft.phtml?id=1",index),1)
+                self.assertEqual(json.loads(store.rows("getchu")[0]["data"])["expected_md5"],"a"*32)
+            finally:store.db.close()
+
     def test_actual_moepedia_trial_block_excludes_purchase_links(self):
         html=a.decode_html((Path(__file__).parent/"fixtures/moepedia-98727.html").read_bytes())
         result=parse_moepedia(html,"https://moepedia.net/game/98727/")

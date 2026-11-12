@@ -115,8 +115,11 @@ key = "getchu"
 name = "Getchu"
 homes = ["https://www.getchu.com/"]
 seeds = []
-adapter = "platform"
-references = ["https://www.getchu.com/"]
+adapter = "mirror"
+archive_timestamp = "20220101000000"
+download_service_ended = "2023-06-23"
+checksum_required_filenames = ["1197909.zip", "haison_trial.zip", "1221171.zip", "1214787.zip", "sakuranotoki_trial.zip", "1224047.zip", "kemonomichi2_trial.zip", "koiama_trial.zip", "isekai_trial.zip", "amakano2plus_trial.zip", "yarasetet_trial.zip"]
+references = ["https://www.getchu.com/", "https://www.getchu.com/getchu/news20230623001.html"]
 
 [[sources]]
 key = "dmm"
