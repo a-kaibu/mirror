@@ -205,7 +205,21 @@ if __name__=="__main__":
     args=parser.parse_args();store=a.Store(args.root)
     try:
         initialize(store)
-        for key,source in definitions().items():
-            if args.site=="all" and source["adapter"]=="native":continue
-            if args.site in {"all",key}:print("mirror coverage",key,crawl(store,source,a.Fetcher(delay=10,timeout=25,retries=2),("live" if source["adapter"]=="platform" else "archive") if args.mode=="auto" else args.mode,args.max_pages),flush=True)
+        sources=[source for key,source in definitions().items()
+            if args.site==key or (args.site=="all" and source["adapter"]!="native")]
+        # Share host pacing/Retry-After state and rotate sources after each page.
+        # A large catalogue must not delay the first pass over every other site.
+        fetcher=a.Fetcher(delay=10,timeout=25,retries=2)
+        totals={source["key"]:[0,0] for source in sources}
+        active=list(sources)
+        while active:
+            following=[]
+            for source in active:
+                key=source["key"]
+                mode=("live" if source["adapter"]=="platform" else "archive") if args.mode=="auto" else args.mode
+                processed,found=crawl(store,source,fetcher,mode,1)
+                totals[key][0]+=processed;totals[key][1]+=found
+                print("mirror coverage",key,totals[key],flush=True)
+                if processed and totals[key][0]<args.max_pages:following.append(source)
+            active=following
     finally:store.db.close()
