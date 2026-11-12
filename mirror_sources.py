@@ -46,6 +46,7 @@ def enqueue(store,source,mode,urls=None):
 def navigable(source,url):
     path=urlsplit(a.original(url)).path
     key=source["key"]
+    if key=="multi_inside":return path.rstrip('/')=='/~multi' or path=='/~multi/index.shtml' or path.startswith('/~multi/demo.mirror') or path.startswith('/~multi/download/')
     if key=="alice_archives":return bool(re.fullmatch(r"/alice/(?:menu|[0-9]+)\.html|/alice/",path))
     if key=="alicefree":return path in {"/","/index.html"}
     if key=="moepedia":return path=="/" or path.startswith("/trial/") or bool(re.fullmatch(r"/game/\d+/?",path))
@@ -230,12 +231,9 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
             target=url if mode=="live" or a.WAYBACK.match(url) else availability(fetcher,url,source)
             if target is None:
                 store.db.execute("UPDATE mirror_frontier SET status='no_capture_returned',checked_at=? WHERE site=? AND url=? AND mode=?",(a.now(),source["key"],url,mode));store.db.commit();print("mirror",source["key"],"no capture",url,flush=True);continue
-            with a.open_archive_page(fetcher,target, {"Referer":"http://retropc.net/alice/" if urlsplit(target).path.endswith("/menu.html") else "http://retropc.net/alice/menu.html"} if source["key"]=="alice_archives" and mode=="live" else None) as response:
-                actual=a.canonical(response.geturl())
-                if not allowed(source,actual):raise ValueError("mirror redirected outside registered hosts")
-                if mode=="archive" and not a.WAYBACK.match(actual):raise ValueError("archive left Wayback")
-                raw=response.read(16*1024*1024+1);charset=response.headers.get_content_charset()
-            if len(raw)>16*1024*1024:raise ValueError("mirror HTML exceeds 16 MiB")
+            raw,actual,charset,_=a.read_archive_page(fetcher,target, {"Referer":"http://retropc.net/alice/" if urlsplit(target).path.endswith("/menu.html") else "http://retropc.net/alice/menu.html"} if source["key"]=="alice_archives" and mode=="live" else None)
+            if not allowed(source,actual):raise ValueError("mirror redirected outside registered hosts")
+            if mode=="archive" and not a.WAYBACK.match(actual):raise ValueError("archive left Wayback")
             if mode=="live":raw,actual,charset=platform_page(source,fetcher,raw,actual,charset)
             html=a.decode_html(raw,charset);root=a.DOM(html).root
             rel="html/"+hashlib.sha256(actual.encode()).hexdigest()+".html"

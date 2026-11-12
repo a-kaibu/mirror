@@ -22,8 +22,8 @@ class MirrorSourcesTests(unittest.TestCase):
 
     def test_legacy_catalogue_links_are_followed_from_archived_homepage(self):
         cases=[('multi_inside','http://web.archive.org/web/20260412082127/http://www.pachi.ac/~multi/',
-                '<a href="demo.mirror.shtml">でもみらー</a><a href="old-list.shtm">旧一覧</a>',
-                ['demo.mirror.shtml','old-list.shtm']),
+                '<a href="demo.mirror.shtml">でもみらー</a><a href="download/index/old-list.shtm">旧一覧</a>',
+                ['demo.mirror.shtml','download/index/old-list.shtm']),
                ('getchu','http://web.archive.org/web/20220102030405/https://www.getchu.com/',
                 '<a href="soft.phtml?id=123">体験版のある作品</a>',['soft.phtml?id=123'])]
         for key,home,html,links in cases:

@@ -451,10 +451,38 @@ def open_archive_page(fetcher, url, headers=None):
     except (URLError,ConnectionRefusedError) as error:
         reason=error.reason if isinstance(error,URLError) else error
         if (parts.scheme!='https' or parts.netloc!='web.archive.org'
-                or not re.match(r'^/web/\d{14}(?:id_)?/',parts.path)
+                or not re.match(r'^/web/\d{14}(?:id_|if_|fw_)?/',parts.path)
                 or not isinstance(reason,ConnectionRefusedError)):
             raise
         return fetcher.open(urlunsplit(('http',parts.netloc,parts.path,parts.query,'')),headers)
+
+
+def read_archive_page(fetcher, url, headers=None):
+    """Read publisher HTML behind Wayback's same-capture playback wrapper."""
+    seen=set()
+    for _ in range(3):
+        if url in seen:raise ValueError('cyclic Wayback playback frame')
+        seen.add(url)
+        with open_archive_page(fetcher,url,headers) as response:
+            actual=canonical(response.geturl());raw=response.read(16*1024*1024+1)
+            charset=response.headers.get_content_charset()
+            fetched_at=getattr(response,'fetched_at',None) or now()
+        if len(raw)>16*1024*1024:raise ValueError('HTML exceeds 16 MiB')
+        capture=WAYBACK.match(actual)
+        frame=next((n for n in DOM(decode_html(raw,charset)).root.all({'iframe'}) if n.attrs.get('id')=='playback'),None) if capture else None
+        if frame is None:return raw,actual,charset,fetched_at
+        target=urljoin(actual,frame.attrs.get('src',''));embedded=WAYBACK.match(target)
+        # Ordinary publisher iframes are not Wayback wrappers. Never follow a
+        # different host, capture date or original URL under this special rule.
+        try:
+            same=(bool(frame.attrs.get('src')) and urlsplit(actual).netloc=='web.archive.org' and urlsplit(target).netloc=='web.archive.org'
+                  and re.match(r'^/web/\d{14}(?:id_|if_|fw_)/',urlsplit(target).path)
+                  and embedded and embedded[1]==capture[1]
+                  and archive_url_identity(original(target))==archive_url_identity(original(actual)))
+        except ValueError:same=False
+        if not same:return raw,actual,charset,fetched_at
+        url=target
+    raise ValueError('Wayback playback frame depth exceeds bound')
 
 
 def archive_index_scheme(store,target_url,index_url=None):
@@ -475,7 +503,7 @@ class CachedPageFetcher:
 
     def open(self, url, headers=None):
         row = self.store.db.execute("SELECT * FROM pages WHERE url=?", (canonical(url),)).fetchone()
-        recoverable = row and (row["status"] == "ok" or (row["error"] or "").startswith(("no downloadable links", "Holyseal release has no recognized filename")))
+        recoverable = row and (row["status"] in {"ok", "wayback_wrapper"} or (row["error"] or "").startswith(("no downloadable links", "Holyseal release has no recognized filename")))
         if not headers and recoverable and row["path"] and (self.store.root / row["path"]).is_file():
             response = io.BytesIO((self.store.root / row["path"]).read_bytes())
             response.status = 200
@@ -594,18 +622,12 @@ def crawl(store, fetcher, site, seed, max_pages=None, max_items=None, export=Tru
         rel = "html/" + hashlib.sha256(url.encode()).hexdigest() + ".html"
         effective_url = None
         try:
-            with open_archive_page(fetcher,url) as response:
-                if site == "holyseal":
-                    final = WAYBACK.match(response.geturl())
-                    if not final or urlsplit(original(response.geturl())).hostname != urlsplit(original(seed)).hostname:
-                        raise ValueError("Wayback redirected outside the source site")
-                data = response.read(16 * 1024 * 1024 + 1)
-                if len(data) > 16 * 1024 * 1024:
-                    raise ValueError("HTML exceeds 16 MiB")
-                html = decode_html(data, response.headers.get_content_charset())
-                # Relative links belong to the capture actually returned by Wayback.
-                effective_url = response.geturl()
-                fetched_at = getattr(response, "fetched_at", None) or now()
+            data,effective_url,charset,fetched_at=read_archive_page(fetcher,url)
+            if site == "holyseal":
+                final = WAYBACK.match(effective_url)
+                if not final or urlsplit(original(effective_url)).hostname != urlsplit(original(seed)).hostname:
+                    raise ValueError("Wayback redirected outside the source site")
+            html = decode_html(data,charset)
             target = store.root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
