@@ -11,12 +11,14 @@ def history(payload,target,scheme="https"):
     if not isinstance(payload,list):raise ValueError('CDX response must be an array')
     if not payload:return []
     if not isinstance(payload[0],list) or not {'timestamp','original','statuscode','digest'}<=set(payload[0]):raise ValueError('CDX columns missing')
-    base=urlsplit(m.clean(target));result=[];seen=set()
+    base=a.archive_url_identity(m.clean(target));result=[];seen=set()
     for values in payload[1:]:
         if not isinstance(values,list) or len(values)!=len(payload[0]):raise ValueError('invalid CDX row')
-        row=dict(zip(payload[0],values));url=urlsplit(m.clean(row['original']))
-        if (url.hostname,url.path,url.query)!=(base.hostname,base.path,base.query):continue
-        if url.scheme not in {'http','https'} or str(row['statuscode'])!='200' or not re.fullmatch(r'\d{14}',row['timestamp']):continue
+        row=dict(zip(payload[0],values))
+        try:identity=a.archive_url_identity(m.clean(row['original']))
+        except ValueError:continue
+        if identity!=base:continue
+        if str(row['statuscode'])!='200' or not re.fullmatch(r'\d{14}',row['timestamp']):continue
         if row.get('mimetype') not in {'text/html','application/xhtml+xml'}:continue
         # Identical bodies at many dates add no catalogue information. Preserve
         # every distinct body and its earliest actual capture timestamp.

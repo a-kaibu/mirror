@@ -57,6 +57,17 @@ def original(url):
     return match[2] if match else url
 
 
+
+def archive_url_identity(url):
+    """Compare CDX originals, allowing only equivalent default port spelling."""
+    parts=urlsplit(url)
+    if parts.scheme not in {'http','https'} or not parts.hostname or parts.username is not None or parts.password is not None:
+        raise ValueError('invalid public archive source URL')
+    port=parts.port
+    if port==({'http':80,'https':443}[parts.scheme]):port=None
+    return parts.hostname,port,parts.path,parts.query
+
+
 def replay(url, timestamp="20181025223313", raw=False, scheme="https"):
     if scheme not in {"http", "https"}:raise ValueError("unsupported archive transport")
     return f"{scheme}://web.archive.org/web/{timestamp}{'id_' if raw else ''}/{original(url)}"

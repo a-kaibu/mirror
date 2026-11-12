@@ -16,6 +16,13 @@ class MirrorHistoryTests(unittest.TestCase):
         self.assertIn('20050101000000',urls[0])
         self.assertEqual(history([],target),[])
 
+    def test_history_distinguishes_nondefault_ports(self):
+        header=['timestamp','original','mimetype','statuscode','digest']
+        rows=[header,['20050101000000','http://mirror.test:80/','text/html','200','default'],
+              ['20050102000000','http://mirror.test:8000/','text/html','200','custom']]
+        self.assertEqual(history(rows,'http://mirror.test/'),['https://web.archive.org/web/20050101000000/http://mirror.test:80/'])
+        self.assertEqual(history(rows,'http://mirror.test:8000/'),['https://web.archive.org/web/20050102000000/http://mirror.test:8000/'])
+
     def test_changed_filename_build_keeps_previous_record(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=a.Store(tmp)

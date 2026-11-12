@@ -14,17 +14,17 @@ def captures(payload, target, scheme="https"):
     required = {"timestamp", "original", "statuscode", "digest"}
     if not isinstance(payload[0], list) or not required <= set(payload[0]):
         raise ValueError("CDX columns missing")
-    base = urlsplit(target)
+    base = a.archive_url_identity(target)
     result = []
     for values in payload[1:]:
         if len(values) != len(payload[0]):
             raise ValueError("CDX row has unexpected columns")
         row = dict(zip(payload[0], values))
-        url = urlsplit(row["original"])
-        # CDX may canonicalize http/https. Never accept another path or host.
-        if (url.scheme not in {"http", "https"} or url.netloc.lower() != base.netloc.lower()
-                or url.path != base.path or url.query != base.query):
-            continue
+        # CDX may canonicalize HTTP(S) and explicit default ports. Preserve
+        # nondefault ports, path and query so another service cannot match.
+        try:identity=a.archive_url_identity(row["original"])
+        except ValueError:continue
+        if identity!=base:continue
         if str(row["statuscode"]) != "200" or not re.fullmatch(r"\d{14}", row["timestamp"]):
             continue
         if row.get("mimetype", "").lower() in {"text/html", "application/xhtml+xml"}:
@@ -72,6 +72,11 @@ def discover(store, fetcher, limit=None, refresh=False, site="both"):
             candidates = captures(payload, target, scheme=scheme)
             for candidate in candidates:
                 store.db.execute("INSERT OR IGNORE INTO wayback_candidates VALUES(?,?,?,?,?)", (item["id"], candidate["url"], candidate["original_url"], candidate["captured_at"], candidate["index_digest"]))
+            # Recovery runs concurrently with long acquisition batches. Wake a
+            # failed record now rather than wait for that entire source to drain.
+            store.db.execute("""UPDATE items SET status='pending' WHERE id=? AND status='failed'
+                AND EXISTS(SELECT 1 FROM wayback_candidates c WHERE c.item_id=items.id
+                  AND NOT EXISTS(SELECT 1 FROM attempts t WHERE t.item_id=items.id AND t.url=c.url))""",(item['id'],))
             store.db.commit()
             found += len(candidates)
             print("CDX", record["filename"], target, len(candidates), "capture(s)", flush=True)

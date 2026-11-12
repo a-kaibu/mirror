@@ -19,6 +19,19 @@ class WaybackRecoveryTests(unittest.TestCase):
         self.assertIn("20181120233710id_", result[1]["url"])
         self.assertEqual(captures([], TARGET), [])
 
+    def test_default_port_spellings_match_but_other_services_do_not(self):
+        for original in ['http://mirror.test:80/demo.zip','https://mirror.test:443/demo.zip']:
+            row=ROWS[1].copy();row[1]=original
+            accepted=captures([ROWS[0],row],TARGET)
+            self.assertEqual(len(accepted),1)
+            self.assertEqual(accepted[0]['original_url'],original)
+        for original in ['http://mirror.test:8000/demo.zip','https://mirror.test:80/demo.zip',
+                         'http://user@mirror.test/demo.zip','http://mirror.test/demo.zip?other=1']:
+            row=ROWS[1].copy();row[1]=original
+            self.assertEqual(captures([ROWS[0],row],TARGET),[])
+        row=ROWS[1].copy();row[1]='http://mirror.test:8000/demo.zip'
+        self.assertEqual(len(captures([ROWS[0],row],'http://mirror.test:8000/demo.zip')),1)
+
     def test_rejects_other_files_html_and_failures(self):
         for index, value in [(1,"http://evil.test/demo.zip"), (1,"http://mirror.test/other.zip"), (2,"text/html"), (3,"404"), (0,"yesterday")]:
             row = ROWS[1].copy(); row[index] = value
@@ -44,6 +57,21 @@ class WaybackRecoveryTests(unittest.TestCase):
             self.assertEqual(a.download(store, download), 0)
             self.assertIn("20181120233710id_", download.requests[0][0])
             store.db.close()
+
+    def test_new_capture_wakes_failed_item_without_repeating_attempted_urls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                record=a.parse_detail(HTML,'https://example.test/items/1','lathercraft')[0]
+                record['mirrors']=[TARGET];store.add(record);store.update(record['id'],status='failed')
+                discover(store,Fetch([Response(json.dumps(ROWS).encode())]))
+                self.assertEqual(store.rows()[0]['status'],'pending')
+                for candidate in store.db.execute('select url from wayback_candidates').fetchall():
+                    store.db.execute('insert into attempts(item_id,url,attempted_at,error) values(?,?,?,?)',(record['id'],candidate[0],a.now(),'HTTP Error 404'))
+                store.db.commit();store.update(record['id'],status='failed')
+                discover(store,Mock())
+                self.assertEqual(store.rows()[0]['status'],'failed')
+            finally:store.db.close()
 
     def test_actual_public_index_transport_survives_cached_recovery(self):
         with tempfile.TemporaryDirectory() as tmp:
