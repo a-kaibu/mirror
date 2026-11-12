@@ -1,0 +1,13 @@
+archive/
+.venv/
+__pycache__/
+*.pyc
+.env
+*.part
+.uv-cache/
+dist/
+manifest.json
+*.sqlite3
+*.sqlite3-*
+node_modules/
+.codex/

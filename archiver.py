@@ -1,0 +1,813 @@
+#!/usr/bin/env python3
+"""Preserve public VN downloads and provenance, then verify public HF copies."""
+from __future__ import annotations
+
+import argparse
+import configparser
+from contextlib import closing
+import hashlib
+import hmac
+import http.client
+import json
+import os
+from pathlib import Path
+import re
+import socket
+import sqlite3
+import ssl
+import sys
+import tempfile
+import time
+import tomllib
+from collections import deque
+from datetime import datetime, timezone
+from html.parser import HTMLParser
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit, urlunsplit
+from urllib.request import Request, build_opener, HTTPCookieProcessor, HTTPSHandler
+import http.cookiejar
+
+HOLY = "https://web.archive.org/web/20181025223313/http://holyseal.net/cgi-bin/newinfo.cgi?mode=file&flt=try"
+EXT = re.compile(r"\.(?:zip|exe|rar|7z|lzh|lha|cab|mpg|mpeg|wmv|avi|mp4|mov|webm)(?:$|[?#])", re.I)
+WAYBACK = re.compile(r"^https?://web\.archive\.org/web/(\d{4,14})(?:[a-z_]+)?/(https?://.*)$")
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def digest(path):
+    md5, sha = hashlib.md5(), hashlib.sha256()
+    size = 0
+    with Path(path).open("rb") as f:
+        while chunk := f.read(1024 * 1024):
+            md5.update(chunk)
+            sha.update(chunk)
+            size += len(chunk)
+    return {"md5": md5.hexdigest(), "sha256": sha.hexdigest(), "size": size}
+
+
+def original(url):
+    match = WAYBACK.match(url)
+    return match[2] if match else url
+
+
+def replay(url, timestamp="20181025223313", raw=False):
+    return f"https://web.archive.org/web/{timestamp}{'id_' if raw else ''}/{original(url)}"
+
+
+def canonical(url):
+    p = urlsplit(url)
+    return urlunsplit((p.scheme, p.netloc, p.path, p.query, ""))
+
+
+def resolve(base, href):
+    if href.startswith(("javascript:", "mailto:", "data:", "#")):
+        return None
+    if WAYBACK.match(base):
+        stamp = WAYBACK.match(base)[1]
+        if href.startswith(("/web/", "https://web.archive.org/", "http://web.archive.org/")):
+            target = urljoin(base, href)
+            if not WAYBACK.match(target):
+                return None
+            return replay(original(target), stamp)
+        return replay(urljoin(original(base), href), stamp)
+    result = canonical(urljoin(base, href))
+    return result if urlsplit(result).scheme in {"http", "https"} else None
+
+
+class Node:
+    def __init__(self, tag="root", attrs=(), parent=None):
+        self.tag, self.attrs, self.parent = tag, dict(attrs), parent
+        self.children = []
+
+    def text(self):
+        return " ".join(c.text() if isinstance(c, Node) else c for c in self.children).strip()
+
+    def all(self, tags):
+        for child in self.children:
+            if isinstance(child, Node):
+                if child.tag in tags:
+                    yield child
+                yield from child.all(tags)
+
+
+class DOM(HTMLParser):
+    def __init__(self, html):
+        super().__init__(convert_charrefs=True)
+        self.root = Node()
+        self.current = self.root
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        # The source sites include old HTML with omitted cell/row end tags.
+        if tag in {"tr", "td", "th", "li", "p"}:
+            n = self.current
+            while n.parent and n.tag not in {tag, "table", "ul", "ol", "body"}:
+                n = n.parent
+            if n.tag == tag:
+                self.current = n.parent
+        node = Node(tag, attrs, self.current)
+        self.current.children.append(node)
+        if tag not in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "wbr"}:
+            self.current = node
+
+    def handle_endtag(self, tag):
+        n = self.current
+        while n.parent:
+            if n.tag == tag:
+                self.current = n.parent
+                return
+            n = n.parent
+
+    def handle_data(self, data):
+        if self.current.tag not in {"script", "style"}:
+            self.current.children.append(data)
+
+
+def decode_html(data, charset=None):
+    meta = re.search(br"charset\s*=\s*[\"']?([A-Za-z0-9_-]+)", data[:8192], re.I)
+    for encoding in dict.fromkeys([charset, meta[1].decode() if meta else None, "utf-8", "cp932", "euc_jp"]):
+        if encoding:
+            try:
+                return data.decode(encoding)
+            except (UnicodeError, LookupError):
+                pass
+    return data.decode("utf-8", errors="replace")
+
+
+def labels(root):
+    fields = {}
+    for row in root.all({"tr"}):
+        cells = [c for c in row.children if isinstance(c, Node) and c.tag in {"td", "th"}]
+        if len(cells) == 2:
+            fields[cells[0].text().strip(" :：")] = cells[1].text()
+    for paragraph in root.all({"p"}):
+        children = [c for c in paragraph.children if isinstance(c, Node)]
+        if children and children[0].tag == "strong":
+            label = children[0].text()
+            fields[label.strip(" :：")] = paragraph.text()[len(label):].strip()
+    for dt in root.all({"dt"}):
+        siblings = dt.parent.children
+        for n in siblings[siblings.index(dt) + 1:]:
+            if isinstance(n, Node):
+                if n.tag == "dd":
+                    fields[dt.text().strip(" :：")] = n.text()
+                break
+    return fields
+
+
+def metadata(root):
+    fields = labels(root)
+    def field(*names):
+        return next((v for k, v in fields.items() if k.lower() in names), None)
+    md5 = re.search(r"(?i)\bMD5\b\s*[:：]?\s*([a-f0-9]{32})\b", root.text())
+    exact_size = re.search(r"([\d,]+)\s*(?:bytes?\b|バイト)", root.text(), re.I)
+    return {"brand": field("ブランド", "メーカー", "brand", "maker"),
+            "published_at": field("掲載日", "登録日", "公開日", "date"),
+            "expected_md5": md5[1].lower() if md5 else None,
+            "expected_size": int(exact_size[1].replace(",", "")) if exact_size else None,
+            "size_text": field("サイズ", "ファイルサイズ", "size"), "fields": fields}
+
+
+def parse_detail(html, url, site):
+    root = DOM(html).root
+    headings = list(root.all({"h1", "h2", "title"}))
+    content = next((n for n in root.all({"div"}) if n.attrs.get("id") == "content"), root)
+    content_headings = list(content.all({"h1", "h2"}))
+    title = content_headings[0].text() if content_headings else (headings[0].text() if headings else url)
+    if site == "holyseal" and any({"dltbl", "fixtbl"} & set(n.attrs.get("class", "").split()) for n in root.all({"table"})):
+        return parse_holyseal(root, url)
+    links = []
+    for a in root.all({"a"}):
+        target = resolve(url, a.attrs.get("href", ""))
+        if not target:
+            continue
+        raw = original(target)
+        if EXT.search(raw) or re.search(r"STORAGE\s*[12]", a.text(), re.I) or "download" in a.attrs:
+            links.append((a, target))
+    # Group mirrors of the same filename. Never apply a page-wide checksum to
+    # several different files: Holyseal product pages may contain many releases.
+    groups = {}
+    for a, target in links:
+        name = unquote(Path(urlsplit(original(target)).path).name)
+        if not EXT.search(name):
+            name = next((v for k, v in labels(root).items() if k in {"ファイル名", "Filename", "filename"}), name or "download.bin")
+        groups.setdefault(name, []).append((a, target))
+    result = []
+    for name, candidates in groups.items():
+        context = root
+        if len(groups) > 1:
+            context = candidates[0][0].parent
+            while context.parent and context.tag not in {"tr", "li", "article"}:
+                context = context.parent
+            # If no per-file structure exists, omit ambiguous checksums.
+            if context is root:
+                context = Node()
+        meta = metadata(context)
+        page_meta = metadata(root)
+        for key in {"brand", "published_at"}:
+            meta[key] = meta[key] or page_meta[key]
+        mirrors = list(dict.fromkeys(target for _, target in candidates))
+        if site == "holyseal":
+            mirrors = [replay(u, WAYBACK.match(url)[1], raw=True) for u in mirrors] + [original(u) for u in mirrors]
+        ident = hashlib.sha256((site + "\n" + original(url) + "\n" + name).encode()).hexdigest()
+        result.append({"id": ident, "site": site, "page_url": url, "original_page_url": original(url),
+                       "title": meta["fields"].get("作品") or title,
+                       "release_name": title, "filename": name, "mirrors": mirrors, **meta})
+    return result
+
+
+def parse_holyseal(root, url):
+    """Holyseal releases span multiple rows; a mirror row has no checksum itself."""
+    heading = next((n.text() for n in root.all({"title"})), "")
+    parts = [s.strip() for s in heading.split("≫")]
+    title = parts[-1] if len(parts) >= 3 else heading
+    brand = parts[-2] if len(parts) >= 3 else None
+    product_fields = labels(root)
+    stamp = WAYBACK.match(url)[1] if WAYBACK.match(url) else None
+    records = []
+    for table in root.all({"table"}):
+        if not {"dltbl", "fixtbl"} & set(table.attrs.get("class", "").split()):
+            continue
+        current = None
+        for row in table.all({"tr"}):
+            strong = next(iter(row.all({"strong"})), None)
+            if strong is not None:
+                text = row.text()
+                match = re.search(r"([^\s()]+\.(?:zip|exe|rar|7z|lzh|lha|cab|mpg|mpeg|wmv|avi|mp4|mov|webm))\s*(?:\(([^)]+)\))?", text, re.I)
+                if not match:
+                    raise ValueError("Holyseal release has no recognized filename: " + text[:200])
+                name = match[1]
+                current = {"id": hashlib.sha256(("holyseal\n" + original(url) + "\n" + name + "\n" + strong.text()).encode()).hexdigest(),
+                    "site": "holyseal", "page_url": url, "original_page_url": original(url),
+                    "title": title, "brand": brand, "release_name": strong.text(), "filename": name,
+                    "size_text": match[2], "expected_size": None, "expected_md5": None,
+                    "published_at": None, "mirrors": [], "fields": {k: v for k, v in product_fields.items() if k in {"発売日", "ジャンル", "制限等", "OS等", "メディア"}}}
+                dates = re.findall(r"\d{4}/\d{2}/\d{2}", text)
+                current["published_at"] = dates[-1] if dates else None
+                records.append(current)
+            if current is None:
+                continue
+            md5 = re.search(r"MD5\s*[:：]\s*([a-f0-9]{32})", row.text(), re.I)
+            if md5:
+                current["expected_md5"] = md5[1].lower()
+            for link in row.all({"a"}):
+                target = resolve(url, link.attrs.get("href", ""))
+                if target and EXT.search(original(target)):
+                    current["mirrors"].extend(([replay(target, stamp, raw=True)] if stamp else []) + [original(target)])
+        for record in records:
+            record["mirrors"] = list(dict.fromkeys(record["mirrors"]))
+            record["mirrors"].sort(key=lambda u: not bool(WAYBACK.match(u)))
+    return records
+
+
+def source_tls_pins():
+    path = Path(__file__).with_name("sources.toml")
+    with path.open("rb") as stream:
+        pins = tomllib.load(stream).get("tls_pins", {})
+    for host, fingerprint in pins.items():
+        if host not in {"storage1.lathercraft.net", "storage2.lathercraft.net"} or not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
+            raise ValueError("invalid legacy source certificate pin: " + host)
+    return pins
+
+
+class PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, host, *, fingerprint, on_verified, **kwargs):
+        # Trust is the exact configured leaf, replacing CA/time validation only
+        # for this connection. Compare before sending the HTTP request body.
+        kwargs["context"] = ssl._create_unverified_context()
+        super().__init__(host, **kwargs)
+        self.fingerprint, self.on_verified = fingerprint, on_verified
+
+    def connect(self):
+        super().connect()
+        actual = hashlib.sha256(self.sock.getpeercert(binary_form=True)).hexdigest()
+        if not hmac.compare_digest(actual, self.fingerprint):
+            self.close()
+            raise ssl.SSLCertVerificationError("legacy source certificate pin mismatch")
+        self.on_verified(actual)
+
+
+class SourceHTTPSHandler(HTTPSHandler):
+    def __init__(self, pins, on_verified):
+        super().__init__()
+        self.pins, self.on_verified = pins, on_verified
+
+    def https_open(self, req):
+        def connection(host, **kwargs):
+            # urllib may connect through an HTTP proxy. Pin the tunnel target,
+            # and reselect trust on every redirect rather than reusing it.
+            target = urlsplit("//" + (req._tunnel_host or host)).hostname
+            if target in self.pins:
+                return PinnedHTTPSConnection(host, fingerprint=self.pins[target], on_verified=self.on_verified, **kwargs)
+            return http.client.HTTPSConnection(host, **kwargs)
+        return self.do_open(connection, req, context=self._context)
+
+
+class Fetcher:
+    def __init__(self, delay=1, timeout=45, retries=3, tls_pins=None):
+        self.delay, self.timeout, self.retries = delay, timeout, retries
+        self.last = 0.0
+        self.tls_pins, self.last_tls_pin = dict(tls_pins or {}), None
+        self.opener = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()), SourceHTTPSHandler(self.tls_pins, self._record_pin))
+
+    def _record_pin(self, fingerprint):
+        self.last_tls_pin = fingerprint
+
+    def open(self, url, headers=None):
+        self.last_tls_pin = None
+        if urlsplit(url).scheme not in {"http", "https"}:
+            raise ValueError("only HTTP(S) URLs are supported")
+        for attempt in range(self.retries):
+            time.sleep(max(0, self.delay - (time.monotonic() - self.last)))
+            self.last = time.monotonic()
+            try:
+                return self.opener.open(Request(url, headers={"User-Agent": "VN-Mirror-Archiver/0.1 (cultural preservation)",
+                    "Accept-Encoding": "identity", **(headers or {})}), timeout=self.timeout)
+            except HTTPError as e:
+                if e.code not in {408, 429, 500, 502, 503, 504} or attempt + 1 == self.retries:
+                    raise
+                retry_after = e.headers.get("Retry-After", "")
+                time.sleep(min(120, int(retry_after)) if retry_after.isdigit() else 2 ** attempt)
+            except (URLError, TimeoutError, ConnectionError):
+                if attempt + 1 == self.retries:
+                    raise
+                time.sleep(2 ** attempt)
+
+
+class Store:
+    def __init__(self, root):
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.db = sqlite3.connect(self.root / "index.sqlite3")
+        self.db.execute("PRAGMA foreign_keys=ON")
+        self.db.row_factory = sqlite3.Row
+        self.db.executescript("""
+        CREATE TABLE IF NOT EXISTS items(id TEXT PRIMARY KEY, site TEXT NOT NULL, data TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending', path TEXT, md5 TEXT, sha256 TEXT, size INTEGER,
+          source_url TEXT, fetched_at TEXT, error TEXT, remote_key TEXT, remote_sha256 TEXT);
+        CREATE TABLE IF NOT EXISTS pages(url TEXT PRIMARY KEY, site TEXT, path TEXT, fetched_at TEXT,
+          status TEXT, error TEXT);
+        CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY, item_id TEXT, url TEXT,
+          attempted_at TEXT, error TEXT);
+        """)
+        from catalog import initialize
+        initialize(self)
+
+    def add(self, record):
+        old = self.db.execute("SELECT data FROM items WHERE id=?", (record["id"],)).fetchone()
+        if old and json.loads(old[0]) != record:
+            # Changed expectations must be revalidated before uploading.
+            self.db.execute("UPDATE items SET status='pending',remote_sha256=NULL WHERE id=?", (record["id"],))
+        self.db.execute("INSERT INTO items(id,site,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+                        (record["id"], record["site"], json.dumps(record, ensure_ascii=False)))
+        from catalog import index_record
+        index_record(self, record)
+        self.db.commit()
+
+    def update(self, ident, **kwargs):
+        self.db.execute("UPDATE items SET " + ",".join(k + "=?" for k in kwargs) + " WHERE id=?", (*kwargs.values(), ident))
+        self.db.commit()
+
+    def export(self):
+        from catalog import export_manifest
+        return export_manifest(self)
+
+    def rows(self, site="both"):
+        return self.db.execute("SELECT i.* FROM items i JOIN item_catalog c ON c.item_id=i.id WHERE (?='both' OR site=?) ORDER BY CASE c.kind WHEN 'trial' THEN 0 WHEN 'patch' THEN 1 WHEN 'movie' THEN 2 ELSE 3 END,i.id", (site, site)).fetchall()
+
+
+def is_detail(url, site):
+    p = urlsplit(original(url))
+    if site == "lathercraft":
+        return bool(re.fullmatch(r"/items/[^/]+", p.path))
+    return p.path.endswith("mlistview.cgi") and "prdcode" in parse_qs(p.query)
+
+
+def crawl(store, fetcher, site, seed, max_pages=None, max_items=None):
+    queue, seen, details = deque([seed]), set(), set()
+    list_count = item_count = failures = 0
+    seed_host = urlsplit(original(seed)).netloc
+    while queue:
+        url = canonical(queue.popleft())
+        if url in seen:
+            continue
+        seen.add(url)
+        detail = is_detail(url, site)
+        if detail:
+            if max_items is not None and item_count >= max_items:
+                continue
+            item_count += 1
+        else:
+            if max_pages is not None and list_count >= max_pages:
+                continue
+            list_count += 1
+        rel = "html/" + hashlib.sha256(url.encode()).hexdigest() + ".html"
+        effective_url = None
+        try:
+            with fetcher.open(url) as response:
+                if site == "holyseal":
+                    final = WAYBACK.match(response.geturl())
+                    if not final or urlsplit(original(response.geturl())).hostname != urlsplit(original(seed)).hostname:
+                        raise ValueError("Wayback redirected outside the source site")
+                data = response.read(16 * 1024 * 1024 + 1)
+                if len(data) > 16 * 1024 * 1024:
+                    raise ValueError("HTML exceeds 16 MiB")
+                html = decode_html(data, response.headers.get_content_charset())
+                # Relative links belong to the capture actually returned by Wayback.
+                effective_url = response.geturl()
+            target = store.root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            store.db.execute("INSERT OR REPLACE INTO pages(url,site,path,fetched_at,status,error,response_url) VALUES(?,?,?,?,?,?,?)", (url, site, rel, now(), "ok", None, effective_url))
+            root = DOM(html).root
+            found = []
+            for a in root.all({"a"}):
+                link = resolve(effective_url, a.attrs.get("href", ""))
+                if not link or urlsplit(original(link)).netloc != seed_host:
+                    continue
+                if is_detail(link, site):
+                    found.append(link)
+                elif not detail:
+                    p = urlsplit(original(link))
+                    if site == "lathercraft" and p.path.rstrip("/") == "/items" and "next" in a.attrs.get("rel", "").split():
+                        queue.append(link)
+                    elif site == "holyseal" and p.path == urlsplit(original(seed)).path:
+                        # Keep the original content filter but do not assume a page-number parameter.
+                        params, seed_params = parse_qs(p.query), parse_qs(urlsplit(original(seed)).query)
+                        if all(params.get(k) == v for k, v in seed_params.items() if k in {"mode", "flt"}):
+                            queue.append(link)
+            if detail:
+                records = parse_detail(html, effective_url, site)
+                for record in records:
+                    store.add(record)
+                if not records:
+                    raise ValueError("no downloadable links recognized; saved HTML needs parser review")
+                print(f"{site}: {len(records)} file(s) {url}")
+            else:
+                fresh = [u for u in found if u not in details]
+                if not found:
+                    raise ValueError("no detail links recognized; refusing to report an empty crawl as success")
+                details.update(found)
+                queue.extendleft(reversed(fresh))
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            failures += 1
+            store.db.execute("INSERT OR REPLACE INTO pages(url,site,path,fetched_at,status,error,response_url) VALUES(?,?,?,?,?,?,?)", (url, site, rel if (store.root / rel).exists() else None, now(), "failed", str(e), effective_url))
+            print(f"{site}: failed {url}: {e}", file=sys.stderr)
+        store.db.commit()
+    store.export()
+    return failures
+
+
+def validate(path, record, previous=None):
+    result = digest(path)
+    if not result["size"]:
+        raise ValueError("empty file")
+    if record.get("expected_md5") and result["md5"] != record["expected_md5"]:
+        raise ValueError("MD5 mismatch")
+    if record.get("expected_size") is not None and result["size"] != record["expected_size"]:
+        raise ValueError("published file size mismatch")
+    if previous and previous.get("sha256") and result["sha256"] != previous["sha256"]:
+        raise ValueError("SHA-256 mismatch against local manifest")
+    with Path(path).open("rb") as f:
+        head = f.read(512).lstrip().lower()
+    if head.startswith((b"<!doctype html", b"<html", b"<head", b"<body")):
+        raise ValueError("HTML error page returned instead of a file")
+    return result
+
+
+def transfer(fetcher, url, destination, record):
+    # Partial bytes belong to a single URL AND validator. Never append bytes
+    # from a different mirror or changed remote object.
+    suffix = hashlib.sha256(url.encode()).hexdigest()[:16]
+    part = destination.with_name(destination.name + "." + suffix + ".part")
+    state_path = part.with_suffix(".json")
+    state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    offset = part.stat().st_size if part.exists() and state.get("validator") else 0
+    headers = {"Range": f"bytes={offset}-", "If-Range": state["validator"]} if offset else {}
+    try:
+        response = fetcher.open(url, headers)
+    except HTTPError as e:
+        if e.code != 416 or not offset:
+            raise
+        # Even an unsatisfied range is not proof of completion. Restart and
+        # verify the full response rather than accepting a truncated .part.
+        e.close()
+        offset = 0
+        response = fetcher.open(url)
+    with response:
+        if response.headers.get("Content-Encoding", "identity") != "identity":
+            raise ValueError("unexpected content encoding for binary transfer")
+        if "html" in response.headers.get("Content-Type", "").lower():
+            raise ValueError("server returned HTML for a download")
+        total = None
+        if response.status == 206:
+            match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", response.headers.get("Content-Range", ""))
+            if not match or int(match[1]) != offset or int(match[2]) < offset or int(match[2]) >= int(match[3]):
+                raise ValueError("invalid Content-Range")
+            total = int(match[3])
+            if offset and response.headers.get("ETag", response.headers.get("Last-Modified")) != state["validator"]:
+                raise ValueError("validator changed during resume")
+        elif response.status == 200:
+            offset = 0  # Server ignored Range, or If-Range forced a full response.
+        else:
+            raise ValueError(f"unexpected download status {response.status}")
+        validator = response.headers.get("ETag")
+        if not validator or validator.startswith("W/"):
+            validator = response.headers.get("Last-Modified")
+        state_path.write_text(json.dumps({"url": url, "validator": validator}))
+        expected_body = response.headers.get("Content-Length")
+        count = 0
+        with part.open("ab" if offset else "wb") as f:
+            while chunk := response.read(1024 * 1024):
+                f.write(chunk)
+                count += len(chunk)
+        if expected_body is not None and count != int(expected_body):
+            raise ValueError("truncated HTTP body")
+        if total is not None and part.stat().st_size != total:
+            raise ValueError("incomplete range transfer")
+    try:
+        result = validate(part, record)
+    except ValueError:
+        part.unlink(missing_ok=True)
+        state_path.unlink(missing_ok=True)
+        raise
+    part.replace(destination)
+    state_path.unlink(missing_ok=True)
+    return result
+
+
+def download(store, fetcher, site="both", limit=None, ident=None):
+    failures = processed = 0
+    if ident is not None and not any(row["id"] == ident for row in store.rows(site)):
+        raise ValueError("source record ID not found for selected site: " + ident)
+    for row in store.rows(site):
+        if ident is not None and row["id"] != ident:
+            continue
+        record = json.loads(row["data"])
+        source_fetcher = fetcher
+        if getattr(fetcher, "tls_pins", {}) and not record.get("expected_md5"):
+            # A file without a publisher digest must use ordinary TLS on all
+            # mirrors, including redirects into a configured legacy host.
+            source_fetcher = Fetcher(fetcher.delay, fetcher.timeout, fetcher.retries)
+        if row["status"] == "verified":
+            try:
+                validate(store.root / row["path"], record, dict(row))
+                continue
+            except (OSError, ValueError):
+                store.update(row["id"], status="pending", remote_sha256=None)
+        if limit is not None and processed >= limit:
+            break
+        processed += 1
+        name = re.sub(r"[^\w.() -]", "_", record["filename"])[:150].strip(". ") or "download.bin"
+        rel = f"files/{row['site']}/{row['id']}/{name}"
+        path = store.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not record["mirrors"]:
+            store.update(row["id"], status="failed", error="No mirror link preserved on source page")
+        for url in record["mirrors"]:
+            error = None
+            try:
+                result = transfer(source_fetcher, url, path, record)
+                store.update(row["id"], status="verified", path=rel, source_url=url, fetched_at=now(), error=None, remote_sha256=None, **result)
+                print(f"verified {rel} ({result['size']} bytes)")
+            except (OSError, ValueError, http.client.HTTPException) as e:
+                error = str(e)
+                store.update(row["id"], status="failed", error=error)
+                print(f"download failed {url}: {error}", file=sys.stderr)
+            store.db.execute("INSERT INTO attempts(item_id,url,attempted_at,error,tls_pin) VALUES(?,?,?,?,?)", (row["id"], url, now(), error, getattr(source_fetcher, "last_tls_pin", None)))
+            store.db.commit()
+            if error is None:
+                break
+        else:
+            failures += 1
+    store.export()
+    return failures
+
+
+def verify(store, site="both"):
+    failures = 0
+    for row in store.rows(site):
+        if not row["path"]:
+            continue
+        try:
+            result = validate(store.root / row["path"], json.loads(row["data"]), dict(row))
+            store.update(row["id"], status="verified", error=None, **result)
+        except (OSError, ValueError) as e:
+            failures += 1
+            store.update(row["id"], status="failed", error=str(e), remote_sha256=None)
+            print(f"verify failed {row['id']}: {e}", file=sys.stderr)
+    store.export()
+    return failures
+
+
+def s3_client(namespace, profile="hf"):
+    import boto3
+    from botocore.config import Config
+    config = Config(region_name="us-east-1", s3={"addressing_style": "path"},
+                    request_checksum_calculation="when_required", response_checksum_validation="when_required",
+                    connect_timeout=15, read_timeout=120, retries={"max_attempts": 3})
+    session = boto3.Session(profile_name=profile)
+    return session.client("s3", endpoint_url=f"https://{namespace}.s3.hf.co", config=config)
+
+
+def public_url(namespace, bucket, key, download=False):
+    url = f"https://huggingface.co/buckets/{quote(namespace, safe='')}/{quote(bucket, safe='')}/resolve/{quote(key, safe='/')}"
+    return url + ("?download=true" if download else "")
+
+
+def public_digest(namespace, bucket, key):
+    sha, size = hashlib.sha256(), 0
+    with Fetcher(delay=0).open(public_url(namespace, bucket, key)) as response:
+        while chunk := response.read(1024 * 1024):
+            sha.update(chunk)
+            size += len(chunk)
+    return sha.hexdigest(), size
+
+
+def init_bucket(namespace, bucket, profile="hf"):
+    from botocore.exceptions import ClientError
+    client = s3_client(namespace, profile)
+    try:
+        client.create_bucket(Bucket=bucket)
+        print(f"created {namespace}/{bucket}")
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "BucketAlreadyOwnedByYou":
+            raise
+        print(f"already owned: {namespace}/{bucket}")
+    # Keep this file as archive documentation rather than creating/deleting
+    # opaque test objects. Anonymous read-back verifies public availability.
+    body = ("VN Mirror Archive\n\nPublic preservation of visual novel demos, "
+            "patches and promotional movies.\nSource URLs, checksums and capture "
+            "dates are recorded in manifest.json.\n").encode()
+    key = "ABOUT.txt"
+    client.put_object(Bucket=bucket, Key=key, Body=body, ContentType="text/plain; charset=utf-8")
+    actual = public_digest(namespace, bucket, key)
+    if actual != (hashlib.sha256(body).hexdigest(), len(body)):
+        raise ValueError("public bucket read-back mismatch")
+    print(f"create/write/public read verified: https://huggingface.co/buckets/{namespace}/{bucket}")
+
+
+def publish(store, namespace, bucket, profile="hf", site="both", limit=None):
+    from boto3.s3.transfer import TransferConfig
+    from botocore.exceptions import ClientError
+    client = s3_client(namespace, profile)
+    try:
+        client.head_bucket(Bucket=bucket)
+    except ClientError as e:
+        if str(e.response["Error"]["Code"]) not in {"404", "NoSuchBucket", "NotFound"}:
+            raise
+        client.create_bucket(Bucket=bucket)
+    config = TransferConfig(multipart_threshold=256 * 1024**2, multipart_chunksize=256 * 1024**2, max_concurrency=2)
+    count = 0
+    checked = {}
+    for row in store.rows(site):
+        if row["status"] != "verified":
+            continue
+        if limit is not None and count >= limit:
+            break
+        path = store.root / row["path"]
+        result = validate(path, json.loads(row["data"]), dict(row))
+        key = "files/" + result["sha256"]
+        count += 1
+        # A successful upload alone is insufficient. Always anonymously read
+        # back the complete object, including on a rerun after interruption.
+        known = store.db.execute("SELECT 1 FROM items WHERE remote_key=? AND remote_sha256=? AND remote_verified_at IS NOT NULL", (f"{namespace}/{bucket}/{key}", result["sha256"])).fetchone()
+        if key not in checked and not known:
+            client.upload_file(str(path), bucket, key, ExtraArgs={"Metadata": {"sha256": result["sha256"]}}, Config=config)
+        remote_sha, remote_size = checked.get(key) or public_digest(namespace, bucket, key)
+        if (remote_sha, remote_size) != (result["sha256"], result["size"]):
+            store.update(row["id"], remote_sha256=None, remote_verified_at=None)
+            raise ValueError(f"public read-back mismatch: {key}")
+        checked[key] = remote_sha, remote_size
+        store.update(row["id"], remote_key=f"{namespace}/{bucket}/{key}", remote_sha256=remote_sha, remote_verified_at=now())
+        print(f"public read-back verified: {namespace}/{bucket}/{key}")
+    store.export()
+    # Publish provenance and saved HTML, never credentials, SQLite journals,
+    # partial files, or arbitrary files from the workspace.
+    provenance = [store.root / "manifest.json"]
+    provenance += [store.root / r[0] for r in store.db.execute("SELECT path FROM pages WHERE path IS NOT NULL")]
+    for path in dict.fromkeys(provenance):
+        key = path.relative_to(store.root).as_posix()
+        client.upload_file(str(path), bucket, key, Config=config)
+        expected = digest(path)
+        if public_digest(namespace, bucket, key) != (expected["sha256"], expected["size"]):
+            raise ValueError(f"public provenance read-back mismatch: {key}")
+    # Consistent SQLite backup, not a copy of a live DB/WAL. Pages builds derive
+    # HTML and their single JSON export from this same source of truth.
+    with tempfile.TemporaryDirectory() as tmp:
+        snapshot = Path(tmp) / "index.sqlite3"
+        with closing(sqlite3.connect(snapshot)) as backup:
+            store.db.backup(backup)
+        client.upload_file(str(snapshot), bucket, "index.sqlite3", Config=config)
+        expected = digest(snapshot)
+        if public_digest(namespace, bucket, "index.sqlite3") != (expected["sha256"], expected["size"]):
+            raise ValueError("public SQLite snapshot read-back mismatch")
+    print(f"published {count} file(s); https://huggingface.co/buckets/{namespace}/{bucket}")
+
+
+def doctor():
+    failed = False
+    for host in ["www.lathercraft.net", "web.archive.org", "vn-archive.s3.hf.co", "huggingface.co"]:
+        try:
+            addresses = sorted({r[4][0] for r in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)})
+            print(host, "DNS OK", ", ".join(addresses))
+        except OSError as e:
+            failed = True
+            print(host, "DNS FAILED", str(e))
+    credentials = configparser.ConfigParser()
+    credentials.read(os.environ.get("AWS_SHARED_CREDENTIALS_FILE", str(Path.home() / ".aws/credentials")))
+    print("AWS profile hf:", "configured" if credentials.has_section("hf") else "not found")
+    for host, port in [("127.0.0.53", 53), ("1.1.1.1", 443)]:
+        try:
+            with socket.create_connection((host, port), timeout=3):
+                print(f"{host}:{port} TCP OK")
+        except OSError as e:
+            print(f"{host}:{port} TCP FAILED {type(e).__name__}: {e}")
+    # No credential values are printed.
+    return int(failed)
+
+
+def positive(value):
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", default="archive")
+    subs = parser.add_subparsers(dest="command", required=True)
+    subs.add_parser("doctor")
+    p = subs.add_parser("bucket-init", help="create bucket, write ABOUT.txt, verify anonymous download")
+    p.add_argument("--namespace", default="vn-archive")
+    p.add_argument("--bucket", default="mirrors")
+    p.add_argument("--profile", default="hf")
+    p = subs.add_parser("build-site", help="generate static Pages HTML and one manifest.json from SQLite")
+    p.add_argument("--output", default="dist")
+    p = subs.add_parser("alias-maker", help="merge manufacturer spelling variants in SQLite")
+    p.add_argument("alias")
+    p.add_argument("name")
+    for command in ["crawl", "download", "verify", "upload", "status"]:
+        p = subs.add_parser(command)
+        p.add_argument("--site", choices=["both", "lathercraft", "holyseal"], default="both")
+        if command in {"download", "upload"}:
+            p.add_argument("--limit", type=positive)
+        if command == "download":
+            p.add_argument("--id", help="download one catalog source record")
+        if command == "crawl":
+            p.add_argument("--max-pages", type=positive)
+            p.add_argument("--max-items", type=positive)
+            p.add_argument("--lathercraft-url", default="http://www.lathercraft.net/items?page=1")
+            p.add_argument("--holyseal-url", action="append", help="repeat to choose explicit archive seeds; default: trials, patches, movies")
+        if command in {"crawl", "download"}:
+            p.add_argument("--delay", type=float, default=1)
+        if command == "upload":
+            p.add_argument("--namespace", default="vn-archive")
+            p.add_argument("--bucket", default="mirrors")
+            p.add_argument("--profile", default="hf")
+    args = parser.parse_args(argv)
+    if args.command == "doctor":
+        return doctor()
+    if args.command == "bucket-init":
+        init_bucket(args.namespace, args.bucket, args.profile)
+        return 0
+    store = Store(args.root)
+    try:
+        if args.command == "build-site":
+            from catalog import build_site
+            build_site(store, Path(args.output))
+        if args.command == "alias-maker":
+            from catalog import alias_maker
+            alias_maker(store, args.alias, args.name)
+        if args.command == "crawl":
+            fetcher = Fetcher(delay=args.delay)
+            failed = 0
+            holy_seeds = args.holyseal_url or [HOLY, HOLY.replace("flt=try", "flt=fix"), HOLY.replace("flt=try", "flt=demo")]
+            for site, seed in [("lathercraft", args.lathercraft_url), *[("holyseal", u) for u in holy_seeds]]:
+                if args.site in {"both", site}:
+                    failed += crawl(store, fetcher, site, seed, args.max_pages, args.max_items)
+            return int(bool(failed))
+        if args.command == "download":
+            return int(bool(download(store, Fetcher(delay=args.delay, tls_pins=source_tls_pins()), args.site, args.limit, args.id)))
+        if args.command == "verify":
+            return int(bool(verify(store, args.site)))
+        if args.command == "upload":
+            publish(store, args.namespace, args.bucket, args.profile, args.site, args.limit)
+        if args.command == "status":
+            for row in store.db.execute("SELECT site,status,count(*) FROM items WHERE (?='both' OR site=?) GROUP BY site,status", (args.site, args.site)):
+                print(*row)
+        return 0
+    finally:
+        store.export()
+        store.db.close()
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as exc:
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        sys.exit(1)

@@ -1,0 +1,192 @@
+"""SQLite catalog and static HTML generation. Source records retain provenance."""
+from __future__ import annotations
+
+import hashlib
+from html import escape
+import json
+from pathlib import Path
+import re
+import shutil
+import unicodedata
+
+KINDS = {"trial": "体験版", "patch": "パッチ", "movie": "ムービー", "other": "その他"}
+PRIORITY = {"trial": 0, "patch": 1, "movie": 2, "other": 3}
+
+
+def normalized(value):
+    return " ".join(unicodedata.normalize("NFKC", value).split()).casefold()
+
+
+def identity(*values):
+    return hashlib.sha256("\n".join(values).encode()).hexdigest()
+
+
+def release_info(record):
+    label = record.get("release_name") or record["title"]
+    # A repaired trial remains a trial, not a patch for the commercial game.
+    if re.search(r"体験|trial|(?:^|[ _])taiken", label + " " + record["filename"], re.I):
+        kind = "trial"
+    elif re.search(r"パッチ|修正|アップデート|patch|update", label, re.I):
+        kind = "patch"
+    elif re.search(r"ムービー|movie|動画|PV|デモ", label, re.I):
+        kind = "movie"
+    else:
+        kind = "other"
+    fields = record.get("fields", {})
+    version = re.search(r"(?:ver(?:sion)?\.?\s*|v)(\d+(?:\.\d+)*[a-z]?)", label, re.I)
+    return kind, fields.get("バージョン") or (version[1] if version else None), fields.get("対象OS"), fields.get("適用条件") or fields.get("備考") or None
+
+
+def initialize(store):
+    db = store.db
+    db.executescript("""
+      CREATE TABLE IF NOT EXISTS manufacturers(id TEXT PRIMARY KEY, name TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS manufacturer_aliases(alias TEXT PRIMARY KEY, manufacturer_id TEXT NOT NULL REFERENCES manufacturers(id));
+      CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY, manufacturer_id TEXT NOT NULL REFERENCES manufacturers(id), title TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS item_catalog(item_id TEXT PRIMARY KEY REFERENCES items(id), product_id TEXT NOT NULL REFERENCES products(id), kind TEXT NOT NULL, version TEXT, platform TEXT, requirements TEXT);
+    """)
+    if "remote_verified_at" not in {r[1] for r in db.execute("PRAGMA table_info(items)")}:
+        db.execute("ALTER TABLE items ADD COLUMN remote_verified_at TEXT")
+    if "response_url" not in {r[1] for r in db.execute("PRAGMA table_info(pages)")}:
+        db.execute("ALTER TABLE pages ADD COLUMN response_url TEXT")
+    if "tls_pin" not in {r[1] for r in db.execute("PRAGMA table_info(attempts)")}:
+        db.execute("ALTER TABLE attempts ADD COLUMN tls_pin TEXT")
+    for row in db.execute("SELECT data FROM items WHERE id NOT IN (SELECT item_id FROM item_catalog)").fetchall():
+        index_record(store, json.loads(row[0]))
+    db.commit()
+
+
+def index_record(store, record):
+    db = store.db
+    name = record.get("brand") or "メーカー未確認"
+    alias = normalized(name)
+    manufacturer = db.execute("SELECT manufacturer_id FROM manufacturer_aliases WHERE alias=?", (alias,)).fetchone()
+    maker_id = manufacturer[0] if manufacturer else identity(alias)
+    db.execute("INSERT OR IGNORE INTO manufacturers VALUES(?,?)", (maker_id, name))
+    db.execute("INSERT OR IGNORE INTO manufacturer_aliases VALUES(?,?)", (alias, maker_id))
+    title = record["title"]
+    # Unknown makers must not merge equally named products across unrelated sites.
+    scope = record.get("original_page_url", record["id"]) if not record.get("brand") else ""
+    product_id = identity(maker_id, normalized(title), scope)
+    db.execute("INSERT OR IGNORE INTO products VALUES(?,?,?)", (product_id, maker_id, title))
+    db.execute("INSERT OR REPLACE INTO item_catalog VALUES(?,?,?,?,?,?)", (record["id"], product_id, *release_info(record)))
+
+
+def alias_maker(store, alias, name):
+    """An explicit curator decision. Never fuzzy-merge unrelated brands."""
+    target = store.db.execute("SELECT manufacturer_id FROM manufacturer_aliases WHERE alias=?", (normalized(name),)).fetchone()
+    target_id = target[0] if target else identity(normalized(name))
+    store.db.execute("INSERT OR IGNORE INTO manufacturers VALUES(?,?)", (target_id, name))
+    old = store.db.execute("SELECT manufacturer_id FROM manufacturer_aliases WHERE alias=?", (normalized(alias),)).fetchone()
+    if old and old[0] != target_id:
+        store.db.execute("UPDATE manufacturer_aliases SET manufacturer_id=? WHERE manufacturer_id=?", (target_id, old[0]))
+    for value in [alias, name]:
+        store.db.execute("INSERT OR REPLACE INTO manufacturer_aliases VALUES(?,?)", (normalized(value), target_id))
+    for row in store.db.execute("SELECT data FROM items").fetchall():
+        index_record(store, json.loads(row[0]))
+    store.db.execute("DELETE FROM products WHERE id NOT IN (SELECT product_id FROM item_catalog)")
+    store.db.execute("DELETE FROM manufacturers WHERE id NOT IN (SELECT manufacturer_id FROM products) AND id NOT IN (SELECT manufacturer_id FROM manufacturer_aliases)")
+    store.db.commit()
+
+
+def manifest(store):
+    from archiver import now, public_url
+    db = store.db
+    makers = [dict(r) for r in db.execute("SELECT * FROM manufacturers WHERE id IN (SELECT manufacturer_id FROM products WHERE id IN (SELECT product_id FROM item_catalog)) ORDER BY name,id")]
+    products = [dict(r) for r in db.execute("SELECT * FROM products WHERE id IN (SELECT product_id FROM item_catalog) ORDER BY title,id")]
+    files = {}
+    for row in db.execute("SELECT i.*,c.product_id,c.kind,c.version,c.platform,c.requirements FROM items i JOIN item_catalog c ON c.item_id=i.id ORDER BY i.id"):
+        r = dict(row)
+        data = json.loads(r.pop("data"))
+        # Bytes are deduplicated globally in HF; each product keeps its association.
+        file_id = identity(r["product_id"], r["sha256"] or r["id"])
+        item = files.setdefault(file_id, {"id": file_id, "product_id": r["product_id"], "kind": r["kind"],
+            "name": data.get("release_name") or data["title"], "version": r["version"], "platform": r["platform"],
+            "requirements": r["requirements"], "filename": data["filename"], "size": r["size"], "md5": r["md5"],
+            "sha256": r["sha256"], "download_url": None, "remote_key": None, "public_verified_at": None, "sources": []})
+        if r["status"] == "verified" and r["sha256"] and r["remote_sha256"] == r["sha256"] and r["remote_verified_at"]:
+            namespace, bucket, key = r["remote_key"].split("/", 2)
+            item.update(download_url=public_url(namespace, bucket, key, download=True), remote_key=r["remote_key"], public_verified_at=r["remote_verified_at"])
+        item["sources"].append({"id": r["id"], "site": r["site"], "page_url": data["page_url"],
+            "release_name": data.get("release_name"), "kind": r["kind"], "version": r["version"],
+            "platform": r["platform"], "requirements": r["requirements"],
+            "original_page_url": data.get("original_page_url"), "filename": data["filename"],
+            "published_at": data.get("published_at"), "mirrors": data["mirrors"], "expected_md5": data.get("expected_md5"),
+            "expected_size": data.get("expected_size"), "size_text": data.get("size_text"), "fields": data.get("fields", {}),
+            "status": r["status"], "fetched_at": r["fetched_at"], "source_url": r["source_url"], "error": r["error"],
+            "attempts": [dict(a) for a in db.execute("SELECT url,attempted_at,error,tls_pin FROM attempts WHERE item_id=? ORDER BY id", (r["id"],))]})
+    return {"schema_version": 1, "generated_at": now(), "manufacturers": makers, "products": products,
+        "files": sorted(files.values(), key=lambda f: (PRIORITY[f["kind"]], f["product_id"], f["id"])),
+        "pages": [dict(r) for r in db.execute("SELECT * FROM pages ORDER BY url")]}
+
+
+def export_manifest(store):
+    data = manifest(store)
+    path = store.root / "manifest.json"
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+    return data
+
+
+def build_site(store, output):
+    output = Path(output)
+    if output.resolve() == store.root.resolve() or store.root.resolve().is_relative_to(output.resolve()):
+        raise ValueError("site output must be separate from archive storage")
+    data = export_manifest(store)
+    output.mkdir(parents=True, exist_ok=True)
+    for path in (Path(__file__).parent / "web").iterdir():
+        if path.is_file():
+            shutil.copyfile(path, output / path.name)
+    shutil.copyfile(store.root / "manifest.json", output / "manifest.json")
+    (output / ".nojekyll").touch()
+    e = lambda text: escape(str(text), quote=True)
+
+    def page(title, body, prefix=""):
+        return f'''<!doctype html>
+<html lang="ja" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{e(title)} · VN Mirror Archive</title><link rel="stylesheet" href="{prefix}pico.min.css"><link rel="stylesheet" href="{prefix}style.css"><script defer src="{prefix}app.js"></script></head>
+<body><a class="skip" href="#main">本文へ</a><header class="container"><nav aria-label="メイン"><ul><li><a href="{prefix}index.html"><strong>VN Mirror Archive</strong></a></li></ul><ul><li><a href="{prefix}manifest.json">目録 JSON</a></li></ul></nav><p>体験版・パッチ・デモムービーの保存庫</p></header>
+<main id="main" class="container"><h1>{e(title)}</h1>{body}<p id="download-status" role="status" aria-live="polite"></p></main>
+<footer class="container"><small>ファイルは Hugging Face からダウンロードします。更新：{e(data['generated_at'][:10])}</small></footer></body></html>'''
+
+    controls = '''<form id="filters" hidden><div class="grid"><label>作品・ファイル名で検索<input name="q" type="search" placeholder="作品名、メーカー、ファイル名"></label><label>配布種別<select name="kind"><option value="">すべて</option><option value="trial">体験版</option><option value="patch">パッチ</option><option value="movie">ムービー</option><option value="other">その他</option></select></label></div><label><input name="available" type="checkbox">ダウンロード可能な配布物のみ</label><p id="filter-status" role="status"></p></form>'''
+    index = '<p>メーカーを選んで、作品ごとの配布物を探せます。体験版・パッチを優先して収集しています。</p><ul class="makers">'
+    (output / "makers").mkdir(exist_ok=True)
+    # Remove only pages generated by this builder, including renamed/merged makers.
+    for old in (output / "makers").glob("*.html"):
+        if re.fullmatch(r"[a-f0-9]{64}", old.stem):
+            old.unlink()
+    for maker in data["manufacturers"]:
+        products = [p for p in data["products"] if p["manufacturer_id"] == maker["id"]]
+        index += f'<li><a href="makers/{maker["id"]}.html">{e(maker["name"])}</a><small>{len(products)}作品</small></li>'
+        body = controls
+        for product in products:
+            body += f'<section class="product" id="p-{product["id"]}"><h2>{e(product["title"])}</h2>'
+            for file in [f for f in data["files"] if f["product_id"] == product["id"]]:
+                query = " ".join([maker["name"], product["title"], file["name"], *[s["filename"] for s in file["sources"]]])
+                body += f'<article data-entry data-search="{e(query)}" data-kind="{file["kind"]}" data-available="{str(bool(file["download_url"])).lower()}"><h3><span class="kind">{KINDS[file["kind"]]}</span> {e(file["name"])}</h3>'
+                body += f'<p class="filename">{e(file["filename"])}</p><p>' + (f'{file["size"]:,} bytes' if file["size"] is not None else 'サイズ未確認')
+                for key, label in [("version", "バージョン"), ("platform", "対象OS"), ("requirements", "適用条件")]:
+                    if file[key]:
+                        body += f' · {label}: {e(file[key])}'
+                body += '</p>'
+                if file["download_url"]:
+                    body += f'<p><button type="button" class="save-file" data-id="{file["id"]}" data-filename="{e(file["filename"])}" hidden>元のファイル名で保存</button> <a href="{e(file["download_url"])}">HFから直接ダウンロード</a></p>'
+                else:
+                    body += '<p class="unavailable">取得・公開確認待ち</p>'
+                body += '<details><summary>チェックサム・出典</summary>'
+                for key in ["sha256", "md5"]:
+                    if file[key]:
+                        body += f'<p>{key.upper()}: <code>{e(file[key])}</code></p>'
+                body += '<ul>'
+                for source in file["sources"]:
+                    body += f'<li><a href="{e(source["page_url"])}">{e(source["site"])}</a> · {e(source["published_at"] or "掲載日不明")} · {e(source["filename"])}</li>'
+                body += '</ul></details></article>'
+            body += '</section>'
+        (output / "makers" / (maker["id"] + ".html")).write_text(page(maker["name"], body, "../"), encoding="utf-8")
+    index += '</ul>'
+    if not data["manufacturers"]:
+        index += '<p>まだ配布物が登録されていません。</p>'
+    (output / "index.html").write_text(page("メーカー一覧", index), encoding="utf-8")
+    print(f"static site: {output} ({len(data['manufacturers'])} manufacturers, {len(data['files'])} files)")

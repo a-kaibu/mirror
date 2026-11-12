@@ -1,0 +1,16 @@
+[project]
+name = "vn-mirror-archiver"
+version = "0.1.0"
+description = "Preserve VN demos, patches, movies, and their provenance"
+requires-python = ">=3.11"
+dependencies = ["boto3>=1.36,<2"]
+
+[project.scripts]
+vn-archive = "archiver:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+include = ["archiver.py", "catalog.py", "sources.toml", "web"]

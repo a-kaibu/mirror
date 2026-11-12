@@ -1,0 +1,23 @@
+:root { --pico-font-family: "BIZ UDPGothic", "Yu Gothic", sans-serif; --pico-font-size: 16px; --pico-primary: #185b91; --pico-primary-background: #185b91; --pico-primary-hover: #103f65; --pico-primary-hover-background: #103f65; --pico-border-radius: .25rem; }
+body { background: #f5f8fc; color: #23364a; }
+header { border-top: 6px solid #185b91; border-bottom: 1px solid #c7d5e3; padding-bottom: .8rem; }
+header p, footer { color: #516476; }
+main { padding-block: 2rem; }
+h1 { font-size: 1.8rem; } h2 { font-size: 1.35rem; } h3 { font-size: 1.05rem; line-height: 1.7; }
+.makers { padding: 0; list-style: none; }
+.makers li { display: flex; justify-content: space-between; gap: 1rem; padding: .85rem .25rem; border-bottom: 1px solid #c7d5e3; }
+.makers a { font-weight: 700; }
+.product { margin-block: 2rem; }
+.product > h2 { border-left: 4px solid #185b91; padding-left: .7rem; }
+article { box-shadow: none; border: 1px solid #c7d5e3; padding: 1rem; }
+.kind { background: #e2edf7; color: #194d76; padding: .2rem .45rem; margin-right: .3rem; font-size: .8rem; white-space: nowrap; }
+.filename, code { font-family: "BIZ UDGothic", ui-monospace, monospace; overflow-wrap: anywhere; }
+.unavailable { color: #65604d; }
+details { margin-bottom: 0; } details p { margin-top: 1rem; }
+button { margin-right: .5rem; }
+footer { border-top: 1px solid #c7d5e3; padding-block: 1rem; }
+.skip { position: absolute; top: -100px; left: .5rem; background: white; padding: .5rem; z-index: 1; }
+.skip:focus { top: .5rem; }
+[hidden] { display: none !important; }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #185b91; outline-offset: 3px; }
+@media (max-width: 600px) { nav { flex-wrap: wrap; } button { display: block; width: 100%; margin-bottom: .75rem; } }
