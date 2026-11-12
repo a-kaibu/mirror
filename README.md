@@ -330,3 +330,17 @@ HTTP 200. Recovery triggers live discovery and the separate archive worker.
 Health checks are recorded in SQLite. The persistent timer catches missed runs
 when the user manager returns; checks require the host to be running.
 HF credentials remain in the local AWS profile and are not copied into CI.
+
+### VNDB SQLite export
+
+Download a dated near-complete public dump from https://dl.vndb.org/dump/ and run
+`python vndb.py archive/vndb-db-YYYY-MM-DD.tar.zst --upload`. The converter requires
+`zstd` on PATH. It imports every table/column declared in `schema_plain.sql`,
+validates COPY field counts, preserves NULL and escape sequences, and verifies
+SQLite integrity and table counts before atomically replacing `archive/vndb.sqlite3`.
+Arrays and enums retain their PostgreSQL text representation; booleans become 0/1.
+Original schema, timestamp, README and all supplied licenses are embedded in
+`_source_documents`, with dump SHA-256 and conversion provenance in `_archive_info`.
+The SQLite file is published as `vndb.sqlite3` and anonymously read back in full.
+This is the official public dump scope; content omitted by VNDB is not reconstructed.
+When refreshing, replace the complete snapshot so deleted/opted-out rows are removed.
