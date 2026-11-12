@@ -91,3 +91,17 @@ class OfficialTests(unittest.TestCase):
             self.assertEqual(len(fetch.requests),3)
             self.assertTrue(all(__import__('json').loads(row["data"])["release_name"]=="体験版" for row in store.rows()))
             store.db.close()
+
+
+class ParallelOfficialTests(unittest.TestCase):
+    def test_two_publishers_are_scanned_concurrently(self):
+        import threading
+        from unittest.mock import patch
+        barrier=threading.Barrier(2,timeout=5);connections=[]
+        other={**GAME,'id':35436,'gamename':'Other'}
+        def scan(store,fetcher,game,brand,seed):
+            store.db.execute('SELECT count(*) FROM items').fetchone()
+            connections.append(id(store.db));barrier.wait();return 0
+        with tempfile.TemporaryDirectory() as tmp,patch.object(o,'seeds',return_value=iter([(GAME,BRAND,PAGE),(other,BRAND,'https://other.test/download.html')])),patch.object(o,'scan',side_effect=scan):
+            self.assertEqual(o.collect_parallel(tmp,workers=2),2)
+            self.assertEqual(len(set(connections)),2)

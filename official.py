@@ -150,11 +150,56 @@ def collect(store, fetcher, limit=None, retry=False):
     store.export();return done
 
 
+class HostFetcher:
+    """Independent publishers progress concurrently; each host retains pacing."""
+    def __init__(self):
+        import threading
+        self.guard=threading.Lock();self.hosts={}
+
+    def open(self,url,headers=None):
+        import threading
+        key=urlsplit(url).hostname
+        with self.guard:
+            if key not in self.hosts:self.hosts[key]=(threading.Lock(),a.Fetcher(delay=3,timeout=25,retries=2))
+            lock,fetcher=self.hosts[key]
+        with lock:return fetcher.open(url,headers)
+
+
+def collect_parallel(root,workers=4,limit=None,retry=False):
+    from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
+    from archive_lock import exclusive_file
+    store=a.Store(root);initialize(store);fetcher=HostFetcher();submitted=completed=0
+    def collect_one(game,brand,seed):
+        with exclusive_file(Path(root)/".claims"/("official-scan-"+str(game["id"])+".lock")):
+            local=a.Store(root)
+            try:
+                existing=local.db.execute("SELECT status FROM official_scans WHERE game_id=?",(game["id"],)).fetchone()
+                if existing and not (retry and existing[0]=="review"):return False
+                scan(local,fetcher,game,brand,seed);return True
+            finally:local.db.close()
+    try:
+        with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="publisher") as pool:
+            jobs=set()
+            for game,brand,seed in seeds(store):
+                existing=store.db.execute("SELECT status FROM official_scans WHERE game_id=?",(game["id"],)).fetchone()
+                if existing and not (retry and existing[0]=="review"):continue
+                if limit is not None and submitted>=limit:break
+                jobs.add(pool.submit(collect_one,game,brand,seed));submitted+=1
+                if len(jobs)>=workers:
+                    done,jobs=wait(jobs,return_when=FIRST_COMPLETED)
+                    completed+=sum(int(job.result()) for job in done)
+            for job in jobs:completed+=int(job.result())
+        store.export();return completed
+    finally:store.db.close()
+
+
 if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root",default="archive");parser.add_argument("--limit",type=a.positive)
-    parser.add_argument("--retry",action="store_true");args=parser.parse_args()
-    store=a.Store(args.root)
-    try:
-        print("official scanned",collect(store,a.Fetcher(delay=3,timeout=25,retries=2),args.limit,args.retry),flush=True)
-    finally:store.db.close()
+    parser.add_argument("--retry",action="store_true");parser.add_argument("--workers",type=a.positive,default=4);args=parser.parse_args()
+    if args.workers>1:
+        print("official scanned",collect_parallel(args.root,args.workers,args.limit,args.retry),flush=True)
+    else:
+        store=a.Store(args.root)
+        try:print("official scanned",collect(store,a.Fetcher(delay=3,timeout=25,retries=2),args.limit,args.retry),flush=True)
+        finally:store.db.close()
