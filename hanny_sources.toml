@@ -35,3 +35,19 @@ page = "https://hannylaboratory.blogspot.com/2019/11/blog-post_17.html"
 title = "ランスクエスト"
 kind = "patch"
 version = "3.86"
+
+[[mods]]
+key = "ludrasawm"
+page = "https://hannylaboratory.blogspot.com/2022/12/blog-post_15.html"
+title = "戦国ランス"
+release = "ルドラサウム大陸版"
+creator = "ほっけちゃん"
+link_host = "mega.nz"
+
+[[mods]]
+key = "daisengoku"
+page = "https://hannylaboratory.blogspot.com/2023/11/blog-post_30.html"
+title = "戦国ランス"
+release = "大戦国ランス"
+creator = "DSG／つちせ八十八"
+link_host = "navydingo81.sakura.ne.jp"

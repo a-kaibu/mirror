@@ -384,3 +384,17 @@ forms are followed at transfer time; sign-in-required files fail without using a
 account. Range validators, complete-body hashing and anonymous HF read-back remain
 required. Full releases appear under 本編 (`kind=full`), separately from trials and
 patches; frontend JSON search accepts the same filter.
+
+Creator-linked MEGA folders are collected with `python hanny_mods.py --source
+ludrasawm --megadl /path/to/megadl` (or `--source daisengoku`). The native megatools
+client must be installed separately. Personal account configuration is disabled;
+only the complete public folder link from the article is used. Original relative
+paths, creator, applicable commercial base games and source conditions remain in
+metadata. Native transfer completion produces a local SHA-256 receipt; every file
+is checked against it before individual HF publication and full public read-back.
+After a publication interruption, `--import-only` resumes from that receipt without
+re-downloading the folder. Transfer quotas are respected; interrupted downloads
+remain available for the native client's normal resume.
+
+The VNDB snapshot is available at
+https://huggingface.co/buckets/vn-archive/mirrors/resolve/vndb.sqlite3?download=true.
