@@ -109,6 +109,17 @@ def manifest(store):
     db = store.db
     makers = [dict(r) for r in db.execute("SELECT * FROM manufacturers WHERE id IN (SELECT manufacturer_id FROM products WHERE id IN (SELECT product_id FROM item_catalog)) ORDER BY name,id")]
     products = [dict(r) for r in db.execute("SELECT * FROM products WHERE id IN (SELECT product_id FROM item_catalog) ORDER BY title,id")]
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata_links'").fetchone():
+        for entity, entries in [("brand", makers), ("game", products)]:
+            linked = {}
+            for row in db.execute("""SELECT l.local_id,l.external_id,l.method,m.data,m.fetched_at
+                    FROM metadata_links l JOIN external_metadata m ON m.entity=l.entity AND m.external_id=l.external_id
+                    WHERE l.entity=? AND m.provider='erogamescape' ORDER BY l.external_id""", (entity,)):
+                linked.setdefault(row[0], []).append({"id": row[1], "match_method": row[2],
+                    "fetched_at": row[4], "data": json.loads(row[3])})
+            for entry in entries:
+                if entry["id"] in linked:
+                    entry["erogamescape"] = linked[entry["id"]]
     files = {}
     for row in db.execute("SELECT i.*,c.product_id,c.kind,c.version,c.platform,c.requirements FROM items i JOIN item_catalog c ON c.item_id=i.id ORDER BY i.id"):
         r = dict(row)

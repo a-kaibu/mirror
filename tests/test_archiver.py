@@ -213,7 +213,7 @@ class PublishTests(unittest.TestCase):
                 a.publish(store, "vn-archive", "mirrors")
             client.create_bucket.assert_called_once_with(Bucket="mirrors")
             self.assertEqual(store.rows()[0]["remote_sha256"], hashlib.sha256(PAYLOAD).hexdigest())
-            self.assertIn("manifest.json", objects)
+            self.assertNotIn("manifest.json", objects)
             self.assertIn("files/" + hashlib.sha256(PAYLOAD).hexdigest(), objects)
             store.db.close()
 

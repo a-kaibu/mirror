@@ -748,7 +748,7 @@ def init_bucket(namespace, bucket, profile="hf"):
     # opaque test objects. Anonymous read-back verifies public availability.
     body = ("VN Mirror Archive\n\nPublic preservation of visual novel demos, "
             "patches and promotional movies.\nSource URLs, checksums and capture "
-            "dates are recorded in manifest.json.\n").encode()
+            "dates are recorded in index.sqlite3.\n").encode()
     key = "ABOUT.txt"
     client.put_object(Bucket=bucket, Key=key, Body=body, ContentType="text/plain; charset=utf-8")
     actual = public_digest(namespace, bucket, key)
@@ -813,15 +813,14 @@ def publish_metadata(store, namespace, bucket, profile="hf"):
     store.export()
     # Publish provenance and saved HTML, never credentials, SQLite journals,
     # partial files, or arbitrary files from the workspace.
-    provenance = [store.root / "manifest.json"]
-    provenance += [store.root / r[0] for r in store.db.execute("SELECT path FROM pages WHERE path IS NOT NULL")]
+    provenance = [store.root / r[0] for r in store.db.execute("SELECT path FROM pages WHERE path IS NOT NULL")]
     known = {r[0]: r[1] for r in store.db.execute("SELECT key,sha256 FROM published_objects")}
     paths = iter(dict.fromkeys(provenance))
 
     def send(path):
         key = path.relative_to(store.root).as_posix()
         identity = f"{namespace}/{bucket}/{key}"
-        # The crawler can atomically replace a manifest while it is being sent.
+        # Stage mutable source HTML before hashing and sending it.
         # Upload an immutable staging copy and verify those exact bytes.
         with tempfile.TemporaryDirectory(prefix="mirror-provenance-") as tmp:
             staged = Path(tmp) / "artifact"

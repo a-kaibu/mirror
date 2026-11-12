@@ -230,7 +230,7 @@ class CatalogTests(unittest.TestCase):
         with closing(sqlite3.connect(snapshot)) as db:
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(db.execute("SELECT count(*) FROM items WHERE remote_verified_at IS NOT NULL").fetchone()[0], 2)
-        self.assertEqual(len(json.loads(objects["manifest.json"])["files"]), 1)
+        self.assertNotIn("manifest.json", objects)
 
 
 if __name__ == "__main__":

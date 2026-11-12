@@ -75,7 +75,7 @@ class ConcurrentCollectionTests(unittest.TestCase):
             self.assertTrue((store.root/row["path"]).exists())
             store.db.close()
 
-    def test_parallel_metadata_bounds_requests_and_stages_manifest(self):
+    def test_parallel_metadata_bounds_requests_and_stages_html(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=a.Store(tmp);store.add(self.record("a"))
             (store.root/"html").mkdir()
@@ -93,7 +93,7 @@ class ConcurrentCollectionTests(unittest.TestCase):
                     state["active"]+=1;state["peak"]=max(state["peak"],state["active"])
                 try:
                     if index<4:barrier.wait(5)
-                    if key=="manifest.json":(store.root/"manifest.json").write_text("concurrent replacement")
+                    if key=="html/0.html":(store.root/"html/0.html").write_text("concurrent replacement")
                     objects[key]=Path(path).read_bytes()
                 finally:
                     with lock:state["active"]-=1
@@ -101,6 +101,7 @@ class ConcurrentCollectionTests(unittest.TestCase):
             with patch.object(a,"s3_client",return_value=client),patch.object(a,"public_digest",side_effect=lambda ns,bucket,key:(hashlib.sha256(objects[key]).hexdigest(),len(objects[key]))):
                 a.publish_metadata(store,"vn-archive","mirrors")
             self.assertEqual(state["peak"],4)
-            self.assertEqual(len(json.loads(objects["manifest.json"])["files"]),1)
-            self.assertEqual(store.db.execute("SELECT count(*) FROM published_objects").fetchone()[0],8)
+            self.assertNotIn("manifest.json",objects)
+            self.assertEqual(objects["html/0.html"],b"source 0")
+            self.assertEqual(store.db.execute("SELECT count(*) FROM published_objects").fetchone()[0],7)
             store.db.close()

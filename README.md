@@ -174,8 +174,8 @@ Live validation on 2026-11-12 recovered Holyseal-listed `amayui_ap2.zip`
 `files/9be3296ff0c86ab79767c9716e2226fa2e401e2c6b4c0ca0519ab544f3f09266`,
 and anonymously downloaded the full HF copy with identical SHA-256 and size.
 The public SQLite backup, single JSON and saved HTML also passed read-back.
-The catalog contains 11 manufacturers, 13 products and 28 source-derived file
-entries. Three files are publicly verified: this Holyseal patch and a LatherCraft
+The initial smoke-test catalog contained 11 manufacturers, 13 products and 28 source-derived file
+entries. At that initial checkpoint, three files were publicly verified: this Holyseal patch and a LatherCraft
 trial and patch. The LatherCraft trial also exercised multipart upload. Every
 published binary passed full anonymous HF read-back by SHA-256 and size. Both
 Chromium and Firefox passed the opt-in browser check.
@@ -197,8 +197,8 @@ with matching published MD5 `12965112bfab77dfc27a8b702d8b285b` and size.
 Storage2 still timed out.
 
 Some Holyseal product captures and binary links return 404. These are recorded
-individually; an archived page is not proof of a recoverable binary. This project
-has not yet completed a full crawl of either source.
+individually; an archived page is not proof of a recoverable binary. LatherCraft metadata collection reached all 109 listing pages and 2,164 listed
+entries. Binary acquisition and Holyseal collection are still in progress.
 
 ## JSON search on GitHub Pages
 
@@ -233,3 +233,20 @@ request failures are recorded separately. Results reaching the 10,000 capture
 limit are marked failed, never reported as an exhaustive search.
 After discovery, `archive-batch --site holyseal --retry-failed` tries alternate
 dates (newest first), checks file contents, publishes and reads back the result.
+
+## ErogameScape metadata
+
+`python erogamescape.py --export --upload` reads the public SQL form with bounded
+500-row keyset queries. It imports every game, brand, and Holyseal ID mapping into
+SQLite, retaining source HTML, each SQL query, and per-row acquisition times.
+Resume uses the last committed ID. `--refresh` rereads existing IDs.
+Automatic links use unambiguous normalized brand+title matches or Holyseal IDs.
+
+The standalone `erogamescape.sqlite3` contains `brandlist`, `gamelist`, `holyseal`,
+`provenance`, and `archive_info`. It includes names, release dates, platforms,
+genres, official homepages and trial URLs. Export requires each scan to reach an
+empty result and the imported row counts to match the live source counts.
+The HF copy is fully read back and checked by SHA-256 and byte count.
+
+`manifest.json` is generated locally and deployed with GitHub Pages. It is never
+uploaded to HF. The archive catalog backup on HF is `index.sqlite3`.
