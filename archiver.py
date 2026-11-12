@@ -744,17 +744,10 @@ def init_bucket(namespace, bucket, profile="hf"):
         if e.response["Error"]["Code"] != "BucketAlreadyOwnedByYou":
             raise
         print(f"already owned: {namespace}/{bucket}")
-    # Keep this file as archive documentation rather than creating/deleting
-    # opaque test objects. Anonymous read-back verifies public availability.
-    body = ("VN Mirror Archive\n\nPublic preservation of visual novel demos, "
-            "patches and promotional movies.\nSource URLs, checksums and capture "
-            "dates are recorded in index.sqlite3.\n").encode()
-    key = "ABOUT.txt"
-    client.put_object(Bucket=bucket, Key=key, Body=body, ContentType="text/plain; charset=utf-8")
-    actual = public_digest(namespace, bucket, key)
-    if actual != (hashlib.sha256(body).hexdigest(), len(body)):
-        raise ValueError("public bucket read-back mismatch")
-    print(f"create/write/public read verified: https://huggingface.co/buckets/{namespace}/{bucket}")
+    # Public binary read-back is validated during actual file publication.
+    # Bucket initialization does not leave documentation or test objects behind.
+    client.head_bucket(Bucket=bucket)
+    print(f"bucket ready: https://huggingface.co/buckets/{namespace}/{bucket}")
 
 
 def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ident=None, metadata=True, recheck=False):
@@ -907,7 +900,7 @@ def main(argv=None):
     parser.add_argument("--root", default="archive")
     subs = parser.add_subparsers(dest="command", required=True)
     subs.add_parser("doctor")
-    p = subs.add_parser("bucket-init", help="create bucket, write ABOUT.txt, verify anonymous download")
+    p = subs.add_parser("bucket-init", help="create bucket and check authenticated access")
     p.add_argument("--namespace", default="vn-archive")
     p.add_argument("--bucket", default="mirrors")
     p.add_argument("--profile", default="hf")

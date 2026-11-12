@@ -217,21 +217,19 @@ class PublishTests(unittest.TestCase):
             self.assertIn("files/" + hashlib.sha256(PAYLOAD).hexdigest(), objects)
             store.db.close()
 
-    def test_init_public_write_read(self):
-        client, public = Mock(), Mock()
-        captured = {}
-        client.put_object.side_effect = lambda **kwargs: captured.update(kwargs)
-        public.get_object.side_effect = lambda **kwargs: {"Body": io.BytesIO(captured["Body"])}
-        with patch.object(a, "s3_client", return_value=client), patch.object(a, "public_digest", side_effect=lambda *args: (hashlib.sha256(captured["Body"]).hexdigest(), len(captured["Body"]))):
+    def test_init_creates_bucket_without_extra_objects(self):
+        client = Mock()
+        with patch.object(a, "s3_client", return_value=client):
             a.init_bucket("vn-archive", "mirrors")
         client.create_bucket.assert_called_once_with(Bucket="mirrors")
-        self.assertEqual(captured["Key"], "ABOUT.txt")
+        client.head_bucket.assert_called_once_with(Bucket="mirrors")
+        client.put_object.assert_not_called()
 
-    def test_remote_mismatch_not_success(self):
-        client, public = Mock(), Mock()
-        public.get_object.return_value = {"Body": io.BytesIO(b"corrupt")}
-        with patch.object(a, "s3_client", return_value=client), patch.object(a, "public_digest", return_value=("bad", 7)):
-            with self.assertRaisesRegex(ValueError, "mismatch"):
+    def test_init_access_failure_not_success(self):
+        client = Mock()
+        client.head_bucket.side_effect = OSError("access failed")
+        with patch.object(a, "s3_client", return_value=client):
+            with self.assertRaisesRegex(OSError, "access failed"):
                 a.init_bucket("vn-archive", "mirrors")
 
     def test_s3_gateway_configuration(self):
