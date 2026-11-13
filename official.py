@@ -19,6 +19,8 @@ def initialize(store):
     e.initialize(store)
     store.db.execute("""CREATE TABLE IF NOT EXISTS official_scans(game_id INTEGER PRIMARY KEY,
         seed_url TEXT,status TEXT NOT NULL,found INTEGER NOT NULL DEFAULT 0,error TEXT,updated_at TEXT NOT NULL)""")
+    store.db.execute("""CREATE TABLE IF NOT EXISTS official_page_visits(game_id INTEGER,url TEXT,
+        checked_at TEXT,status TEXT,error TEXT,PRIMARY KEY(game_id,url))""")
     store.db.commit()
 
 
@@ -175,8 +177,13 @@ def seeds(store):
 
 
 def scan(store, fetcher, game, brand, seed, max_pages=20, continuation=None):
+    initialize(store)
     if continuation and continuation.get('seed')!=seed:raise ValueError('official continuation seed changed')
     queue=deque((entry['url'],entry['depth']) for entry in continuation['pending']) if continuation else deque([(seed,0)])
+    home=game.get('shoukai');trial=game.get('trial_url')
+    if not continuation and home and trial and a.canonical(trial)==seed and urlsplit(home).scheme in {'http','https'}:
+        home=a.canonical(home)
+        if home!=seed:queue.append((home,0))
     seen=set(continuation.get('seen',[])) if continuation else set()
     found=processed=0;failures=list(continuation.get('failures',[])) if continuation else [];unclassified=[]
     hints={entry['url']:set(entry.get('hints',[])) for entry in continuation['pending']} if continuation else ({seed:{'trial'}} if game.get('trial_url') and a.canonical(game['trial_url'])==seed else {})
@@ -205,6 +212,7 @@ def scan(store, fetcher, game, brand, seed, max_pages=20, continuation=None):
                 from mirror_sources import add_record
                 add_record(store,record)
             found+=len(records)
+            store.db.execute('INSERT OR REPLACE INTO official_page_visits VALUES(?,?,?,?,?)',(game['id'],url,a.now(),'ok',None));store.db.commit()
             if depth<2:
                 for link in a.DOM(html).root.all({"a","iframe","frame"}):
                     target=a.resolve(actual,link.attrs.get("href") or link.attrs.get("src", ""))
@@ -218,6 +226,7 @@ def scan(store, fetcher, game, brand, seed, max_pages=20, continuation=None):
                         queue.append((target,depth+1))
         except (OSError,ValueError,http.client.HTTPException) as error:
             failures.append({"url":url,"error":str(error)})
+            store.db.execute('INSERT OR REPLACE INTO official_page_visits VALUES(?,?,?,?,?)',(game['id'],url,a.now(),'failed',str(error)))
             store.db.execute("INSERT OR REPLACE INTO pages(url,site,path,fetched_at,status,error,response_url) VALUES(?,?,?,?,?,?,?)",(url,"official",rel if (store.root/rel).exists() else None,a.now(),"failed",str(error),None));store.db.commit()
     pending={}
     for url,depth in queue:

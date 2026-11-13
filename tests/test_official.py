@@ -239,3 +239,60 @@ class LegacyJapaneseOfficialPatchTests(unittest.TestCase):
         self.assertEqual(unknown,[]);self.assertEqual(len(rows),1)
         self.assertEqual(rows[0]['filename'],name);self.assertEqual(rows[0]['release_name'],'パッチ')
         self.assertEqual(rows[0]['mirrors'],[target])
+
+
+class OfficialProductHomeTests(unittest.TestCase):
+    game={**GAME,'shoukai':'https://publisher.test/game/','trial_url':'https://publisher.test/game/trial.html'}
+    trial='https://publisher.test/game/trial.html'
+    home='https://publisher.test/game/'
+    support='https://publisher.test/game/support.html'
+
+    def responses(self):
+        return [Response('<a href="game_trial.zip">体験版</a>'.encode(),url=self.trial),
+                Response('<a href="support.html">サポート</a>'.encode(),url=self.home),
+                Response('<a href="game_patch.zip">修正パッチ</a>'.encode(),url=self.support)]
+
+    def test_trial_seed_also_follows_declared_home_to_separate_patch_page(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);fetch=Fetch(self.responses())
+            try:
+                self.assertEqual(o.scan(store,fetch,self.game,BRAND,self.trial),2)
+                names={json.loads(row['data'])['filename'] for row in store.rows('official')}
+                self.assertEqual(names,{'game_trial.zip','game_patch.zip'})
+                self.assertEqual({row[0] for row in store.db.execute('SELECT url FROM official_page_visits WHERE game_id=?',(self.game['id'],))},{self.trial,self.home,self.support})
+            finally:store.db.close()
+
+    def test_home_survives_page_bound_and_resume_does_not_repeat_trial(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                responses=self.responses()
+                o.scan(store,Fetch(responses[:1]),self.game,BRAND,self.trial,max_pages=1)
+                row=store.db.execute('SELECT * FROM official_scans').fetchone()
+                errors=json.loads(row['error']);marker=next(x for x in errors if x.get('pending'))
+                self.assertEqual([x['url'] for x in marker['pending']],[self.home])
+                continuation={**marker,'found':row['found'],'failures':[]}
+                self.assertEqual(o.scan(store,Fetch(responses[1:]),self.game,BRAND,self.trial,continuation=continuation),1)
+                self.assertEqual(store.db.execute('SELECT found FROM official_scans').fetchone()[0],2)
+            finally:store.db.close()
+
+    def test_legacy_home_queue_preserves_existing_review_and_is_not_repeated(self):
+        import json
+        import official_continue as c
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);o.initialize(store)
+            try:
+                previous=[{'error':'unclassified binary links need review','urls':['https://publisher.test/game/bonus.zip']}]
+                store.db.execute('INSERT INTO official_scans VALUES(?,?,?,?,?,?)',(self.game['id'],self.trial,'review',2,json.dumps(previous),'earlier'));store.db.commit()
+                seeds={self.game['id']:(self.game,BRAND,self.trial)}
+                self.assertEqual(c.queue_product_homes(store,seeds),1)
+                row=store.db.execute('SELECT * FROM official_scans').fetchone();errors=json.loads(row['error'])
+                self.assertEqual(errors[0],previous[0]);self.assertEqual(row['found'],2)
+                self.assertEqual(errors[1]['pending'],[{'url':self.home,'depth':0,'hints':[]}])
+                self.assertEqual(c.queue_product_homes(store,seeds),0)
+                store.db.execute('UPDATE official_scans SET error=?',(json.dumps(previous),))
+                store.db.execute('INSERT INTO official_page_visits VALUES(?,?,?,?,NULL)',(self.game['id'],self.home,'later','ok'));store.db.commit()
+                self.assertEqual(c.queue_product_homes(store,seeds),0)
+            finally:store.db.close()
