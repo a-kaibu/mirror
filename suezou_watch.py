@@ -15,37 +15,66 @@ INTERVAL=3*60*60
 URL="http://suezou.dyndns.org/"
 
 
-def probe(fetcher):
+def probe(fetcher, catalog_offset=0, save_page=None):
     source=m.definitions()["suezou"]
+    def read(url,limit):
+        with fetcher.open(url) as response:
+            actual=response.geturl();raw=response.read(limit+1);status=response.status
+            charset=response.headers.get_content_charset()
+        if len(raw)>limit or not m.allowed(source,actual):raise ValueError("unexpected recovery response")
+        if save_page:save_page(actual,raw,status)
+        if status!=200:raise ValueError("HTTP "+str(status))
+        return actual,raw,charset
     try:
-        with fetcher.open(URL) as response:
-            if response.status!=200:return {"healthy":False,"error":"HTTP "+str(response.status)}
-            actual=response.geturl();raw=response.read(2*1024*1024+1)
-        if len(raw)>2*1024*1024 or not m.allowed(source,actual):return {"healthy":False,"error":"unexpected recovery response"}
-        root=a.DOM(a.decode_html(raw)).root
+        actual,raw,charset=read(URL,2*1024*1024)
+        root=a.DOM(a.decode_html(raw,charset)).root
         identity=root.text()+" "+" ".join(n.attrs.get("alt","") for n in root.all({"img"}))
         if not re.search(r"すえぞう|ギャルゲー補完|suezou",identity,re.I):return {"healthy":False,"error":"mirror identity not found"}
         links=[a.resolve(actual,n.attrs.get("href","")) for n in root.all({"a"})]
         if any(u and a.EXT.search(urlsplit(a.original(u)).path) for u in links):return {"healthy":True,"url":actual,"sha256":hashlib.sha256(raw).hexdigest()}
-        catalog=[u for u in links if u and m.allowed(source,u) and re.search(r"/(?:bishop|studio-jyaren|key|pulltop|[a-z0-9_-]+)\.html$",urlsplit(u).path,re.I)]
-        catalog=[u for u in catalog if not re.search(r"/(?:index|about|contact|info|privacy)\.html$",urlsplit(u).path,re.I)]
+        catalog=[u for u in links if u and m.allowed(source,u) and re.search(r"/[a-z0-9_-]+\.html$",urlsplit(u).path,re.I)]
+        catalog=list(dict.fromkeys(u for u in catalog if not re.search(r"/(?:index|about|contact|info|privacy)\.html$",urlsplit(u).path,re.I)))
         if not catalog:return {"healthy":False,"error":"no publisher catalogue links"}
-        with fetcher.open(catalog[0]) as response:
-            child_url=response.geturl();child=response.read(4*1024*1024+1)
-        if not m.allowed(source,child_url) or len(child)>4*1024*1024:return {"healthy":False,"error":"publisher response invalid"}
-        page=a.DOM(a.decode_html(child)).root
-        binaries=[a.resolve(child_url,n.attrs.get("href","")) for n in page.all({"a"})]
-        if not any(u and a.EXT.search(urlsplit(a.original(u)).path) for u in binaries):return {"healthy":False,"error":"publisher page has no distribution links"}
-        return {"healthy":True,"url":actual,"sha256":hashlib.sha256(raw).hexdigest()}
-    except (OSError,ValueError,a.http.client.HTTPException) as error:return {"healthy":False,"error":str(error)}
+        checks=[];offset=catalog_offset%len(catalog)
+        # Bound each scheduled check, but rotate so an empty first brand does
+        # not prevent discovery of a recovered catalogue elsewhere on the site.
+        for step in range(min(3,len(catalog))):
+            target=catalog[(offset+step)%len(catalog)]
+            next_offset=(offset+step+1)%len(catalog)
+            try:
+                child_url,child,charset=read(target,4*1024*1024)
+                page=a.DOM(a.decode_html(child,charset)).root
+                binaries=[a.resolve(child_url,n.attrs.get("href","")) for n in page.all({"a"})]
+                found=any(u and a.EXT.search(urlsplit(a.original(u)).path) for u in binaries)
+                checks.append({"url":target,"response_url":child_url,"distribution_links":found})
+                if found:return {"healthy":True,"url":actual,"sha256":hashlib.sha256(raw).hexdigest(),"publisher_checks":checks,"next_catalog_offset":next_offset}
+            except (OSError,ValueError,a.http.client.HTTPException) as error:
+                if isinstance(error,a.HTTPError):error.close()
+                checks.append({"url":target,"error":str(error)})
+        return {"healthy":False,"error":"checked publisher pages have no distribution links","publisher_checks":checks,"next_catalog_offset":next_offset}
+    except (OSError,ValueError,a.http.client.HTTPException) as error:
+        if isinstance(error,a.HTTPError):error.close()
+        return {"healthy":False,"error":str(error)}
 
 
 def check(store,fetcher,capture=True,start_worker=True):
     m.initialize(store)
     store.db.execute("CREATE TABLE IF NOT EXISTS source_health(site TEXT PRIMARY KEY,checked_at TEXT NOT NULL,healthy INTEGER NOT NULL,data TEXT NOT NULL)");store.db.commit()
-    previous=store.db.execute("SELECT healthy FROM source_health WHERE site='suezou'").fetchone()
-    result=probe(fetcher)
-    store.db.execute("INSERT OR REPLACE INTO source_health VALUES(?,?,?,?)",("suezou",a.now(),int(result["healthy"]),json.dumps(result,ensure_ascii=False)));store.db.commit()
+    store.db.execute("CREATE TABLE IF NOT EXISTS source_health_history(site TEXT,checked_at TEXT,healthy INTEGER,data TEXT,PRIMARY KEY(site,checked_at))");store.db.commit()
+    previous=store.db.execute("SELECT healthy,data FROM source_health WHERE site='suezou'").fetchone()
+    offset=json.loads(previous['data']).get('next_catalog_offset',0) if previous else 0
+    pages=[]
+    def save_page(url,raw,status):
+        digest=hashlib.sha256(raw).hexdigest();rel='html/health/'+digest+'.html'
+        path=store.root/rel;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(raw)
+        pages.append({'url':url,'path':rel,'sha256':digest,'status':status})
+    result=probe(fetcher,catalog_offset=offset,save_page=save_page)
+    result.setdefault('next_catalog_offset',offset)
+    if pages:result['pages']=pages
+    stamp=a.now();encoded=json.dumps(result,ensure_ascii=False)
+    with store.db:
+        store.db.execute("INSERT OR REPLACE INTO source_health VALUES(?,?,?,?)",("suezou",stamp,int(result["healthy"]),encoded))
+        store.db.execute("INSERT INTO source_health_history VALUES(?,?,?,?)",("suezou",stamp,int(result["healthy"]),encoded))
     print("Suezo health",a.now(),json.dumps(result,ensure_ascii=False),flush=True)
     if result["healthy"] and capture:
         # Refresh live catalogue pages after recovery or once daily; leave the

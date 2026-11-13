@@ -346,7 +346,10 @@ units with `systemctl --user link` using absolute paths, then run
 `systemctl --user enable --now mirror-suezou-watch.timer`.
 The probe requires recognizable catalogue content and binary links, not merely
 HTTP 200. Recovery triggers live discovery and the separate archive worker.
-Health checks are recorded in SQLite. The persistent timer catches missed runs
+Each check inspects up to three publisher pages and advances a saved cursor, so
+an empty first catalogue does not hide recovery elsewhere. Response HTML and
+health-check history are retained locally with their SHA-256 values in SQLite.
+The persistent timer catches missed runs
 when the user manager returns; checks require the host to be running.
 HF credentials remain in the local AWS profile and are not copied into CI.
 
