@@ -555,28 +555,48 @@ class Store:
         from size_reviews import apply
         return apply(self, record)
 
+    def preserve_public_version(self, row):
+        """Snapshot fully verified public bytes inside the caller's transaction."""
+        sha=row['sha256']
+        if (not sha or row['remote_sha256']!=sha or not row['remote_verified_at']
+                or not row['remote_key'] or not row['remote_key'].endswith('/files/'+sha)):
+            return None
+        ident=hashlib.sha256(('verified-history\n'+row['id']+'\n'+sha).encode()).hexdigest()
+        data=json.loads(row['data']);data['id']=ident
+        data['fields']={**(data.get('fields') or {}),'verified_history_of':row['id'],'verified_history_sha256':sha}
+        saved=dict(row);saved.update(id=ident,data=json.dumps(data,ensure_ascii=False),status='archived',path=None)
+        columns=list(saved)
+        changed=self.db.execute('INSERT OR IGNORE INTO items('+','.join(columns)+') VALUES('+','.join('?' for _ in columns)+')',tuple(saved.values())).rowcount
+        if changed:
+            from catalog import index_record
+            index_record(self,data)
+        return ident
+
     def add(self, record):
         record = self.reviewed_record(record)
-        old = self.db.execute("SELECT data,status,md5,sha256,size FROM items WHERE id=?", (record["id"],)).fetchone()
-        if old and json.loads(old[0]) != record:
-            previous = json.loads(old[0])
-            # Descriptive updates do not change already verified bytes. Without
-            # a publisher hash, retain proof only for unchanged file identity;
-            # changed URLs/names or contradictory expectations require transfer.
-            same_file = (previous.get("filename") == record.get("filename")
-                and previous.get("mirrors") == record.get("mirrors"))
-            retained = (old["status"] in {"verified", "archived"} and old["sha256"]
-                and (not record.get("expected_md5") or record["expected_md5"] == old["md5"])
-                and (not record.get("expected_sha256") or record["expected_sha256"] == old["sha256"])
-                and (record.get("expected_size") is None or record["expected_size"] == old["size"])
-                and (record.get("expected_md5") or record.get("expected_sha256") or same_file))
-            if not retained:
-                self.db.execute("UPDATE items SET status='pending',remote_sha256=NULL WHERE id=?", (record["id"],))
-        self.db.execute("INSERT INTO items(id,site,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
-                        (record["id"], record["site"], json.dumps(record, ensure_ascii=False)))
+        old = self.db.execute("SELECT * FROM items WHERE id=?", (record["id"],)).fetchone()
         from catalog import index_record
-        index_record(self, record)
-        self.db.commit()
+        with self.db:
+            if old and json.loads(old['data']) != record:
+                previous = json.loads(old['data'])
+                same_file = (previous.get("filename") == record.get("filename")
+                    and previous.get("mirrors") == record.get("mirrors"))
+                retained = (old["status"] in {"verified", "archived"} and old["sha256"]
+                    and (not record.get("expected_md5") or record["expected_md5"] == old["md5"])
+                    and (not record.get("expected_sha256") or record["expected_sha256"] == old["sha256"])
+                    and (record.get("expected_size") is None or record["expected_size"] == old["size"])
+                    and (record.get("expected_md5") or record.get("expected_sha256") or same_file))
+                if not retained:
+                    history=self.preserve_public_version(old)
+                    if history:
+                        # Old verified bytes stay independently downloadable.
+                        # The changed observation has no measured bytes yet.
+                        self.db.execute("UPDATE items SET status='pending',path=NULL,md5=NULL,sha256=NULL,size=NULL,source_url=NULL,fetched_at=NULL,error=NULL,remote_key=NULL,remote_sha256=NULL,remote_verified_at=NULL,reused_from=NULL WHERE id=?",(record['id'],))
+                    else:
+                        self.db.execute("UPDATE items SET status='pending',remote_sha256=NULL WHERE id=?", (record["id"],))
+            self.db.execute("INSERT INTO items(id,site,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+                            (record["id"], record["site"], json.dumps(record, ensure_ascii=False)))
+            index_record(self, record)
 
     def update(self, ident, **kwargs):
         self.db.execute("UPDATE items SET " + ",".join(k + "=?" for k in kwargs) + " WHERE id=?", (*kwargs.values(), ident))

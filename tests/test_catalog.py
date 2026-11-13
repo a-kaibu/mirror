@@ -210,8 +210,10 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(self.store.rows()[0]["remote_sha256"], sha)
         record["expected_md5"] = "f" * 32
         self.store.add(record)
-        self.assertEqual(self.store.rows()[0]["status"], "pending")
-        self.assertIsNone(self.store.rows()[0]["remote_sha256"])
+        current=self.store.db.execute("SELECT * FROM items WHERE id='a'").fetchone()
+        self.assertEqual(current["status"], "pending")
+        self.assertIsNone(current["remote_sha256"])
+        self.assertEqual(self.store.db.execute("SELECT count(*) FROM items WHERE remote_sha256=sha256 AND remote_verified_at IS NOT NULL").fetchone()[0],1)
 
     def test_checksumless_descriptive_update_retains_public_copy(self):
         record=self.record("checksumless");record["expected_md5"]=None

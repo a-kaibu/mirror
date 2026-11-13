@@ -256,6 +256,11 @@ hashes and exact sizes must agree when present; ambiguous names are left unresol
 The evidence and an atomic recovery receipt remain in SQLite. `--watch` checks
 again every five minutes without blocking active downloads.
 
+When a source edit invalidates a verified public build, SQLite keeps that build
+as a separate historical observation with its original download evidence. The
+changed observation returns to pending without inheriting old byte measurements.
+Identical SHA-256 results still merge into one file entry per product.
+
 `python reuse_recovery.py --watch` checks every five minutes for waiting or failed
 observations whose published MD5 and manufacturer match an already verified public
 file. Exact sizes and SHA-256 constraints must agree; existing matching SHA-256
