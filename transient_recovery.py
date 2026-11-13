@@ -60,5 +60,12 @@ if __name__=='__main__':
     else:
         with exclusive_file(Path(args.root)/'.claims'/'transient-recovery.lock',blocking=False):
             store=a.Store(args.root)
-            try:print('temporary failure recovery',recover(store),flush=True)
+            try:
+                # Fresh child passes pick up recovered hosts without interrupting
+                # productive long-lived archive watchers or their transfers.
+                from archive_watch import queue_recovered_mirrors
+                sites=[row[0] for row in store.db.execute("SELECT DISTINCT site FROM items WHERE status='failed'")]
+                recovered=sum(queue_recovered_mirrors(store,site) for site in sites)
+                print('recovered mirror requeues',recovered,flush=True)
+                print('temporary failure recovery',recover(store),flush=True)
             finally:store.db.close()
