@@ -130,6 +130,23 @@ class MultiInsideTests(unittest.TestCase):
 
 
 class MimimaidTests(unittest.TestCase):
+    def test_2008_heading_retains_trial_movie_and_exact_constraints(self):
+        from portals import parse_mimimaid
+        rows=parse_mimimaid(Path("tests/fixtures/mimimaid-2008.html").read_text(),"http://web.archive.org/web/20081202021820/http://mimimaid.moe.hm:80/html/x18/studio-jyaren/index.htm")
+        self.assertEqual(len(rows),2)
+        self.assertEqual({r["title"] for r in rows},{"操心術３"})
+        self.assertEqual(rows[0]["expected_size"],351440198)
+        self.assertEqual(rows[0]["expected_md5"],"7adb230fd28d797ef38c84110e7f527d")
+        self.assertEqual(rows[0]["published_at"],"2008-11-27")
+        self.assertEqual(rows[1]["expected_size"],112673502)
+        self.assertEqual(rows[1]["expected_md5"],"f30c87269c7f552a0b006d0a9e2869a9")
+        self.assertIn("体験版",rows[0]["release_name"])
+        self.assertIn("ムービー",rows[1]["release_name"])
+        html=Path("tests/fixtures/mimimaid-2008.html").read_text().replace('name="upDate" -->---','name="upDate" -->2008/12/01',1)
+        updated=parse_mimimaid(html,"http://mimimaid.moe.hm/html/x18/studio-jyaren/index.htm")[0]
+        self.assertEqual(updated["published_at"],"2008-11-27")
+        self.assertIn("2008/12/01",updated["fields"]["更新情報"])
+
     def test_real_tables_keep_each_product_and_exact_bytes(self):
         from portals import parse_mimimaid
         html=Path("tests/fixtures/mimimaid.html").read_text()

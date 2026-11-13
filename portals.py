@@ -140,13 +140,21 @@ def parse_mimimaid(html,page):
     brand=heads[0].text().split("|")[0].strip().lstrip("■").strip()
     results=[]
     for heading in root.all({"span"}):
-        if "style9" not in heading.attrs.get("class", "").split():continue
+        classes=heading.attrs.get("class", "").split()
+        if "style9" not in classes:
+            if "style6" not in classes or heading.parent.tag!="p" or not heading.parent.text().lstrip().startswith("■"):continue
         title=heading.text();group=heading.parent
         while group.parent and group.tag!="table":group=group.parent
         for block in group.all({"table"}):
             if block.attrs.get("width")!="700":continue
             fields=a.labels(block)
             if not fields.get("素材名"):continue
+            for row in block.all({"tr"}):
+                cells=[n for n in row.children if isinstance(n,a.Node) and n.tag in {"td","th"}]
+                if len(cells)>=2 and cells[0].text().strip()=="公開日":
+                    fields["公開日"]=cells[1].text()
+                    if len(cells)>2:fields["更新情報"]=" ".join(n.text() for n in cells[2:])
+                    break
             text=block.text();digest=re.search(r"MD5[：:]\s*([a-fA-F0-9]{32})",text)
             size=re.search(r"\(([0-9,]+)\s*バイト\)",text)
             date=re.search(r"\d{4}/\d{2}/\d{2}",fields.get("公開日", ""))
