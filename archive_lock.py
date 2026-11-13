@@ -7,7 +7,7 @@ import time
 
 
 @contextmanager
-def exclusive_file(path):
+def exclusive_file(path, *, blocking=True):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
     with path.open("a+b") as stream:
         acquired=False
@@ -22,10 +22,11 @@ def exclusive_file(path):
                         msvcrt.locking(stream.fileno(),msvcrt.LK_NBLCK,1);acquired=True
                     except OSError as error:
                         if error.errno not in {errno.EACCES,errno.EAGAIN,errno.EDEADLK}:raise
+                        if not blocking:raise BlockingIOError(errno.EAGAIN,"archive claim is busy") from error
                         time.sleep(.2)
             else:
                 import fcntl
-                fcntl.flock(stream.fileno(),fcntl.LOCK_EX);acquired=True
+                fcntl.flock(stream.fileno(),fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB));acquired=True
             yield
         finally:
             if acquired:

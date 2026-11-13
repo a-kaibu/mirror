@@ -107,7 +107,7 @@ def follow(store,fetcher,capture):
 def add_observations(store,ident,snapshot,observations):
     files=[(o,file_target(o)) for o in observations if file_target(o)]
     if not files:return 0
-    with exclusive_file(store.root/'.claims'/(hashlib.sha256(ident.encode()).hexdigest()+'.lock')):
+    with exclusive_file(store.root/'.claims'/(hashlib.sha256(ident.encode()).hexdigest()+'.lock'),blocking=False):
         row=store.db.execute('SELECT * FROM items WHERE id=?',(ident,)).fetchone()
         if not row:return 0
         record=json.loads(row['data'])
@@ -145,8 +145,12 @@ def collect(store,index_fetcher,replay_fetcher,site='d_station',limit=100):
                 count=add_observations(store,row['id'],record,observations);added+=count
                 store.db.execute('INSERT OR REPLACE INTO redirect_scans VALUES(?,?,?,?,?,?,?)',(row['id'],target,*signature,'ok',a.now()));store.db.commit()
                 print('redirect recovery',target,'observations',len(observations),'new file URLs',count,flush=True)
+            except BlockingIOError:
+                print('redirect recovery deferred busy record',row['id'],flush=True)
             except (OSError,ValueError) as error:
-                added+=add_observations(store,row['id'],record,observations);failed+=1
+                try:added+=add_observations(store,row['id'],record,observations)
+                except BlockingIOError:print('redirect recovery deferred busy record',row['id'],flush=True)
+                failed+=1
                 print('redirect recovery failed',target,error,flush=True)
     return processed,added,failed
 

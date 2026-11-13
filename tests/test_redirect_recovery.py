@@ -1,4 +1,7 @@
 import json
+import hashlib
+from pathlib import Path
+from contextlib import contextmanager
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -108,4 +111,28 @@ class RedirectRecoveryTests(unittest.TestCase):
                 with patch.object(r,'lookup') as lookup:
                     self.assertEqual(r.collect(store,Fetch([]),Fetch([])),(0,0,0))
                     lookup.assert_not_called()
+            finally:store.db.close()
+
+    def test_busy_record_does_not_stop_other_cgis_or_mark_scan_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                for number in range(2):
+                    record=a.parse_detail(HTML,'https://example.test/items/'+str(number),'d_station')[0]
+                    record['mirrors']=[self.target+str(number)];store.add(record);store.update(record['id'],status='failed')
+                busy=store.rows()[0]['id'];lock_name=hashlib.sha256(busy.encode()).hexdigest()+'.lock'
+                @contextmanager
+                def claim(path,*,blocking=True):
+                    self.assertFalse(blocking)
+                    if Path(path).name==lock_name:raise BlockingIOError('busy')
+                    yield
+                def lookup(store,fetcher,target):return [a.replay(target,'20070102030405',raw=True,scheme='http')]
+                def observe(store,fetcher,url):return {'url':url,'checked_at':a.now(),'status':302,'location':a.replay(self.binary,'20070102030405',raw=True,scheme='http'),'response_url':url}
+                with patch.object(r,'lookup',side_effect=lookup),patch.object(r,'observe',side_effect=observe),patch.object(r,'exclusive_file',side_effect=claim):
+                    self.assertEqual(r.collect(store,Fetch([]),Fetch([])),(2,1,0))
+                self.assertEqual(store.db.execute('SELECT count(*) FROM redirect_scans').fetchone()[0],1)
+                self.assertEqual(store.db.execute('SELECT status FROM items WHERE id=?',(busy,)).fetchone()[0],'failed')
+                with patch.object(r,'lookup',side_effect=lookup),patch.object(r,'observe',side_effect=observe):
+                    self.assertEqual(r.collect(store,Fetch([]),Fetch([])),(1,1,0))
+                self.assertEqual(store.db.execute('SELECT count(*) FROM redirect_scans').fetchone()[0],2)
             finally:store.db.close()

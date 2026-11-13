@@ -244,6 +244,8 @@ bodies remain separate because their Location headers may differ. The CGI's
 capture date is never reused as proof of a binary capture: run
 `wayback_recovery.py --site d_station` to index the discovered file URLs separately.
 Completed scan receipts let subsequent limited batches advance to other CGI URLs.
+Busy download claims are deferred without marking the scan complete; cached
+redirect observations remain available for a later pass.
 
 ## ErogameScape metadata
 

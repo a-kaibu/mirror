@@ -25,3 +25,21 @@ class ArchiveLockTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 with exclusive_file(Path(tmp)/"lock"):raise RuntimeError("test")
             with exclusive_file(Path(tmp)/"lock"):pass
+
+    def test_nonblocking_claim_returns_busy_without_releasing_owner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"lock"
+            code="""from archive_lock import exclusive_file
+import sys
+try:
+    with exclusive_file(sys.argv[1],blocking=False):print('acquired')
+except BlockingIOError:print('busy')
+"""
+            with exclusive_file(path):
+                for _ in range(2):
+                    child=subprocess.run([sys.executable,'-c',code,str(path)],capture_output=True,text=True,timeout=5)
+                    self.assertEqual(child.returncode,0,child.stderr)
+                    self.assertEqual(child.stdout.strip(),'busy')
+            child=subprocess.run([sys.executable,'-c',code,str(path)],capture_output=True,text=True,timeout=5)
+            self.assertEqual(child.returncode,0,child.stderr)
+            self.assertEqual(child.stdout.strip(),'acquired')
