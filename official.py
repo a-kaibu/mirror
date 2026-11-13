@@ -12,7 +12,8 @@ from catalog import release_info, normalized, KINDS
 import erogamescape as e
 
 BINARY = re.compile(r"\.(?:zip|exe|7z|rar|lzh|cab|msi|xp3|mp4|wmv|mpg|mpeg)(?:$|[?#])",re.I)
-NAVIGATION = re.compile(r"download|trial|taiken|special|support|patch|体験|ダウンロード|だうんろーど|修正|アップデート",re.I)
+NAVIGATION = re.compile(r"download|trial|taiken|special|support|patch|体験|ダウンロード|だうんろーど|修正|アップデート|アップデータ|サポート",re.I)
+SUPPORT_NAVIGATION = re.compile(r"support|patch|修正|アップデート|アップデータ|サポート",re.I)
 
 
 def initialize(store):
@@ -228,7 +229,11 @@ def scan(store, fetcher, game, brand, seed, max_pages=20, continuation=None):
                     if extension not in {"",".html",".htm",".php",".cgi",".asp",".aspx"}:continue
                     label=" ".join([link.text(),(link.attrs.get('title') or ''),*[(image.attrs.get('alt') or '') for image in link.all({'img'})]])
                     navigation=label+" "+normalized(label)+" "+parts.path
-                    if parts.hostname==base.hostname and parts.path.startswith(folder) and (link.tag in {"iframe","frame"} or NAVIGATION.search(navigation)):
+                    # Publisher support commonly lives outside a product's
+                    # folder. Follow only observed support links there; parse()
+                    # still requires product identity on these shared pages.
+                    inside=parts.path.startswith(folder)
+                    if parts.hostname==base.hostname and (inside or SUPPORT_NAVIGATION.search(navigation)) and (link.tag in {"iframe","frame"} or NAVIGATION.search(navigation)):
                         kind=release_info({"title":label+" "+parts.path.rsplit("/",1)[-1],"filename":""})[0]
                         if kind!="other":hints.setdefault(target,set()).add(kind)
                         queue.append((target,depth+1))

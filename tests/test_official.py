@@ -342,3 +342,18 @@ class ImageDistributionClassTests(unittest.TestCase):
         rows,unknown=o.parse(html,PAGE,GAME,BRAND)
         self.assertEqual(rows,[])
         self.assertEqual(unknown,['https://key.visualarts.co.jp/anemoi/enhance106.exe'])
+
+class PublisherSupportNavigationTests(unittest.TestCase):
+    def test_observed_shared_support_page_keeps_product_association(self):
+        game={**GAME,'shoukai':'https://publisher.test/game/index.html'}
+        start='<a href="/support/game.html">修正パッチ</a><a href="https://other.test/support/game.html">修正パッチ</a><a href="/other/download.html">Download</a>'
+        support='<div>anemoi 修正パッチ <a href="/files/game_update.zip">ダウンロード</a></div><div>Another game 修正パッチ <a href="/files/other_update.zip">ダウンロード</a></div>'
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);fetch=Fetch([Response(start.encode(),url=game['shoukai']),Response(support.encode(),url='https://publisher.test/support/game.html')])
+            try:
+                self.assertEqual(o.scan(store,fetch,game,BRAND,game['shoukai']),1)
+                rows=store.rows('official')
+                import json
+                self.assertEqual(json.loads(rows[0]['data'])['filename'],'game_update.zip')
+                self.assertEqual([url for url,_ in fetch.requests],[game['shoukai'],'https://publisher.test/support/game.html'])
+            finally:store.db.close()
