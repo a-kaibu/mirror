@@ -31,6 +31,8 @@ def reparse(store,site='both'):
                 m.add_record(store,record)
                 for url in record['mirrors']:
                     store.db.execute('UPDATE mirror_links SET matched_item=? WHERE site=? AND parent_url=? AND url=?',(record['id'],row['site'],row['url'],m.clean(url)))
+            if records:
+                store.db.execute("UPDATE mirror_frontier SET status='captured',error=NULL WHERE site=? AND status='review' AND path=? AND (url=? OR capture_url=?)",(row['site'],row['path'],row['url'],row['url']))
             store.db.execute('INSERT OR REPLACE INTO mirror_reparse VALUES(?,?,?,?,?,?,?)',(row['site'],row['url'],version,source_hash,a.now(),len(records),None));store.db.commit()
             processed+=1;found+=len(records)
             if records:print('reparsed',row['site'],len(records),row['url'],flush=True)

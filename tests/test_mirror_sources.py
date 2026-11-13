@@ -556,3 +556,46 @@ class DlsiteMovieTests(unittest.TestCase):
         page='http://web.archive.org/web/20150102030405/http://www.dlsite.com/pro/work/=/product_id/VJ003549.html'
         row=parse_dlsite(html,page)[0]
         self.assertEqual(row['mirrors'][0],'http://web.archive.org/web/20150102030405id_/http://trial.dlsite.com/professional/VJ004000/VJ003549_trial_mov.zip')
+
+
+class ImmediateDedicatedCrawlTests(unittest.TestCase):
+    def test_crawl_registers_new_distribution_metadata_without_reparse_or_donors(self):
+        cases=[
+            ('kokoron','https://web.archive.org/web/20080505083448/http://kokoron.madoka.org/mirror/studio-jyaren.html',Path('tests/fixtures/kokoron-2008.html').read_text(),'archive',6),
+            ('lapistan','https://web.archive.org/web/20050108213255/http://lapistan.jp/list/PULLTOP/index.htm',Path('tests/fixtures/lapistan-2005.html').read_text(),'archive',4),
+            ('dmm','https://dlsoft.dmm.co.jp/detail/brand_0001/','<h1>Game</h1><a title="ブランド「Brand」へのリンク" href="/list/article=maker/id=1/">Brand</a><a href="https://sample2.dmm.co.jp/sample/demo.zip">体験版</a>','live',1),
+        ]
+        for site,url,html,mode,count in cases:
+            with self.subTest(site=site),tempfile.TemporaryDirectory() as root:
+                store=a.Store(root)
+                try:
+                    m.initialize(store)
+                    store.db.execute('INSERT INTO mirror_frontier(site,url,mode) VALUES(?,?,?)',(site,url,mode));store.db.commit()
+                    processed,found=m.crawl(store,m.definitions()[site],Fetch([Response(html.encode(),url=url)]),mode=mode,max_pages=1)
+                    self.assertEqual((processed,found),(1,count))
+                    rows=store.db.execute('SELECT data FROM items WHERE site=?',(site,)).fetchall()
+                    self.assertEqual(len(rows),count)
+                    self.assertTrue(all(json.loads(row[0])['brand'] for row in rows))
+                    self.assertEqual(store.db.execute('SELECT status FROM mirror_frontier WHERE site=? AND url=? AND mode=?',(site,url,mode)).fetchone()[0],'captured')
+                finally:store.db.close()
+
+
+class ReparseFrontierStatusTests(unittest.TestCase):
+    def test_only_successfully_parsed_saved_review_pages_become_captured(self):
+        from mirror_reparse import reparse
+        fixture=Path('tests/fixtures/kokoron-2008.html').read_text()
+        url='https://web.archive.org/web/20080505083448/http://kokoron.madoka.org/mirror/studio-jyaren.html'
+        for html,count,status in [(fixture,6,'captured'),('<html>no distribution metadata</html>',0,'review')]:
+            with self.subTest(expected=status),tempfile.TemporaryDirectory() as root:
+                store=a.Store(root)
+                try:
+                    m.initialize(store);path='html/page.html'
+                    (Path(root)/'html').mkdir();(Path(root)/path).write_text(html)
+                    store.db.execute("INSERT INTO pages(url,site,path,status,response_url) VALUES(?,'kokoron',?,'ok',?)",(url,path,url))
+                    store.db.execute("INSERT INTO mirror_frontier(site,url,mode,status,capture_url,path,error) VALUES('kokoron',?,'archive','review',?,?,'unmatched/unsupported catalogue page')",(url,url,path));store.db.commit()
+                    self.assertEqual(reparse(store,'kokoron'),(1,count,0))
+                    row=store.db.execute('SELECT status,error FROM mirror_frontier').fetchone()
+                    self.assertEqual(row['status'],status)
+                    if count:self.assertIsNone(row['error'])
+                    else:self.assertIsNotNone(row['error'])
+                finally:store.db.close()
