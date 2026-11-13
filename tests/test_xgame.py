@@ -60,3 +60,49 @@ class XgameTests(unittest.TestCase):
         self.assertEqual(rows[0]['fields']['brand_evidence']['method'],'copyright_and_attribution')
         self.assertEqual(parse_xgame(without_navigation+credits.replace('2012 ボクカノProject','2012 DifferentPublisher'),PAGE),[])
         self.assertEqual(parse_xgame(without_navigation+'<p>Copyright © 2012 ボクカノProject All Rights Reserved.</p>',PAGE),[])
+
+
+class LegacyXgameTests(unittest.TestCase):
+    def html(self):
+        return """<a href="http://www.xgamedata.com/ti0/su.html#ＺＥＲＯ">このブランドの他のタイトルデータを見る</a>
+<a href="http://xes.plala.jp/demo2/g1552/game_trial.lzh">体験版</a>
+<a href="http://xes1.plala.jp/demo2/g1552/game_trial.lzh">体験版</a>
+<a href="http://xes.plala.jp/demo2/g1552/MOV_L.LZH">ムービー</a>
+<a href="http://xes.plala.jp/demo2/g1552/MOV_S.LZH">ムービー</a>
+<div>【ソフト　　名】『Game』体験版
+【登　録　名】game_trial.lzh
+【バイト　数】134,615,039byte
+【動作　条件】Windows
+【転載 条件】著作権者の了承無き転載不可</div>
+<div>【ソフト　　名】『Game』高解像度ムービー/低解像度ムービー
+【登　録　名】MOV_L.LZH/MOV_S.LZH
+【バイト　数】27769131byte/4357297byte
+【動作　条件】WMV</div>"""
+
+    def test_exact_bytes_without_md5_and_parallel_movie_variants(self):
+        rows=parse_xgame(self.html(),'http://web.archive.org/web/20120514063647/http://www.xgamedata.com/demo2/g1552/')
+        self.assertEqual([r['filename'] for r in rows],['game_trial.lzh','MOV_L.LZH','MOV_S.LZH'])
+        self.assertEqual([r['expected_size'] for r in rows],[134615039,27769131,4357297])
+        self.assertTrue(all(r['expected_md5'] is None for r in rows))
+        self.assertEqual(rows[0]['brand'],'ZERO');self.assertEqual(len(rows[0]['mirrors']),4)
+        self.assertEqual(rows[1]['release_name'],'高解像度ムービー')
+        self.assertEqual(rows[2]['release_name'],'低解像度ムービー')
+        self.assertEqual(rows[0]['fields']['適用条件'],'Windows')
+
+    def test_unmatched_size_lists_and_approximate_bytes_are_rejected(self):
+        html=self.html().replace('27769131byte/4357297byte','27769131byte')
+        self.assertEqual(len(parse_xgame(html,'http://www.xgamedata.com/demo2/g1552/')),1)
+        malformed=self.html().replace('134,615,039byte','134,615,039byte/unknown')
+        self.assertEqual(len(parse_xgame(malformed,'http://www.xgamedata.com/demo2/g1552/')),2)
+        html=self.html().replace('134,615,039byte','約134MB')
+        rows=parse_xgame(html,'http://www.xgamedata.com/demo2/g1552/')
+        self.assertEqual(len(rows),2);self.assertNotIn('game_trial.lzh',[r['filename'] for r in rows])
+
+    def test_missing_filename_link_retains_metadata_without_guessing_url(self):
+        html=self.html().replace('game_trial.lzh">','different.lzh">')
+        row=parse_xgame(html,'http://www.xgamedata.com/demo2/g1552/')[0]
+        self.assertEqual(row['mirrors'],[]);self.assertTrue(row['fields']['source_link_missing'])
+
+    def test_modern_format_still_requires_its_published_digest(self):
+        html=HTML.replace('MD5:8CE2307C23D1E149A679BA89E12C6126','').replace('MD5:73BC3AF33BF4227F2297FD68127393E9','')
+        self.assertEqual(parse_xgame(html,PAGE),[])
