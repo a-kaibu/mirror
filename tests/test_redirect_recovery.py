@@ -93,3 +93,19 @@ class RedirectRecoveryTests(unittest.TestCase):
         with patch.object(r,'observe',return_value={**first,'location':'https://unrelated.test/login'}) as observe:
             self.assertEqual(list(r.follow(None,None,self.capture)),[{**first,'location':'https://unrelated.test/login'}])
             observe.assert_called_once()
+
+    def test_pending_cgi_is_discovered_before_waiting_for_download_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                record=a.parse_detail(HTML,'https://example.test/items/pending','d_station')[0]
+                record['mirrors']=[self.target];store.add(record)
+                with patch.object(r,'lookup',return_value=[]) as lookup:
+                    self.assertEqual(r.collect(store,Fetch([]),Fetch([])),(1,0,0))
+                    lookup.assert_called_once()
+                self.assertEqual(store.rows()[0]['status'],'pending')
+                store.update(record['id'],status='archived')
+                with patch.object(r,'lookup') as lookup:
+                    self.assertEqual(r.collect(store,Fetch([]),Fetch([])),(0,0,0))
+                    lookup.assert_not_called()
+            finally:store.db.close()

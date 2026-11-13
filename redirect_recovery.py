@@ -129,7 +129,7 @@ def add_observations(store,ident,snapshot,observations):
 def collect(store,index_fetcher,replay_fetcher,site='d_station',limit=100):
     initialize(store);processed=added=failed=0
     for row in store.rows(site):
-        if row['status']!='failed':continue
+        if row['status'] not in {'pending','failed'}:continue
         record=json.loads(row['data'])
         if not (record.get('expected_md5') or record.get('expected_sha256')):continue
         targets=list(dict.fromkeys(a.original(u) for u in record['mirrors'] if urlsplit(a.original(u)).path.lower().endswith(('.php','.cgi','.asp','.aspx'))))

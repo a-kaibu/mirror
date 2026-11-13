@@ -237,7 +237,7 @@ After discovery, `archive-batch --site holyseal --retry-failed` tries alternate
 dates (newest first), checks file contents, publishes and reads back the result.
 
 `python redirect_recovery.py --site d_station --limit 100` checks archived
-redirect responses for failed download CGI URLs with publisher MD5 or SHA-256.
+redirect responses for pending or failed download CGI URLs with publisher MD5 or SHA-256.
 It records the actual response and Location in SQLite, then adds only observed
 original file URLs to the source record. Multiple captures with identical redirect
 bodies remain separate because their Location headers may differ. The CGI's
