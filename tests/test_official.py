@@ -39,6 +39,27 @@ class OfficialTests(unittest.TestCase):
         self.assertEqual(o.parse(html.replace('Mielタイトル全般','Otherタイトル全般'),page,GAME,brand,scoped=False)[0],[])
         self.assertEqual(o.parse(html.replace('タイトル全般【2016年より前の作品が対象】','作品A'),page,GAME,brand,scoped=False)[0],[])
 
+    def test_appetite_dash_and_legacy_trial_formats(self):
+        for page,assets in [
+            ('https://www.appetite-game.com/apadash/aptd_001.html',['aptd_001/aptd001_tr.zip']),
+            ('https://www.appetite-game.com/apt_007.html',['apt_007/APT007_tri.zip','apt_007/APT007_tri_exe.zip']),
+            ('https://www.appetite-game.com/apt_016.html',['apt_016/apt016_dl/apt016_tr.zip'])]:
+            with self.subTest(page=page):
+                html='<!-- 体験版 -->'+''.join('<a href="'+u+'"><img src="button.jpg"></a>' for u in assets)
+                rows,_=o.parse(html,page,{**GAME,'shoukai':page},BRAND,scoped=False)
+                self.assertEqual(len(rows),len(assets))
+                self.assertTrue(all(row['release_name']=='体験版' for row in rows))
+
+    def test_appetite_closer_markers_and_observed_same_product_redirect(self):
+        page='https://www.appetite-game.com/apt_013.html';requested=page.replace('.html','_kari.html')
+        game={**GAME,'shoukai':requested}
+        html='<!-- CLOSER|TRIAL --><a href="apt_013/apt013_tr.zip"><img src="button.jpg"></a><!-- CLOSER|PV --><video src="apt_013/apt013_pv.mp4"></video>'
+        self.assertEqual(o.parse(html,page,game,BRAND,scoped=False)[0],[])
+        rows,_=o.parse(html,page,game,BRAND,scoped=False,requested_page=requested)
+        self.assertEqual(len(rows),2)
+        self.assertTrue(all(r['fields']['official_request_url']==requested for r in rows))
+        self.assertEqual(o.parse(html,page,{**game,'shoukai':requested.replace('013','014')},BRAND,scoped=False,requested_page=requested.replace('013','014'))[0],[])
+
     def test_actual_anemoi_html(self):
         raw=(Path(__file__).parent/"fixtures/official-anemoi.html").read_bytes()
         records,unknown=o.parse(a.decode_html(raw),PAGE,GAME,BRAND)

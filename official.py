@@ -54,20 +54,31 @@ def publisher_patch_scope(node,brand):
     return next(iter(scopes)) if len(scopes)==1 else None
 
 
-def appetite_kind(html,page,game,target):
-    parts=urlsplit(page);binary=urlsplit(target)
-    if parts.hostname not in {'www.appetite-game.com','appetite-game.com'} or binary.hostname!=parts.hostname:return None
-    if not game.get('shoukai') or a.canonical(page)!=a.canonical(game['shoukai']):return None
-    product=re.fullmatch(r'/apt_(\d+)\.html',parts.path)
-    asset=re.fullmatch(r'/apt_(\d+)/apt(\d+)_(tr|pv)\.(zip|mp4)',binary.path,re.I)
-    if not product or not asset or product[1]!=asset[1] or product[1]!=asset[2]:return None
-    label='体験版' if asset[3].lower()=='tr' else 'PV'
-    if label=='体験版' and asset[4].lower()!='zip':return None
-    if not re.search(r'<!--\s*'+re.escape(label)+r'\s*-->',html,re.I):return None
-    return 'trial' if label=='体験版' else 'movie'
+def appetite_kind(html,page,game,target,requested_page=None):
+    parts=urlsplit(page);binary=urlsplit(target);requested=requested_page or page
+    hosts={'www.appetite-game.com','appetite-game.com'}
+    if parts.hostname not in hosts or binary.hostname!=parts.hostname or urlsplit(requested).hostname not in hosts:return None
+    if not game.get('shoukai') or a.canonical(requested)!=a.canonical(game['shoukai']):return None
+    def product_code(path,alias=False):
+        suffix=r'(?:_kari)?' if alias else ''
+        match=re.fullmatch(r'/(apt)_(\d+)'+suffix+r'\.html|/apadash/(aptd)_(\d+)'+suffix+r'\.html',path,re.I)
+        if not match:return None
+        return ((match[1] or match[3]).lower(),match[2] or match[4])
+    product=product_code(parts.path)
+    if not product or product_code(urlsplit(requested).path,alias=True)!=product:return None
+    family,number=product;base='/apadash/' if family=='aptd' else '/'
+    folder=base+family+'_'+number+'/'
+    nested=r'(?:apt'+re.escape(number)+r'_dl/)?' if family=='apt' else ''
+    asset=re.fullmatch(re.escape(folder)+nested+family+re.escape(number)+r'_(tr|tri(?:_exe)?|pv)\.(zip|mp4)',binary.path,re.I)
+    if not asset:return None
+    trial=asset[1].lower()!='pv'
+    if trial and asset[2].lower()!='zip':return None
+    labels=['体験版','CLOSER|TRIAL'] if trial else ['PV','CLOSER|PV']
+    if not any(re.search(r'<!--\s*'+re.escape(label)+r'\s*-->',html,re.I) for label in labels):return None
+    return 'trial' if trial else 'movie'
 
 
-def parse(html, page, game, brand, scoped=True, hint=None):
+def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
     root=a.DOM(html).root
     records={}
     unsupported=[]
@@ -92,10 +103,10 @@ def parse(html, page, game, brand, scoped=True, hint=None):
             continue  # Publisher scan targets trials, patches and movies.
         if kind=="other" and hint in KINDS and hint!="other" and len(filenames)==1:
             kind=hint
-        published_kind=appetite_kind(html,page,game,target)
+        published_kind=appetite_kind(html,page,game,target,requested_page)
         if kind=='other' and published_kind:kind=published_kind
         product_link=a.canonical(page) if published_kind else labelled_product(context_node,page)
-        linked=bool(game.get('shoukai') and product_link==a.canonical(game['shoukai']))
+        linked=bool(published_kind or (game.get('shoukai') and product_link==a.canonical(game['shoukai'])))
         common_scope=publisher_patch_scope(context_node,brand) if kind=='patch' else None
         if kind=="other" or (not scoped and normalized(game["gamename"]) not in normalized(context) and not linked and not common_scope):
             unsupported.append(target);continue
@@ -115,6 +126,7 @@ def parse(html, page, game, brand, scoped=True, hint=None):
             records[key]['fields'].update(distribution_scope=common_scope,scope_kind='publisher')
         if linked:records[key]['fields']['publisher_product_link']=product_link
         if published_kind:records[key]['fields']['published_section_label']='体験版' if published_kind=='trial' else 'PV'
+        if published_kind and requested_page and requested_page!=page:records[key]['fields']['official_request_url']=requested_page
         records[key]["mirrors"].append(target)
     for record in records.values():record["mirrors"]=list(dict.fromkeys(record["mirrors"]))
     return list(records.values()),unsupported
@@ -158,7 +170,7 @@ def scan(store, fetcher, game, brand, seed, max_pages=20):
             scoped=product_folder not in {"","/"} and base.path.startswith(product_folder)
             options=hints.get(url,set())
             hint=next(iter(options)) if len(options)==1 else None
-            records,unknown=parse(html,actual,game,brand,scoped=scoped,hint=hint)
+            records,unknown=parse(html,actual,game,brand,scoped=scoped,hint=hint,requested_page=url)
             unclassified.extend(unknown)
             for record in records:
                 from mirror_sources import add_record
