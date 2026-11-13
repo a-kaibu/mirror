@@ -128,11 +128,83 @@ def count_source(name, request, predicate=""):
     return rows[0]["count"]
 
 
+def reconcile(db, table, request=e.query, delay=3, max_pages=None):
+    """Rebuild a drifting keyed table durably, preserving the prior copy until verified."""
+    name=table['table_name'];pk=table.get('primary_key') or []
+    if exclusion(table) or not pk:raise ValueError('reconciliation requires a public keyed table')
+    columns=table['columns'];names=[c['name'] for c in columns]
+    fingerprint=hashlib.sha256(json.dumps(table,sort_keys=True).encode()).hexdigest()
+    stage='_reconcile_rows_'+hashlib.sha256(name.encode()).hexdigest()
+    db.execute('CREATE TABLE IF NOT EXISTS _reconcile_state(name TEXT PRIMARY KEY,schema_sha256 TEXT,cursor TEXT,rows INTEGER NOT NULL DEFAULT 0,expected_count INTEGER,passes INTEGER NOT NULL DEFAULT 1)')
+    state=db.execute('SELECT * FROM _reconcile_state WHERE name=?',(name,)).fetchone()
+    if state and state['schema_sha256']!=fingerprint:raise ValueError('reconciliation schema changed')
+    if not state:
+        definition=','.join(quote(c['name'])+' '+sqlite_type(c) for c in columns)
+        definition+=',PRIMARY KEY('+','.join(map(quote,pk))+')'
+        db.execute('CREATE TABLE '+quote(stage)+'('+definition+')')
+        db.execute('INSERT INTO _reconcile_state(name,schema_sha256) VALUES(?,?)',(name,fingerprint));db.commit()
+    predicate=public_filter(table);pages=0
+    while max_pages is None or pages<max_pages:
+        state=db.execute('SELECT * FROM _reconcile_state WHERE name=?',(name,)).fetchone()
+        cursor=json.loads(state['cursor']) if state['cursor'] else None
+        sql=None
+        try:
+            if state['expected_count'] is None:
+                expected=count_source(name,request,predicate)
+                db.execute('UPDATE _reconcile_state SET expected_count=? WHERE name=?',(expected,name));db.commit()
+            else:expected=state['expected_count']
+            conditions=[predicate] if predicate else []
+            if cursor:conditions.append('('+','.join(map(quote,pk))+') > ('+','.join(map(literal,cursor))+')')
+            where=' WHERE '+' AND '.join(conditions) if conditions else ''
+            sql="SELECT json_build_object('id',1,'row',row_to_json(t))::text AS metadata FROM (SELECT src.* FROM "+quote(name)+' src'+where+' ORDER BY '+','.join(map(quote,pk))+' LIMIT '+str(capture_batch_size(table))+') t'
+            rows,digest=transport(sql,request)
+            if rows:
+                if any(set(row)!=set(names) for row in rows):raise ValueError('source schema changed')
+                next_cursor=[rows[-1][key] for key in pk]
+                if cursor==next_cursor:raise ValueError('reconciliation pagination failed to advance')
+                insert='INSERT INTO '+quote(stage)+'('+','.join(map(quote,names))+') VALUES('+','.join('?' for _ in names)+')'
+                db.executemany(insert,([cell(row[key]) for key in names] for row in rows))
+                total=state['rows']+len(rows)
+                db.execute('UPDATE _reconcile_state SET cursor=?,rows=? WHERE name=?',(json.dumps(next_cursor),total,name))
+                db.execute("UPDATE _capture_state SET status='running',updated_at=?,error=NULL WHERE name=?",(a.now(),name))
+            else:
+                actual=db.execute('SELECT count(*) FROM '+quote(stage)).fetchone()[0]
+                source=count_source(name,request,predicate)
+                if actual!=source:
+                    # A changing source needs another full pass, including keys
+                    # inserted before the cursor and rows removed or made private.
+                    db.execute('DELETE FROM '+quote(stage))
+                    db.execute('UPDATE _reconcile_state SET cursor=NULL,rows=0,expected_count=NULL,passes=passes+1 WHERE name=?',(name,))
+                    db.execute("UPDATE _capture_state SET status='failed',updated_at=?,error=? WHERE name=?",(a.now(),f'reconciliation count drift: start {expected}, captured {actual}, current {source}',name))
+                else:
+                    db.execute('DELETE FROM '+quote(name))
+                    db.execute('INSERT INTO '+quote(name)+' SELECT * FROM '+quote(stage))
+                    db.execute("UPDATE _capture_state SET status='complete',cursor=?,offset=?,rows=?,expected_count=?,source_count=?,updated_at=?,error=NULL WHERE name=?",(state['cursor'],actual,actual,source,source,a.now(),name))
+                    receipt={'rows':actual,'source_count':source,'schema_sha256':fingerprint,'passes':state['passes'],'verified_at':a.now()}
+                    db.execute('INSERT OR REPLACE INTO _archive_info VALUES(?,?)',('reconciliation_final:'+name,json.dumps(receipt)))
+                    db.execute('DROP TABLE '+quote(stage))
+                    db.execute('DELETE FROM _reconcile_state WHERE name=?',(name,))
+            db.execute('INSERT INTO _capture_requests(name,sql,response_sha256,row_count,fetched_at) VALUES(?,?,?,?,?)',(name,sql,digest,len(rows),a.now()));db.commit()
+        except Exception as error:
+            db.rollback()
+            db.execute("UPDATE _capture_state SET status='failed',updated_at=?,error=? WHERE name=?",(a.now(),'reconciliation: '+str(error),name))
+            db.execute('INSERT INTO _capture_requests(name,sql,fetched_at,error) VALUES(?,?,?,?)',(name,sql,a.now(),str(error)));db.commit()
+            print('full metadata reconciliation failed',name,error,flush=True);return
+        pages+=1
+        print('full metadata reconciliation',name,state['rows']+len(rows),'complete',not rows and actual==source,flush=True)
+        if not rows:return
+        time.sleep(delay)
+
+
 def capture(db, table, request=e.query, delay=3, max_pages=None):
     name=table["table_name"];columns=table["columns"];pk=table.get("primary_key") or []
     predicate=public_filter(table)
     state=db.execute("SELECT * FROM _capture_state WHERE name=?",(name,)).fetchone()
     if state and state["status"]=="complete":return
+    reconciling=db.execute("SELECT 1 FROM sqlite_master WHERE name='_reconcile_state'").fetchone()
+    reconciling=reconciling and db.execute('SELECT 1 FROM _reconcile_state WHERE name=?',(name,)).fetchone()
+    if pk and (reconciling or (state and (state['error'] or '').startswith('count drift:'))):
+        return reconcile(db,table,request,delay,max_pages)
     definition=",".join(quote(c["name"])+" "+sqlite_type(c) for c in columns)
     if pk:definition+=",PRIMARY KEY("+",".join(map(quote,pk))+")"
     db.execute("CREATE TABLE IF NOT EXISTS "+quote(name)+"("+definition+")")
