@@ -543,3 +543,7 @@ Holysealの製品ページは、取得済みURLを起点に別日時のHTMLも�
 `uv run python holy_history.py --watch` はCDX索引から内容の異なる保存版を収集待ちに追加し、
 `holy_watch.py --watch` がそのHTMLを解析します。配布欄のない日時だけで取得不能とは判断しません。
 索引照会には上限を設け、成功結果をSQLiteに保存し、失敗したURLは未照会分の後で順番に再試行します。
+
+閉鎖ミラーの作品別・メーカー別ページも、`uv run python mirror_history.py --site both --observed --watch`
+で別日時の保存版を調査できます。登録済みサイトで実際に観測したURLに限り、内容の異なるHTMLを追加します。
+複数サイトを交互に調査し、失敗した索引照会は未照会URLの後で古い順に再試行します。

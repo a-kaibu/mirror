@@ -167,3 +167,50 @@ class HistoricalCrawlOrderTests(unittest.TestCase):
                     self.assertEqual(fetch.requests[0][0],urls[1])
                     self.assertEqual(store.db.execute('select status from mirror_frontier where url=?',(urls[0],)).fetchone()[0],'pending')
                 finally:store.db.close()
+
+
+class ObservedMirrorHistoryTests(unittest.TestCase):
+    def test_registered_observed_pages_only_and_unseen_before_oldest_failed(self):
+        from mirror_history import observed_candidates
+        with tempfile.TemporaryDirectory() as root:
+            store=a.Store(root)
+            try:
+                observed_candidates(store)
+                urls=['http://www.pachi.ac/~multi/download/index/a.html','http://www.pachi.ac/~multi/download/index/b.html','http://www.pachi.ac/~multi/download/index/c.html']
+                for i,url in enumerate(urls):
+                    record={'id':str(i),'site':'multi_inside','original_page_url':url}
+                    store.db.execute("INSERT INTO items(id,site,data,status) VALUES(?,?,?,'failed')",(str(i),'multi_inside',json.dumps(record)))
+                for ident,site,url in [('evil','multi_inside','http://evil.test/download'),('native','holyseal','http://holyseal.net/cgi-bin/mlistview.cgi?prdcode=1')]:
+                    store.db.execute("INSERT INTO items(id,site,data,status) VALUES(?,?,?,'failed')",(ident,site,json.dumps({'original_page_url':url})))
+                for url,date in zip(urls,['2026-01-02','2026-01-01']):store.db.execute('INSERT INTO mirror_history VALUES(?,?,?,?,?,?)',('multi_inside',url,date,'failed',None,'timeout'))
+                store.db.commit()
+                self.assertEqual(observed_candidates(store,3),[('multi_inside',urls[2]),('multi_inside',urls[1]),('multi_inside',urls[0])])
+                self.assertEqual(observed_candidates(store,3,'kokoron'),[])
+                store.db.execute("UPDATE mirror_history SET status='ok' WHERE url=?",(urls[1],));store.db.commit()
+                self.assertEqual(observed_candidates(store,3),[('multi_inside',urls[2]),('multi_inside',urls[0])])
+            finally:store.db.close()
+
+    def test_other_dates_of_known_distribution_page_are_queued(self):
+        from mirror_history import discover_observed
+        from test_archiver import Fetch,Response
+        with tempfile.TemporaryDirectory() as root:
+            store=a.Store(root)
+            try:
+                target='http://www.pachi.ac/~multi/download/index/game.html'
+                store.db.execute("INSERT INTO items(id,site,data,status) VALUES(?,?,?,'failed')",('one','multi_inside',json.dumps({'original_page_url':target})));store.db.commit()
+                rows=[['timestamp','original','mimetype','statuscode','digest'],['20050101000000',target,'text/html','200','old'],['20150101000000',target,'text/html','200','new']]
+                self.assertEqual(discover_observed(store,Fetch([Response(json.dumps(rows).encode())]),1),(1,2))
+                self.assertEqual(store.db.execute("SELECT count(*) FROM mirror_frontier WHERE site='multi_inside' AND mode='archive'").fetchone()[0],2)
+                self.assertEqual(discover_observed(store,Fetch([]),1),(0,0))
+            finally:store.db.close()
+
+    def test_sources_interleave_before_large_catalogue_is_exhausted(self):
+        from mirror_history import observed_candidates
+        with tempfile.TemporaryDirectory() as root:
+            store=a.Store(root)
+            try:
+                for i,(site,url) in enumerate([('multi_inside','http://www.pachi.ac/~multi/a.html'),('multi_inside','http://www.pachi.ac/~multi/b.html'),('kokoron','http://kokoron.madoka.org/mirror/game.html')]):
+                    store.db.execute("INSERT INTO items(id,site,data,status) VALUES(?,?,?,'failed')",(str(i),site,json.dumps({'original_page_url':url})))
+                store.db.commit()
+                self.assertEqual({site for site,url in observed_candidates(store,2)},{'multi_inside','kokoron'})
+            finally:store.db.close()

@@ -2,6 +2,11 @@
 import argparse
 import json
 import re
+from pathlib import Path
+import subprocess
+import sys
+import time
+from archive_lock import exclusive_file
 from urllib.parse import urlencode,urlsplit
 import archiver as a
 import mirror_sources as m
@@ -57,8 +62,66 @@ def discover(store,fetcher,source):
     return queued
 
 
+def observed_candidates(store,limit=10,site='both'):
+    """Prioritize pages with missing bodies, then other fetched mirror pages."""
+    m.initialize(store)
+    store.db.execute('CREATE TABLE IF NOT EXISTS mirror_history(site TEXT,url TEXT,checked_at TEXT,status TEXT,data TEXT,error TEXT,PRIMARY KEY(site,url))');store.db.commit()
+    sources={key:source for key,source in m.definitions().items() if source['adapter']=='mirror' and site in {'both',key}}
+    candidates={}
+    def add(key,value,priority):
+        if key not in sources or not isinstance(value,str):return
+        url=m.clean(value)
+        if urlsplit(url).scheme not in {'http','https'} or not m.allowed(sources[key],url):return
+        candidates[(key,url)]=min(candidates.get((key,url),2),priority)
+    for row in store.db.execute("SELECT site,status,data FROM items"):
+        record=json.loads(row['data']);add(row['site'],record.get('original_page_url') or record.get('page_url'),0 if row['status']=='failed' else 1)
+    for row in store.db.execute('SELECT site,url,status FROM mirror_frontier WHERE path IS NOT NULL'):
+        add(row['site'],row['url'],0 if row['status']=='failed' else 2)
+    prior={(row['site'],row['url']):row for row in store.db.execute('SELECT site,url,status,checked_at FROM mirror_history')}
+    keys=[key for key in candidates if key not in prior or prior[key]['status']!='ok']
+    keys.sort(key=lambda key:(key in prior,prior[key]['checked_at'] if key in prior else '',candidates[key],key))
+    # Interleave sources so one large catalogue does not postpone every other
+    # mirror. Sites least recently queried take the first slots next pass.
+    groups={}
+    for key in keys:groups.setdefault(key[0],[]).append(key)
+    latest={key:max((row['checked_at'] for (saved_site,_),row in prior.items() if saved_site==key),default='') for key in groups}
+    sites=sorted(groups,key=lambda key:(latest[key],key));result=[]
+    while sites and len(result)<limit:
+        remaining=[]
+        for key in sites:
+            result.append(groups[key].pop(0))
+            if groups[key]:remaining.append(key)
+            if len(result)>=limit:return result
+        sites=remaining
+    return result
+
+
+def discover_observed(store,fetcher,limit=10,site='both'):
+    candidates=observed_candidates(store,limit,site);queued=0
+    for key,url in candidates:
+        source={**m.definitions()[key],'homes':[],'seeds':[url]}
+        queued+=discover(store,fetcher,source)
+    return len(candidates),queued
+
+
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',default='archive');parser.add_argument('--site',required=True,choices=list(m.definitions()))
-    args=parser.parse_args();store=a.Store(args.root)
-    try:print('queued',discover(store,a.Fetcher(delay=10,timeout=30,retries=2),m.definitions()[args.site]))
-    finally:store.db.close()
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',default='archive');parser.add_argument('--site',required=True,choices=['both']+list(m.definitions()))
+    parser.add_argument('--observed',action='store_true',help='search distinct dates of already observed product/catalogue pages')
+    parser.add_argument('--limit',type=a.positive,default=10);parser.add_argument('--watch',action='store_true')
+    args=parser.parse_args()
+    if args.site=='both' and not args.observed:parser.error('--site both requires --observed')
+    if args.watch:
+        with exclusive_file(Path(args.root)/'.claims'/('mirror-history-watch-'+args.site+'.lock'),blocking=False):
+            while True:
+                command=[sys.executable,'-u',__file__,'--root',args.root,'--site',args.site,'--limit',str(args.limit)]
+                if args.observed:command.append('--observed')
+                result=subprocess.run(command)
+                print('mirror history batch exit',result.returncode,flush=True);time.sleep(60)
+    else:
+        with exclusive_file(Path(args.root)/'.claims'/('mirror-history-'+args.site+'.lock'),blocking=False):
+            store=a.Store(args.root)
+            try:
+                fetcher=a.Fetcher(delay=10,timeout=30,retries=2)
+                result=discover_observed(store,fetcher,args.limit,args.site) if args.observed else discover(store,fetcher,m.definitions()[args.site])
+                print('history coverage',result,flush=True)
+            finally:store.db.close()
