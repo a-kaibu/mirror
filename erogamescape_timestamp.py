@@ -12,7 +12,7 @@ import archiver as a
 
 LOWER = '1900-01-01T00:00:00'
 UPPER = '2100-01-01T00:00:00'
-BATCH = 500
+BATCH = 5000
 
 
 def timestamp_key(table):
@@ -36,6 +36,10 @@ def initialize(db):
         name TEXT,lower TEXT,upper TEXT,ordinal INTEGER,payload TEXT NOT NULL,
         PRIMARY KEY(name,lower,upper,ordinal));
     """)
+    columns={r[1] for r in db.execute('PRAGMA table_info(_timestamp_ranges)')}
+    if 'page_size' not in columns:
+        db.execute('ALTER TABLE _timestamp_ranges ADD COLUMN page_size INTEGER NOT NULL DEFAULT 5000')
+        db.commit()
 
 
 def predicate(key, lower, upper):
@@ -105,10 +109,21 @@ def capture(db, table, request=f.e.query, delay=3, max_pages=None):
                 if delay:time.sleep(delay)
                 continue
             fetched = leaf['fetched']
+            page_size = min(BATCH,leaf['page_size'])
+            if page_size < 1:raise ValueError('invalid timestamp page size')
             sql = ("SELECT json_build_object('id',1,'row',row_to_json(t))::text AS metadata FROM (SELECT src.* FROM "
                    +f.quote(name)+' src WHERE '+where+' ORDER BY row_to_json(src)::text COLLATE "C" LIMIT '
-                   +str(BATCH)+' OFFSET '+str(fetched)+') t')
-            rows,digest = f.transport(sql,request)
+                   +str(page_size)+' OFFSET '+str(fetched)+') t')
+            try:
+                rows,digest = f.transport(sql,request)
+            except ValueError as error:
+                if str(error) != 'SQL response exceeds 16 MiB' or page_size <= 1:raise
+                # The rejected response is never staged. Keep the exact offset
+                # and lower only the transport size, including for equal timestamps.
+                db.execute('UPDATE _timestamp_ranges SET page_size=? WHERE name=? AND lower=? AND upper=?',
+                           (max(1,page_size//2),name,lower,upper));db.commit()
+                if delay:time.sleep(delay)
+                continue
             expected_columns = {c['name'] for c in table['columns']}
             for row in rows:
                 if set(row) != expected_columns:
@@ -124,7 +139,7 @@ def capture(db, table, request=f.e.query, delay=3, max_pages=None):
             db.execute('UPDATE _timestamp_ranges SET fetched=?,source_count=? WHERE name=? AND lower=? AND upper=?',
                        (fetched,source,name,lower,upper))
             record_request(db,name,sql,digest,len(rows));db.commit();pages += 1
-            if len(rows) < BATCH:
+            if len(rows) < page_size:
                 current = f.count_source(name,request,where)
                 if fetched != source or current != source:
                     raise ValueError('timestamp partition count drift; reconciliation required')

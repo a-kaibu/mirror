@@ -145,6 +145,39 @@ class TimestampTests(unittest.TestCase):
         row=self.db.execute("SELECT status,error FROM _capture_state WHERE name='userreview_history'").fetchone()
         self.assertEqual(row['status'],'failed')
         self.assertIn('visibility-filtered',row['error'])
+    @patch.object(t,'LOWER','2000-01-01T00:00:00')
+    @patch.object(t,'UPPER','2000-01-01T00:00:00.000001')
+    def test_oversized_pages_shrink_at_saved_offset_without_losing_duplicates(self):
+        remote=Source(self.rows(7));attempts=[]
+        def request(sql):
+            if 'OFFSET' in sql:
+                limit=int(re.search(r'LIMIT (\d+)',sql)[1]);offset=int(re.search(r'OFFSET (\d+)',sql)[1])
+                attempts.append((limit,offset))
+                if limit>2:raise ValueError('SQL response exceeds 16 MiB')
+            return remote(sql)
+        with patch.object(t,'BATCH',8):t.capture(self.db,self.table,request,delay=0,max_pages=1)
+        self.assertEqual(attempts,[(8,0),(4,0),(2,0)])
+        leaf=self.db.execute("SELECT page_size,fetched FROM _timestamp_ranges WHERE status='pending'").fetchone()
+        self.assertEqual(tuple(leaf),(2,2))
+        with patch.object(t,'BATCH',8):t.capture(self.db,self.table,request,delay=0)
+        self.assertEqual(self.state()['status'],'complete')
+        self.assertEqual(self.state()['rows'],7)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM history').fetchone()[0],7)
+    def test_single_row_over_transport_limit_fails_without_completion(self):
+        remote=Source(self.rows(1))
+        def request(sql):
+            if 'OFFSET' in sql:raise ValueError('SQL response exceeds 16 MiB')
+            return remote(sql)
+        with patch.object(t,'BATCH',1):t.capture(self.db,self.table,request,delay=0)
+        self.assertEqual(self.state()['status'],'failed')
+        self.assertIn('exceeds 16 MiB',self.state()['error'])
+        self.assertEqual(self.db.execute('SELECT count(*) FROM history').fetchone()[0],0)
+    def test_existing_partition_ledger_upgrades_without_replacing_progress(self):
+        self.db.execute('CREATE TABLE _timestamp_ranges(name TEXT,lower TEXT,upper TEXT,status TEXT,fetched INTEGER,source_count INTEGER,PRIMARY KEY(name,lower,upper))')
+        self.db.execute("INSERT INTO _timestamp_ranges VALUES('history','a','b','pending',123,500)");self.db.commit()
+        t.initialize(self.db)
+        row=self.db.execute('SELECT fetched,source_count,page_size FROM _timestamp_ranges').fetchone()
+        self.assertEqual(tuple(row),(123,500,5000))
     def test_unsupported_timestamp_key_is_rejected(self):
         table=dict(self.table,primary_key=['word'])
         with self.assertRaisesRegex(ValueError,'without a primary key'):t.timestamp_key(table)
