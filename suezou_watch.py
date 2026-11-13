@@ -15,7 +15,19 @@ INTERVAL=3*60*60
 URL="http://suezou.dyndns.org/"
 
 
-def probe(fetcher, catalog_offset=0, save_page=None):
+def catalogue_links(root,page):
+    source=m.definitions()['suezou'];result=[]
+    for node in root.all({'a','frame','iframe'}):
+        target=a.resolve(page,node.attrs.get('href') or node.attrs.get('src',''))
+        if not target or a.WAYBACK.match(target) or not m.allowed(source,target):continue
+        path=urlsplit(target).path
+        if not re.search(r'\.html?$',path,re.I):continue
+        if re.search(r'/(?:index|about|contact|info|privacy|profile|information)\.html?$',path,re.I):continue
+        result.append(target)
+    return list(dict.fromkeys(result))
+
+
+def probe(fetcher, catalog_offset=0, save_page=None, catalog_urls=None):
     source=m.definitions()["suezou"]
     def read(url,limit):
         with fetcher.open(url) as response:
@@ -32,26 +44,35 @@ def probe(fetcher, catalog_offset=0, save_page=None):
         if not re.search(r"すえぞう|ギャルゲー補完|suezou",identity,re.I):return {"healthy":False,"error":"mirror identity not found"}
         links=[a.resolve(actual,n.attrs.get("href","")) for n in root.all({"a"})]
         if any(u and a.EXT.search(urlsplit(a.original(u)).path) for u in links):return {"healthy":True,"url":actual,"sha256":hashlib.sha256(raw).hexdigest()}
-        catalog=[u for u in links if u and m.allowed(source,u) and re.search(r"/[a-z0-9_-]+\.html$",urlsplit(u).path,re.I)]
-        catalog=list(dict.fromkeys(u for u in catalog if not re.search(r"/(?:index|about|contact|info|privacy)\.html$",urlsplit(u).path,re.I)))
-        if not catalog:return {"healthy":False,"error":"no publisher catalogue links"}
-        checks=[];offset=catalog_offset%len(catalog)
-        # Bound each scheduled check, but rotate so an empty first brand does
-        # not prevent discovery of a recovered catalogue elsewhere on the site.
-        for step in range(min(3,len(catalog))):
-            target=catalog[(offset+step)%len(catalog)]
-            next_offset=(offset+step+1)%len(catalog)
+        prior=[]
+        for target in catalog_urls or []:
+            if isinstance(target,str) and not a.WAYBACK.match(target) and m.allowed(source,target) and urlsplit(target).scheme in {'http','https'} and re.search(r'\.html?$',urlsplit(target).path,re.I):prior.append(target)
+        catalog=list(dict.fromkeys(prior+catalogue_links(root,actual)))
+        if not catalog:return {'healthy':False,'error':'no publisher catalogue links','catalog_urls':[]}
+        checks=[];cursor=catalog_offset%len(catalog);checked=set()
+        # Follow only observed links. Newly discovered nested catalogue pages
+        # join the persistent rotation; each scheduled check still reads at most
+        # three children, even if the catalogue has several navigation levels.
+        for step in range(3):
+            choices=[(cursor+delta)%len(catalog) for delta in range(len(catalog)) if catalog[(cursor+delta)%len(catalog)] not in checked]
+            if not choices:break
+            index=choices[0];target=catalog[index];checked.add(target)
             try:
                 child_url,child,charset=read(target,4*1024*1024)
                 page=a.DOM(a.decode_html(child,charset)).root
-                binaries=[a.resolve(child_url,n.attrs.get("href","")) for n in page.all({"a"})]
+                for discovered in catalogue_links(page,child_url):
+                    if discovered not in catalog:catalog.append(discovered)
+                binaries=[a.resolve(child_url,n.attrs.get('href','')) for n in page.all({'a'})]
                 found=any(u and a.EXT.search(urlsplit(a.original(u)).path) for u in binaries)
-                checks.append({"url":target,"response_url":child_url,"distribution_links":found})
-                if found:return {"healthy":True,"url":actual,"sha256":hashlib.sha256(raw).hexdigest(),"publisher_checks":checks,"next_catalog_offset":next_offset}
+                checks.append({'url':target,'response_url':child_url,'distribution_links':found})
+                cursor=(index+1)%len(catalog)
+                if found:return {'healthy':True,'url':actual,'sha256':hashlib.sha256(raw).hexdigest(),'publisher_checks':checks,'next_catalog_offset':cursor,'catalog_urls':catalog}
             except (OSError,ValueError,a.http.client.HTTPException) as error:
                 if isinstance(error,a.HTTPError):error.close()
-                checks.append({"url":target,"error":str(error)})
-        return {"healthy":False,"error":"checked publisher pages have no distribution links","publisher_checks":checks,"next_catalog_offset":next_offset}
+                checks.append({'url':target,'error':str(error)})
+                cursor=(index+1)%len(catalog)
+        return {'healthy':False,'error':'checked publisher pages have no distribution links','publisher_checks':checks,'next_catalog_offset':cursor,'catalog_urls':catalog}
+
     except (OSError,ValueError,a.http.client.HTTPException) as error:
         if isinstance(error,a.HTTPError):error.close()
         return {"healthy":False,"error":str(error)}
@@ -63,13 +84,15 @@ def check(store,fetcher,capture=True,start_worker=True):
     store.db.execute("CREATE TABLE IF NOT EXISTS source_health_history(site TEXT,checked_at TEXT,healthy INTEGER,data TEXT,PRIMARY KEY(site,checked_at))");store.db.commit()
     previous=store.db.execute("SELECT healthy,data FROM source_health WHERE site='suezou'").fetchone()
     offset=json.loads(previous['data']).get('next_catalog_offset',0) if previous else 0
+    prior_urls=json.loads(previous['data']).get('catalog_urls',[]) if previous else []
     pages=[]
     def save_page(url,raw,status):
         digest=hashlib.sha256(raw).hexdigest();rel='html/health/'+digest+'.html'
         path=store.root/rel;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(raw)
         pages.append({'url':url,'path':rel,'sha256':digest,'status':status})
-    result=probe(fetcher,catalog_offset=offset,save_page=save_page)
+    result=probe(fetcher,catalog_offset=offset,save_page=save_page,catalog_urls=prior_urls)
     result.setdefault('next_catalog_offset',offset)
+    result.setdefault('catalog_urls',prior_urls)
     if pages:result['pages']=pages
     stamp=a.now();encoded=json.dumps(result,ensure_ascii=False)
     with store.db:

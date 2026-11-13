@@ -49,3 +49,33 @@ class SuezoProbeTests(unittest.TestCase):
         self.assertFalse(w.probe(fetch,save_page=lambda *args:saved.append(args))['healthy'])
         self.assertEqual(len(saved),3)
         self.assertTrue(all(url.startswith(w.URL) for url,_,_ in saved))
+
+
+class NestedSuezoCatalogueTests(unittest.TestCase):
+    def test_nested_navigation_can_reach_distribution_with_existing_request_bound(self):
+        root='<title>すえぞう</title><a href="top.html">Enter</a>'.encode()
+        fetch=Fetch([Response(root,url=w.URL),Response(b'<a href="dl-18info_m.html">Brands</a>',url=w.URL+'top.html'),Response(b'<a href="brand.html">Brand</a>',url=w.URL+'dl-18info_m.html'),Response(b'<a href="demo.zip">Download</a>',url=w.URL+'brand.html')])
+        result=w.probe(fetch)
+        self.assertTrue(result['healthy']);self.assertEqual(len(fetch.requests),4)
+        self.assertIn(w.URL+'brand.html',result['catalog_urls'])
+
+    def test_discovered_urls_survive_until_next_scheduled_check_and_root_failure(self):
+        root='<title>すえぞう</title><a href="top.html">Enter</a><a href="old-top.html">Old</a><a href="dl3.html">More</a>'.encode()
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                first=Fetch([Response(root,url=w.URL),Response(b'<a href="brand.html">Brand</a>',url=w.URL+'top.html'),Response(b'empty',url=w.URL+'old-top.html'),Response(b'empty',url=w.URL+'dl3.html')])
+                result=w.check(store,first,capture=False)
+                self.assertFalse(result['healthy']);self.assertEqual(result['next_catalog_offset'],3)
+                self.assertIn(w.URL+'brand.html',result['catalog_urls'])
+                failed=w.check(store,Fetch([Response(b'Unavailable',url=w.URL)]),capture=False)
+                self.assertEqual(failed['catalog_urls'],result['catalog_urls'])
+                second=Fetch([Response(root,url=w.URL),Response(b'<a href="demo.zip">Download</a>',url=w.URL+'brand.html')])
+                self.assertTrue(w.check(store,second,capture=False)['healthy'])
+                self.assertEqual(second.requests[1][0],w.URL+'brand.html')
+                self.assertEqual(w.INTERVAL,10800)
+            finally:store.db.close()
+
+    def test_frame_targets_are_observed_but_foreign_or_archived_targets_are_not_followed(self):
+        html='<iframe src="brands/menu.html"></iframe><a href="http://evil.test/brand.html">Bad</a><a href="http://web.archive.org/web/20000101000000/http://suezou.dyndns.org/brand.html">Old</a><a href="profile.html">Profile</a>'
+        self.assertEqual(w.catalogue_links(a.DOM(html).root,w.URL),[w.URL+'brands/menu.html'])
