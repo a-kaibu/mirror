@@ -33,3 +33,27 @@ class SuezouTests(unittest.TestCase):
     def test_live_download_uses_published_relative_url(self):
         row=parse_suezou(block('作品A','trial.exe','1'*32),'http://suezou.dyndns.org/purple.html')[0]
         self.assertEqual(row['mirrors'],['http://suezou.dyndns.org/dl2007/purple/trial.exe'])
+
+    def test_localized_publisher_is_confirmed_by_same_block_permission(self):
+        html=block('作品A','trial.exe','1'*32).replace('Ｐｕｒｐｌｅ ｓｏｆｔｗａｒｅ','すみっこソフト')
+        html=html.replace('Copyright Purple software','Copyright (c)2016 SUMIKKO-SOFTWARE')
+        html=html.replace('【 MD5','◆このホームページは、すみっこソフト様より素材使用の許諾、又は転載許可を受けております。<br>【 MD5')
+        row=parse_suezou(html,PAGE)[0]
+        self.assertEqual(row['brand'],'すみっこソフト')
+        self.assertEqual(row['fields']['brand_evidence']['permission_name'],'すみっこソフト')
+        self.assertEqual(row['expected_md5'],'1'*32)
+        self.assertEqual(row['filename'],'trial.exe')
+
+    def test_permission_from_another_block_cannot_confirm_publisher(self):
+        mismatched=block('作品A','trial.exe','1'*32).replace('Copyright Purple software','Copyright Different company')
+        permission='◆このホームページは、Purple software様より素材使用の許諾、又は転載許可を受けております。'
+        self.assertEqual(parse_suezou(mismatched+'<p>'+permission+'</p>',PAGE),[])
+        self.assertEqual(parse_suezou(mismatched.replace('【 MD5',permission.replace('Purple software','Other brand')+'【 MD5'),PAGE),[])
+        other=block('作品B','movie.zip','2'*32).replace('【 MD5',permission+'【 MD5')
+        rows=parse_suezou(mismatched+other,PAGE)
+        self.assertEqual([r['filename'] for r in rows],['movie.zip'])
+
+    def test_conflicting_permission_names_do_not_confirm_localized_publisher(self):
+        html=block('作品A','trial.exe','1'*32).replace('Copyright Purple software','Copyright Different company')
+        permissions=''.join('このホームページは、'+name+'様より素材使用の許諾。' for name in ['Purple software','Other brand'])
+        self.assertEqual(parse_suezou(html.replace('【 MD5',permissions+'【 MD5'),PAGE),[])

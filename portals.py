@@ -979,7 +979,15 @@ def parse_suezou(html,page):
         brand=normalize(first.text())
         if not brand:continue
         credit=re.search(r'【\s*著作権\s+Copyright\s+(.+?)\s+All\s+Rights?\s+Reserved\.?\s*】',normalize(text),re.I)
-        if not credit or normalize(credit[1]).casefold()!=brand.casefold():continue
+        if not credit:continue
+        copyright_matches=normalize(credit[1]).casefold()==brand.casefold()
+        permissions=re.findall(r'このホームページは、\s*(.+?)様より素材使用の許諾',normalize(text))
+        permission_names={normalize(name).casefold() for name in permissions}
+        # Localized brands can differ from the English copyright holder. The
+        # permission statement must name this exact block's publisher instead.
+        if not copyright_matches and permission_names!={brand.casefold()}:continue
+        evidence={'method':'download_block_publisher','published_name':first.text()}
+        if not copyright_matches:evidence['permission_name']=permissions[0]
         table=block.parent
         while table is not None and table.tag!='table':table=table.parent
         if table is None:continue
@@ -1002,7 +1010,7 @@ def parse_suezou(html,page):
             'title':title,'brand':brand,'release_name':description[1].strip(),'filename':filename,
             'expected_md5':digest.lower(),'expected_size':None,'size_text':description[2],
             'published_at':None,'mirrors':list(dict.fromkeys(mirrors)),
-            'fields':{'brand_evidence':{'method':'download_block_publisher','published_name':first.text()},
+            'fields':{'brand_evidence':evidence,
                 'game_release_date':fields.get('発売日'),'OS':fields.get('OS'),
                 'source_link_missing':not bool(mirrors)}})
     return result
