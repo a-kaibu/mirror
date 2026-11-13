@@ -430,9 +430,12 @@ and retry after cooldown. Native/core batches remain separately managed.
 
 ### Independent provenance publication
 
-Run `python provenance_watch.py` alongside acquisition workers. It uploads and
-fully verifies saved HTML under a separate provenance lock, then checkpoints
-SQLite. Body batches checkpoint only SQLite, so an HTML backlog cannot stall
+Run `python provenance_watch.py` alongside acquisition workers. Each pass runs
+in a fresh child process so transfer fixes are loaded without retaining old
+modules across retries. The supervisor and individual passes use distinct
+claims. `--once` performs one pass and returns a failure status on errors. It
+uploads and fully verifies saved HTML under a separate provenance lock, then
+checkpoints SQLite. Body batches checkpoint only SQLite, so an HTML backlog cannot stall
 file transfers. SQLite snapshots still serialize their complete upload/read-back
 transaction. `--once` drains one current HTML snapshot and exits. Both publication
 paths exclude `manifest.json` and `ABOUT.txt` from HF.
