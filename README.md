@@ -385,6 +385,12 @@ state within the process. Live platform sessions have separate cookie jars.
 from CDX, including captures before closure. Explicit dated frontier URLs preserve
 their replay date when following navigation.
 
+`python metadata_watch.py` continues saved archive and platform frontiers in
+100-page batches per source with fresh parser code. Existing discovery claims are deferred;
+archive sources share one paced fetcher. Native and curated adapters keep their
+own acquisition jobs. Run long-lived jobs with stdout/stderr redirected to a log
+file so a disconnected terminal does not terminate acquisition.
+
 `python mirror_reparse.py --watch` checks saved HTML every minute with fresh parser
 code. Parser/source fingerprints avoid repeating unchanged work. No network
 requests are needed for reanalysis. Different MD5/size builds keep separate records.
