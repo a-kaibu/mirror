@@ -172,7 +172,7 @@ def parse_nekoneko(html,page):
     brand=brand[1].strip();title=None;results=[]
     for node in root.all({"font","a"}):
         if node.tag=="font" and node.attrs.get("color", "").lower()=="#000000":
-            heading=re.fullmatch(r"\s*『(.+?)』\s*",node.text())
+            heading=re.fullmatch(r"\s*(?:□\s*)?『(.+?)』\s*",node.text())
             if heading:title=heading[1]
         if node.tag!="a" or not title:continue
         target=a.resolve(page,node.attrs.get("href", ""))

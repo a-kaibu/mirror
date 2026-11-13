@@ -144,6 +144,20 @@ class MimimaidTests(unittest.TestCase):
 
 
 class NekonekoTests(unittest.TestCase):
+    def test_legacy_square_product_heading(self):
+        from portals import parse_nekoneko
+        html=Path("tests/fixtures/nekoneko-aria.html").read_text()
+        rows=parse_nekoneko(html,"http://web.archive.org/web/20231207030816/http://nekoneko-web.multi-band.net/nekoneko-web/movie/ani-demo/dl-menu/aria_dl-menu.html")
+        self.assertEqual(len(rows),1)
+        row=rows[0]
+        self.assertEqual(row["title"],"夜明け前より瑠璃色な -Brighter than dawning blue-")
+        self.assertEqual(row["filename"],"PS2_d_blue.LZH")
+        self.assertEqual(row["expected_md5"],"f579673350a20daeaa015d12277819df")
+        self.assertEqual(row["release_name"],"デモムービー")
+        self.assertEqual(row["size_text"],"70.86 MB")
+        self.assertIsNone(row["expected_size"])
+        self.assertIn("/20231207030816id_/",row["mirrors"][0])
+
     def test_real_page_tracks_product_headings_and_file_scoped_checksums(self):
         from portals import parse_nekoneko
         html=Path("tests/fixtures/nekoneko-pulltop.html").read_text()
