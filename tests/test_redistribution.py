@@ -37,3 +37,22 @@ class RedistributionTests(unittest.TestCase):
         self.assertEqual(parse_redistribution(HTML.replace('class="banner_date"','class="other"'),PAGE),[])
         self.assertEqual(len(parse_redistribution(HTML.replace('c1b79bcf1f0d79ec2ec8102f884f8575','bad'),PAGE)),1)
         self.assertEqual(parse_redistribution(HTML,'http://other.test/studio-jyaren'),[])
+
+    def test_download_subdomain_keeps_published_port_and_capture(self):
+        raw='http://dl.redistribution.cc:8008/contents/2010/12/studio-jyaren/soushin0-taiken.zip'
+        for link in [raw,'https://web.archive.org/web/20150120074941/'+raw]:
+            with self.subTest(link=link):
+                html=HTML.replace('/contents/2010/12/studio-jyaren/soushin0-taiken.zip',link)
+                trial=parse_redistribution(html,PAGE)[0]
+                # Wayback rewrites href dates; resolve within the captured
+                # document just as other mirror links do. CDX tracks alternatives.
+                stamp='20110829094642'
+                scheme='http'
+                self.assertEqual(trial['mirrors'],[scheme+'://web.archive.org/web/'+stamp+'id_/'+raw,raw])
+                self.assertFalse(trial['fields']['source_link_missing'])
+                self.assertEqual(trial['expected_md5'],'c1b79bcf1f0d79ec2ec8102f884f8575')
+
+    def test_lookalike_download_domains_are_not_used(self):
+        html=HTML.replace('/contents/2010/12/studio-jyaren/soushin0-taiken.zip','http://dl.redistribution.cc.evil.test:8008/contents/2010/12/studio-jyaren/soushin0-taiken.zip')
+        trial=parse_redistribution(html,PAGE)[0]
+        self.assertEqual(trial['mirrors'],[])

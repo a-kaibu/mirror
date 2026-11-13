@@ -895,7 +895,7 @@ def parse_redistribution(html,page):
                 target=a.resolve(page,link.attrs.get('href',''))
                 if not target:continue
                 parts=urlsplit(a.original(target))
-                if parts.hostname in {'www.redistribution.cc','redistribution.cc'} and parts.path.startswith('/contents/') and a.EXT.search(parts.path):candidates.append(target)
+                if parts.hostname in {'www.redistribution.cc','redistribution.cc','dl.redistribution.cc'} and parts.path.startswith('/contents/') and a.EXT.search(parts.path):candidates.append(target)
             names={unquote(Path(urlsplit(a.original(u)).path).name) for u in candidates}
             if not candidates:
                 filename=fields.get('ダウンロード','').strip()
