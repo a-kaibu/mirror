@@ -231,7 +231,10 @@ are retained in SQLite, including repeated digests: a broken replay at one date
 must not hide another date. HTML captures and unrelated paths are excluded.
 Index digests are provenance, not a replacement for publisher MD5 validation.
 `--refresh` queries successful cached index lookups again. Empty results and
-request failures are recorded separately. Results reaching the 10,000 capture
+request failures are recorded separately. Limited passes query unseen URLs first,
+then the least recently attempted URLs, so recurring failures do not starve later
+records. Shared file URLs use a single index lookup for all matching records.
+Results reaching the 10,000 capture
 limit are marked failed, never reported as an exhaustive search.
 After discovery, `archive-batch --site holyseal --retry-failed` tries alternate
 dates (newest first), checks file contents, publishes and reads back the result.

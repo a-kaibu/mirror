@@ -36,50 +36,57 @@ def captures(payload, target, scheme="https"):
 
 def discover(store, fetcher, limit=None, refresh=False, site="both"):
     attempted = found = 0
+    targets={}
     for item in store.rows(site):
-        if item["status"] != "failed":
-            continue
-        record = json.loads(item["data"])
-        originals = list(dict.fromkeys(a.original(u) for u in record["mirrors"] + record.get("fields",{}).get("recovery_urls",[])))
-        for target in originals:
-            scheme=a.archive_index_scheme(store,target)
-            saved = store.db.execute("SELECT * FROM wayback_lookups WHERE url=?", (target,)).fetchone()
-            if saved and saved["status"] == "ok" and not refresh:
-                payload = json.loads(saved["data"])
-            else:
-                if limit is not None and attempted >= limit:
-                    return attempted, found
-                attempted += 1
-                endpoint = "https://web.archive.org/cdx/search/cdx?" + urlencode({"url": target,
-                    "output": "json", "filter": "statuscode:200", "fl": "timestamp,original,mimetype,statuscode,digest,length", "limit": "10000"})
-                try:
-                    with a.open_archive_index(fetcher,endpoint) as response:
-                        raw = response.read(16 * 1024 * 1024 + 1)
-                        index_url = response.geturl()
-                    if len(raw) > 16 * 1024 * 1024:
-                        raise ValueError("CDX response exceeds 16 MiB")
-                    payload = json.loads(raw)
-                    if len(payload) >= 10001:
-                        raise ValueError("CDX result truncated; requires pagination")
-                    captures(payload, target)  # Validate before recording success.
-                    scheme=a.archive_index_scheme(store,target,index_url)
-                    store.db.execute("INSERT OR REPLACE INTO wayback_lookups VALUES(?,?,?,?,?)", (target, a.now(), "ok", json.dumps(payload), None))
-                except (OSError, ValueError) as error:
-                    store.db.execute("INSERT OR REPLACE INTO wayback_lookups VALUES(?,?,?,?,?)", (target, a.now(), "failed", None, str(error)))
-                    store.db.commit()
-                    print("CDX failed", target, error, flush=True)
-                    continue
-            candidates = captures(payload, target, scheme=scheme)
+        if item['status']!='failed':continue
+        record=json.loads(item['data'])
+        originals=dict.fromkeys(a.original(u) for u in record['mirrors']+record.get('fields',{}).get('recovery_urls',[]))
+        for target in originals:targets.setdefault(target,[]).append((item['id'],record['filename']))
+    lookups={row['url']:row for row in store.db.execute('SELECT url,status,queried_at FROM wayback_lookups')}
+    def priority(target):
+        saved=lookups.get(target)
+        # Apply successful cached evidence first without spending the network
+        # budget. Then query unseen URLs and the least recently tried URLs.
+        cached=bool(saved and saved['status']=='ok' and not refresh)
+        return (0 if cached else 1,saved['queried_at'] or '' if saved else '',target)
+    for target in sorted(targets,key=priority):
+        scheme=a.archive_index_scheme(store,target)
+        saved = store.db.execute("SELECT * FROM wayback_lookups WHERE url=?", (target,)).fetchone()
+        if saved and saved["status"] == "ok" and not refresh:
+            payload = json.loads(saved["data"])
+        else:
+            if limit is not None and attempted >= limit:
+                return attempted, found
+            attempted += 1
+            endpoint = "https://web.archive.org/cdx/search/cdx?" + urlencode({"url": target,
+                "output": "json", "filter": "statuscode:200", "fl": "timestamp,original,mimetype,statuscode,digest,length", "limit": "10000"})
+            try:
+                with a.open_archive_index(fetcher,endpoint) as response:
+                    raw = response.read(16 * 1024 * 1024 + 1)
+                    index_url = response.geturl()
+                if len(raw) > 16 * 1024 * 1024:
+                    raise ValueError("CDX response exceeds 16 MiB")
+                payload = json.loads(raw)
+                if len(payload) >= 10001:
+                    raise ValueError("CDX result truncated; requires pagination")
+                captures(payload, target)  # Validate before recording success.
+                scheme=a.archive_index_scheme(store,target,index_url)
+                store.db.execute("INSERT OR REPLACE INTO wayback_lookups VALUES(?,?,?,?,?)", (target, a.now(), "ok", json.dumps(payload), None))
+            except (OSError, ValueError) as error:
+                store.db.execute("INSERT OR REPLACE INTO wayback_lookups VALUES(?,?,?,?,?)", (target, a.now(), "failed", None, str(error)))
+                store.db.commit()
+                print("CDX failed", target, error, flush=True)
+                continue
+        candidates = captures(payload, target, scheme=scheme)
+        for ident,filename in targets[target]:
             for candidate in candidates:
-                store.db.execute("INSERT OR IGNORE INTO wayback_candidates VALUES(?,?,?,?,?)", (item["id"], candidate["url"], candidate["original_url"], candidate["captured_at"], candidate["index_digest"]))
-            # Recovery runs concurrently with long acquisition batches. Wake a
-            # failed record now rather than wait for that entire source to drain.
+                store.db.execute("INSERT OR IGNORE INTO wayback_candidates VALUES(?,?,?,?,?)", (ident, candidate["url"], candidate["original_url"], candidate["captured_at"], candidate["index_digest"]))
             store.db.execute("""UPDATE items SET status='pending' WHERE id=? AND status='failed'
                 AND EXISTS(SELECT 1 FROM wayback_candidates c WHERE c.item_id=items.id
-                  AND NOT EXISTS(SELECT 1 FROM attempts t WHERE t.item_id=items.id AND t.url=c.url))""",(item['id'],))
+                  AND NOT EXISTS(SELECT 1 FROM attempts t WHERE t.item_id=items.id AND t.url=c.url))""",(ident,))
             store.db.commit()
             found += len(candidates)
-            print("CDX", record["filename"], target, len(candidates), "capture(s)", flush=True)
+            print("CDX", filename, target, len(candidates), "capture(s)", flush=True)
     return attempted, found
 
 

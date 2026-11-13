@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import archiver as a
 from wayback_recovery import captures, discover
 from test_archiver import Response, Fetch, HTML
@@ -12,6 +12,36 @@ ROWS = [["timestamp", "original", "mimetype", "statuscode", "digest", "length"],
     ["20181120233710", TARGET, "application/zip", "200", "archive-sha1", "99"]]
 
 class WaybackRecoveryTests(unittest.TestCase):
+    def test_limited_pass_queries_unseen_then_oldest_failed_urls(self):
+        from urllib.error import URLError
+        from urllib.parse import parse_qs,urlsplit
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                record=a.parse_detail(HTML,'https://source.test/item','kokoron')[0]
+                record['mirrors']=['http://mirror.test/a.zip','http://mirror.test/b.zip']
+                store.add(record);store.update(record['id'],status='failed')
+                for stamp,expected in [('2020-01-01T00:00:00+00:00','a.zip'),('2020-01-02T00:00:00+00:00','b.zip'),('2020-01-03T00:00:00+00:00','a.zip')]:
+                    fetch=Fetch([URLError('unavailable')])
+                    with patch('wayback_recovery.a.now',return_value=stamp):
+                        self.assertEqual(discover(store,fetch,limit=1),(1,0))
+                    target=parse_qs(urlsplit(fetch.requests[0][0]).query)['url'][0]
+                    self.assertTrue(target.endswith(expected))
+            finally:store.db.close()
+
+    def test_cached_target_shared_by_items_uses_no_extra_network_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                for i in range(2):
+                    record=a.parse_detail(HTML,'https://source.test/'+str(i),'kokoron')[0]
+                    record['mirrors']=[TARGET];store.add(record);store.update(record['id'],status='failed')
+                fetch=Fetch([Response(json.dumps(ROWS).encode())])
+                self.assertEqual(discover(store,fetch,limit=1),(1,4))
+                self.assertEqual(len(fetch.requests),1)
+                self.assertEqual(store.db.execute('SELECT count(*) FROM wayback_candidates').fetchone()[0],4)
+            finally:store.db.close()
+
     def test_keeps_distinct_dates_even_when_index_digest_matches(self):
         result = captures(ROWS, TARGET)
         self.assertEqual(len(result), 2)
