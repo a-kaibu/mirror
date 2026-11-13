@@ -883,6 +883,32 @@ def recover_completed_transfer(store,row,record,path,rel):
     return True
 
 
+
+def healthy_source_mirrors(store,site,mirrors):
+    """Return observed originals on a recently recovered catalogue host."""
+    if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_health'").fetchone():return []
+    health=store.db.execute('SELECT checked_at,data FROM source_health WHERE site=? AND healthy=1',(site,)).fetchone()
+    if not health:return []
+    try:
+        checked=datetime.fromisoformat(health['checked_at'])
+        age=(datetime.now(timezone.utc)-checked).total_seconds()
+        data=json.loads(health['data'])
+        if not isinstance(data,dict) or not isinstance(data.get('url'),str):return []
+        root=urlsplit(data['url'])
+        if not 0<=age<=3*60*60 or root.scheme not in {'http','https'} or not root.hostname:return []
+    except (ValueError,TypeError):return []
+    result=[]
+    for url in mirrors:
+        raw=original(url)
+        try:
+            parts=urlsplit(raw)
+            if parts.scheme in {'http','https'} and parts.hostname==root.hostname:
+                archive_url_identity(raw)
+                result.append(raw)
+        except ValueError:continue
+    return list(dict.fromkeys(result))
+
+
 def download(store, fetcher, site="both", limit=None, ident=None, export=True):
     failures = processed = 0
     if ident is not None and not any(row["id"] == ident for row in store.rows(site)):
@@ -916,6 +942,11 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
         primary = [u for u in recovered if urlsplit(u).hostname=='storage1.lathercraft.net']
         fallback = [u for u in recovered if u not in primary]
         mirrors = list(dict.fromkeys(primary + captures + record["mirrors"] + fallback))
+        # A live response may stand in for historical bytes only when the
+        # source's digest still binds the download to those exact bytes.
+        if record.get('expected_md5') or record.get('expected_sha256'):
+            live=healthy_source_mirrors(store,row['site'],mirrors)
+            mirrors=list(dict.fromkeys(primary+live+mirrors))
         if not mirrors:
             store.update(row["id"], status="failed", error="No mirror link preserved on source page")
         if record["site"] == "lathercraft":
