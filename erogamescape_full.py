@@ -10,7 +10,7 @@ import erogamescape as e
 import archiver as a
 
 SCHEMA_SQL = """SELECT json_build_object('id',1,'tables',json_agg(t))::text AS metadata FROM
-(SELECT t.table_name,t.table_type,json_agg(json_build_object('name',c.column_name,'type',c.data_type,'udt',c.udt_name,'nullable',c.is_nullable) ORDER BY c.ordinal_position) AS columns,
+(SELECT t.table_name,t.table_type,json_agg(json_build_object('name',c.column_name,'type',c.data_type,'udt',c.udt_name,'nullable',c.is_nullable,'max_length',c.character_maximum_length) ORDER BY c.ordinal_position) AS columns,
  (SELECT json_agg(a.attname ORDER BY k.ord) FROM pg_index i CROSS JOIN unnest(i.indkey) WITH ORDINALITY k(attnum,ord)
  JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum
  WHERE i.indrelid=to_regclass('public.'||quote_ident(t.table_name)) AND i.indisprimary) AS primary_key
@@ -61,7 +61,10 @@ def capture_batch_size(table):
     fixed={'smallint','integer','bigint','boolean','real','double precision','date',
            'timestamp without time zone','timestamp with time zone'}
     columns=table['columns']
-    return 5000 if 0<len(columns)<=16 and all(column['type'] in fixed for column in columns) else 500
+    def narrow(column):
+        length=column.get('max_length')
+        return column['type'] in fixed or (column['type']=='character' and type(length) is int and 0<length<=16)
+    return 5000 if 0<len(columns)<=16 and all(narrow(column) for column in columns) else 500
 
 
 def sqlite_type(column):

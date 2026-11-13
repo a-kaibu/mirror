@@ -135,3 +135,18 @@ class FullExportTests(unittest.TestCase):
         f.capture(db,schema,lambda _:next(replies),delay=0)
         self.assertEqual(db.execute("SELECT status FROM _capture_state").fetchone()[0],"complete")
         db.close()
+
+
+class FixedCharacterBatchTests(unittest.TestCase):
+    def test_declared_small_character_rank_can_use_large_bounded_batch(self):
+        import erogamescape_full as f
+        table={'columns':[{'name':'pov','type':'integer'},{'name':'game','type':'integer'},{'name':'rank','type':'character','max_length':1},{'name':'count','type':'integer'}]}
+        self.assertEqual(f.capture_batch_size(table),5000)
+        self.assertIn("'max_length',c.character_maximum_length",f.SCHEMA_SQL)
+
+    def test_unknown_or_unbounded_character_columns_keep_small_batch(self):
+        import erogamescape_full as f
+        for length in [None,0,17,10000,True,'1']:
+            with self.subTest(length=length):self.assertEqual(f.capture_batch_size({'columns':[{'type':'character','max_length':length}]}),500)
+        self.assertEqual(f.capture_batch_size({'columns':[{'type':'text','max_length':1}]}),500)
+        self.assertEqual(f.capture_batch_size({'columns':[{'type':'character','max_length':1}]*17}),500)
