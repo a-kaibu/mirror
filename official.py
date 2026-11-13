@@ -113,10 +113,8 @@ def scan(store, fetcher, game, brand, seed, max_pages=20):
             records,unknown=parse(html,actual,game,brand,scoped=scoped,hint=hint)
             unclassified.extend(unknown)
             for record in records:
-                prior=store.db.execute("SELECT data FROM items WHERE id=?",(record["id"],)).fetchone()
-                if prior:
-                    record["fields"]={**json.loads(prior[0]).get("fields",{}),**record["fields"]}
-                store.add(record)
+                from mirror_sources import add_record
+                add_record(store,record)
             found+=len(records)
             if depth<2:
                 for link in a.DOM(html).root.all({"a","iframe","frame"}):

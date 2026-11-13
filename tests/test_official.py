@@ -33,6 +33,29 @@ class OfficialTests(unittest.TestCase):
         self.assertEqual(len(records),2)
         self.assertTrue(all(r["expected_md5"] is None for r in records))
 
+    def test_reused_official_filename_keeps_published_old_build(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);o.initialize(store)
+            try:
+                def html(digest):
+                    return ('<section><h2>体験版</h2><p>MD5: '+digest+'</p><a href="trial.zip">Download</a></section>').encode()
+                self.assertEqual(o.scan(store,Fetch([Response(html('a'*32),url=PAGE)]),GAME,BRAND,PAGE),1)
+                ident=store.rows()[0]['id']
+                store.update(ident,status='archived',md5='a'*32,sha256='1'*64,size=17,remote_sha256='1'*64,remote_key='vn-archive/mirrors/files/'+'1'*64,remote_verified_at=a.now())
+                before=dict(store.db.execute('SELECT * FROM items WHERE id=?',(ident,)).fetchone())
+                self.assertEqual(o.scan(store,Fetch([Response(html('b'*32),url=PAGE)]),GAME,BRAND,PAGE),1)
+                self.assertEqual(dict(store.db.execute('SELECT * FROM items WHERE id=?',(ident,)).fetchone()),before)
+                rows=store.rows();self.assertEqual(len(rows),2)
+                new=next(row for row in rows if row['id']!=ident)
+                data=json.loads(new['data'])
+                self.assertEqual(data['expected_md5'],'b'*32)
+                self.assertEqual(data['fields']['source_version_of'],ident)
+                self.assertEqual(new['status'],'pending')
+                self.assertEqual(o.scan(store,Fetch([Response(html('b'*32),url=PAGE)]),GAME,BRAND,PAGE),1)
+                self.assertEqual(len(store.rows()),2)
+            finally:store.db.close()
+
     def test_records_html_and_scan_result(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=a.Store(tmp);o.initialize(store)
