@@ -23,6 +23,10 @@ version numbers or product associations. Patch version, platform and applicabili
 are recorded when the source supplies them; source labels and fields are retained.
 SHA-256 confirms byte identity: identical bytes share one HF object, while catalog
 entries retain each product association and all source filenames and URLs.
+A published SHA-256 can link a source observation to an already fully verified
+public object while preserving its manufacturer and product metadata. Every
+posted MD5 and exact size must also match; quarantined observations are excluded.
+MD5-only reuse continues to require the same canonical manufacturer.
 Different revisions remain separate. Unretrieved files stay in the catalog with
 no download link and a recorded failure or pending state.
 
@@ -291,9 +295,9 @@ changed observation returns to pending without inheriting old byte measurements.
 Identical SHA-256 results still merge into one file entry per product.
 
 `python reuse_recovery.py --watch` checks every five minutes for waiting or failed
-observations whose published MD5 and manufacturer match an already verified public
-file. Exact sizes and SHA-256 constraints must agree; existing matching SHA-256
-identity is preserved. Active item claims are deferred. This updates SQLite and
+observations whose published SHA-256 identifies an already verified public file,
+or whose published MD5 and canonical manufacturer match it. All current checksum
+and exact-size constraints must agree; existing matching SHA-256 identity is preserved. Active item claims are deferred. This updates SQLite and
 the local JSON without downloading or uploading the binary again.
 
 ## ErogameScape metadata

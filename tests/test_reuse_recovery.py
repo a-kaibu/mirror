@@ -41,3 +41,20 @@ class ReuseRecoveryTests(unittest.TestCase):
         self.add('other',brand='Other');record=self.add('wrongsize');record['expected_size']+=1;self.store.add(record)
         self.assertEqual(r.recover(self.store)['reused'],0)
         self.add('target');self.assertEqual(r.recover(self.store,bucket='elsewhere')['reused'],0)
+
+    def test_posted_sha_recovers_without_manufacturer_or_md5(self):
+        record=self.add('target',brand=None);record.update(expected_md5=None,expected_sha256=self.sha);self.store.add(record)
+        self.assertEqual(r.recover(self.store),{'reused':1,'deferred':0,'unresolved':0})
+        self.assertEqual(self.row('target')['reused_from'],'donor')
+
+    def test_overlapping_md5_and_sha_matches_defer_once(self):
+        record=self.add('target');record['expected_sha256']=self.sha;self.store.add(record)
+        with patch.object(r,'exclusive_file',side_effect=BlockingIOError('busy')):
+            self.assertEqual(r.recover(self.store),{'reused':0,'deferred':1,'unresolved':0})
+
+    def test_sha_recovery_does_not_ignore_conflicting_md5_size_or_bucket(self):
+        for change in [{'expected_md5':'0'*32},{'expected_size':len(PAYLOAD)+1}]:
+            record=self.add('target',brand='Other');record.update(expected_sha256=self.sha);record.update(change);self.store.add(record)
+            self.assertEqual(r.recover(self.store)['reused'],0)
+        record=self.add('target',brand='Other');record.update(expected_sha256=self.sha);self.store.add(record)
+        self.assertEqual(r.recover(self.store,bucket='elsewhere')['reused'],0)

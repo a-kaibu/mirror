@@ -21,7 +21,14 @@ def recover(store,namespace='vn-archive',bucket='mirrors'):
       AND dp.manufacturer_id=tp.manufacturer_id AND coalesce(json_extract(t.data,'$.brand'),'')!=''
       AND (json_extract(t.data,'$.expected_size') IS NULL OR json_extract(t.data,'$.expected_size')=d.size)
       AND (json_extract(t.data,'$.expected_sha256') IS NULL OR json_extract(t.data,'$.expected_sha256')=d.sha256)
-      """,(namespace+'/'+bucket+'/files/',)).fetchall()
+      UNION
+      SELECT t.id FROM items d JOIN items t ON json_extract(t.data,'$.expected_sha256')=d.sha256
+      WHERE d.remote_sha256=d.sha256 AND d.remote_verified_at IS NOT NULL
+      AND d.remote_key=?||d.sha256 AND d.status IN ('verified','archived')
+      AND t.status IN ('failed','pending') AND t.id!=d.id
+      AND (json_extract(t.data,'$.expected_md5') IS NULL OR json_extract(t.data,'$.expected_md5')=d.md5)
+      AND (json_extract(t.data,'$.expected_size') IS NULL OR json_extract(t.data,'$.expected_size')=d.size)
+      """,(namespace+'/'+bucket+'/files/',namespace+'/'+bucket+'/files/')).fetchall()
     stats={'reused':0,'deferred':0,'unresolved':0}
     for candidate in rows:
         try:

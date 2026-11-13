@@ -21,20 +21,30 @@ def reuse_verified(store, row, namespace, bucket):
     record = json.loads(row["data"])
     if (record.get("fields") or {}).get("source_association_quarantined"):
         return False
-    if not record.get("expected_md5") or not record.get("brand"):
-        return False
-    maker = store.db.execute("SELECT p.manufacturer_id FROM item_catalog c JOIN products p ON p.id=c.product_id WHERE c.item_id=?", (row["id"],)).fetchone()
-    candidates = store.db.execute("""SELECT i.* FROM items i JOIN item_catalog c ON c.item_id=i.id
-        JOIN products p ON p.id=c.product_id WHERE i.id!=? AND i.md5=? AND p.manufacturer_id=?
-        AND i.status IN ('verified','archived') AND i.remote_verified_at IS NOT NULL""", (row["id"], record["expected_md5"], maker[0])).fetchall()
+    source_sha=record.get('expected_sha256')
+    if source_sha:
+        if not isinstance(source_sha,str) or not re.fullmatch('[a-f0-9]{64}',source_sha):return False
+        # A publisher's full SHA-256 directly identifies the verified byte
+        # object. Its catalog associations and manufacturer labels stay intact.
+        candidates=store.db.execute("""SELECT * FROM items WHERE id!=? AND sha256=?
+            AND status IN ('verified','archived') AND remote_verified_at IS NOT NULL""",
+            (row['id'],source_sha)).fetchall()
+    else:
+        if not record.get("expected_md5") or not record.get("brand"):return False
+        maker=store.db.execute("SELECT p.manufacturer_id FROM item_catalog c JOIN products p ON p.id=c.product_id WHERE c.item_id=?",(row['id'],)).fetchone()
+        if not maker:return False
+        candidates = store.db.execute("""SELECT i.* FROM items i JOIN item_catalog c ON c.item_id=i.id
+            JOIN products p ON p.id=c.product_id WHERE i.id!=? AND i.md5=? AND p.manufacturer_id=?
+            AND i.status IN ('verified','archived') AND i.remote_verified_at IS NOT NULL""", (row["id"], record["expected_md5"], maker[0])).fetchall()
     # Existing bytes that satisfy the current publisher constraints carry
     # stronger identity evidence than MD5 alone. Never replace their SHA-256.
-    bound_sha = row['sha256'] if (row['sha256'] and row['md5']==record['expected_md5']
+    bound_sha = row['sha256'] if (row['sha256'] and row['md5']==record.get('expected_md5')
         and (not record.get('expected_sha256') or record['expected_sha256']==row['sha256'])
         and (record.get('expected_size') is None or record['expected_size']==row['size'])) else None
     candidates = [r for r in candidates if publicly_archived(r, namespace, bucket)
         and not (json.loads(r["data"]).get("fields") or {}).get("source_association_quarantined")
         and (not bound_sha or bound_sha==r['sha256'])
+        and (not record.get("expected_md5") or record["expected_md5"]==r["md5"])
         and (not record.get("expected_sha256") or record["expected_sha256"] == r["sha256"])
         and (record.get("expected_size") is None or record["expected_size"] == r["size"])]
     # A published MD5 is a source association, not a replacement for SHA-256.

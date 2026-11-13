@@ -594,7 +594,9 @@ class Store:
           attempted_at TEXT, error TEXT);
         CREATE INDEX IF NOT EXISTS attempts_item ON attempts(item_id,id);
         CREATE INDEX IF NOT EXISTS items_expected_md5 ON items(json_extract(data,'$.expected_md5'));
+        CREATE INDEX IF NOT EXISTS items_expected_sha256 ON items(json_extract(data,'$.expected_sha256'));
         CREATE INDEX IF NOT EXISTS items_md5 ON items(md5) WHERE md5 IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS items_sha256 ON items(sha256) WHERE sha256 IS NOT NULL;
         CREATE TABLE IF NOT EXISTS archive_index_transports(target_url TEXT PRIMARY KEY,index_url TEXT NOT NULL,checked_at TEXT NOT NULL);
         """)
         from catalog import initialize
