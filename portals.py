@@ -437,6 +437,19 @@ def parse_dmm(html,page):
     for link in root.all({'a'}):
         brand=re.fullmatch(r'ブランド「(.+?)」へのリンク',link.attrs.get('title',''))
         if brand:brands.add(brand[1])
+    # Archived product pages use an explicit brand row without link titles.
+    # Require the maker listing link in that row, rather than sidebar brands.
+    for row in root.all({'tr'}):
+        if 'brand' not in row.attrs.get('class','').split():continue
+        cells=[n for n in row.children if isinstance(n,a.Node) and n.tag in {'td','th'}]
+        if len(cells)!=2 or cells[0].text().strip().rstrip('：:')!='ブランド名':continue
+        links=list(cells[1].all({'a'}))
+        if len(links)!=1 or not links[0].text().strip():continue
+        target=a.resolve(page,links[0].attrs.get('href',''))
+        if not target:continue
+        maker=urlsplit(a.original(target))
+        if maker.hostname!=parts.hostname or not re.fullmatch(r'/list/article=maker/id=\d+/?',maker.path):continue
+        brands.add(links[0].text().strip())
     if len(titles)!=1 or len(brands)!=1:return []
     brand=next(iter(brands));results=[]
     for link in root.all({'a'}):

@@ -351,6 +351,23 @@ class KokoronTests(unittest.TestCase):
 
 
 class DmmTests(unittest.TestCase):
+    def test_archived_brand_row_and_trial_link(self):
+        from portals import parse_dmm
+        page='http://web.archive.org/web/20210130151959/https://dlsoft.dmm.co.jp/detail/sai_0042/'
+        html='<h1 id="title" class="item fn">作品</h1><table><tr class="brand"><td class="type">ブランド名：</td><td class="content"><a href="/list/article=maker/id=58685/">LiLinn</a></td></tr></table><a href="https://sample9.dmm.co.jp/digital/pcgame/sai_0042/sai_0042t.zip">体験版ダウンロード</a>'
+        rows=parse_dmm(html,page)
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['brand'],'LiLinn')
+        self.assertEqual(rows[0]['filename'],'sai_0042t.zip')
+        self.assertEqual(rows[0]['mirrors'][0],'http://web.archive.org/web/20210130151959id_/https://sample9.dmm.co.jp/digital/pcgame/sai_0042/sai_0042t.zip')
+        self.assertEqual(parse_dmm(html.replace('/list/article=maker/id=58685/','https://foreign.test/list/article=maker/id=58685/'),page),[])
+        self.assertEqual(parse_dmm(html.replace('ブランド名：','おすすめ：'),page),[])
+
+    def test_conflicting_legacy_and_modern_brands_are_rejected(self):
+        from portals import parse_dmm
+        html='<h1>作品</h1><a title="ブランド「Other」へのリンク">Other</a><table><tr class="brand"><td>ブランド名：</td><td><a href="/list/article=maker/id=58685/">LiLinn</a></td></tr></table><a href="https://sample9.dmm.co.jp/digital/pcgame/sai_0042/sai_0042t.zip">体験版</a>'
+        self.assertEqual(parse_dmm(html,'https://dlsoft.dmm.co.jp/detail/sai_0042/'),[])
+
     def test_explicit_trial_uses_product_brand_not_sidebar(self):
         from portals import parse_dmm
         html='<h1>作品A</h1><a href="/list/?maker=2" title="ブランド「ブランドA」へのリンク">ブランドA</a><a href="/list/?maker=9">別ブランド</a><a href="https://sample9.dmm.co.jp/digital/pcgame/brand_0001/brand_0001t.zip">体験版</a><a href="https://sample9.dmm.co.jp/full.zip">購入</a><a href="https://evil.test/trial.zip">体験版</a>'
