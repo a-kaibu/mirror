@@ -192,7 +192,8 @@ binary files nor catalog state. Interrupted downloads are retried from the page.
 `.github/workflows/pages.yml` downloads the public SQLite backup, generates the
 HTML and JSON, then deploys the Pages artifact. Neither the DB nor generated site
 nor JSON is committed. Enable **GitHub Actions** as the Pages source and run the
-workflow after publishing catalog updates. There is no scheduled job. The public HF SQLite snapshot has also been restored into a fresh directory and
+workflow after publishing catalog updates. An hourly refresh is also configured.
+The public HF SQLite snapshot has also been restored into a fresh directory and
 built with the same standard-library-only command as CI. The repository is
 https://github.com/a-kaibu/mirror and the Pages deployment target is
 https://a-kaibu.github.io/mirror/.
@@ -201,15 +202,16 @@ https://a-kaibu.github.io/mirror/.
 
 ```sh
 uv run python -m unittest discover -s tests -v
-uv run --with playwright playwright install chromium firefox
-uv run --with playwright python tests/browser_e2e.py
+uv run --isolated --locked --with playwright python -m playwright install chromium firefox
+uv run --isolated --locked --with playwright python tests/browser_e2e.py
 ```
 
 Tests cover actual saved LatherCraft trial/patch/movie HTML and Holyseal release
 and patch tables, source merging, aliases, byte deduplication, SQLite migration and
 backup integrity, download resume/failover, corruption rejection, public verification,
 HTML escaping, relative URLs and generation of one JSON file. The opt-in browser
-test retrieves the existing public HF `ABOUT.txt` without uploading test files,
+test retrieves a small, existing public patch with a pinned SHA-256 and size,
+without uploading test files,
 and checks original Japanese filenames and exact downloaded bytes, search,
 390px layouts, project subpaths and no-JS links in Chromium and Firefox.
 

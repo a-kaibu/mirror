@@ -1,7 +1,7 @@
 """Opt-in live browser check: HF bytes, Unicode filename, Pages subpath, no-JS links.
 
-uv run --with playwright python tests/browser_e2e.py
-Install Chromium/Firefox via `python -m playwright install chromium firefox` first.
+uv run --isolated --locked --with playwright python -m playwright install chromium firefox
+uv run --isolated --locked --with playwright python tests/browser_e2e.py
 """
 import hashlib
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -23,18 +23,26 @@ class QuietHandler(SimpleHTTPRequestHandler):
         pass
 
 
+PUBLIC_SHA256 = "5cbb88fc63ccd583edf6ac52eda55d3df00025eced899ae64e584436f1d08b5d"
+PUBLIC_SIZE = 93635
+
+
 def run():
-    url = a.public_url("vn-archive", "mirrors", "ABOUT.txt", True)
+    # Use a real archived patch; the bucket intentionally has no test artifacts.
+    key = "files/" + PUBLIC_SHA256
+    url = a.public_url("vn-archive", "mirrors", key, True)
     with urlopen(url, timeout=30) as response:
-        payload = response.read()
+        payload = response.read(PUBLIC_SIZE + 1)
+    assert len(payload) == PUBLIC_SIZE, "public patch size changed"
+    assert hashlib.sha256(payload).hexdigest() == PUBLIC_SHA256, "public patch checksum changed"
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         store = a.Store(root / "archive")
         sha = hashlib.sha256(payload).hexdigest()
-        filename = "日本語の体験版 (検証用).txt"
+        filename = "日本語の体験版 (検証用).zip"
         store.add({"id": "test", "site": "lathercraft", "brand": "保存動作の検証", "title": "体験版の保存テスト",
             "filename": filename, "release_name": "体験版", "page_url": url, "mirrors": [url]})
-        store.update("test", status="verified", sha256=sha, size=len(payload), remote_key="vn-archive/mirrors/ABOUT.txt", remote_sha256=sha, remote_verified_at=a.now())
+        store.update("test", status="verified", sha256=sha, size=len(payload), remote_key="vn-archive/mirrors/"+key, remote_sha256=sha, remote_verified_at=a.now())
         build_site(store, root / "public" / "project")
         store.db.close()
         server = ThreadingHTTPServer(("127.0.0.1", 0), lambda *args, **kw: QuietHandler(*args, directory=str(root / "public"), **kw))
