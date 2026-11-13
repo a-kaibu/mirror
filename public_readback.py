@@ -2,14 +2,22 @@
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import http.client
+import time
+from urllib.error import HTTPError
 import re
 
 THRESHOLD=64*1024*1024
 CHUNK_SIZE=16*1024*1024
 WORKERS=2
+RETRIES=2
 
 
 class RangeUnsupported(ValueError):
+    pass
+
+
+class RangeIncomplete(ValueError):
     pass
 
 
@@ -21,7 +29,7 @@ def sequential(response):
 
 
 def ranged(url,size,etag,open_response):
-    def fetch(start):
+    def fetch_once(start):
         end=min(size,start+CHUNK_SIZE)-1
         with open_response(url,{'Range':f'bytes={start}-{end}','If-Match':etag,'Accept-Encoding':'identity'}) as response:
             if response.status==200:raise RangeUnsupported('public server ignored Range')
@@ -33,8 +41,19 @@ def ranged(url,size,etag,open_response):
             expected=end-start+1;length=response.headers.get('Content-Length')
             if length is not None and int(length)!=expected:raise ValueError('public range length mismatch')
             chunk=response.read(expected+1)
-            if len(chunk)!=expected:raise ValueError('public range body length mismatch')
+            if len(chunk)<expected:raise RangeIncomplete('public range body truncated')
+            if len(chunk)>expected:raise ValueError('public range body length mismatch')
             return chunk
+    def fetch(start):
+        for attempt in range(RETRIES+1):
+            try:return fetch_once(start)
+            except HTTPError as error:
+                error.close();raise
+            except (TimeoutError,ConnectionResetError,ConnectionAbortedError,http.client.IncompleteRead,http.client.RemoteDisconnected,RangeIncomplete):
+                if attempt>=RETRIES:raise
+                # Keep the same exact range and strong validator. Only a complete
+                # response advances the ordered full-body hash.
+                time.sleep(min(2**attempt,10))
     sha=hashlib.sha256();total=0;offsets=iter(range(0,size,CHUNK_SIZE))
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         pending=deque()

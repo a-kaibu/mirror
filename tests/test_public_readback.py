@@ -68,7 +68,7 @@ class PublicReadbackTests(unittest.TestCase):
         for mutate in cases:
             with self.subTest(mutate=mutate):
                 source=PublicSource(mutate=mutate)
-                with self.assertRaises(ValueError):p.digest('https://public.test/file',source)
+                with patch.object(p,'RETRIES',0),self.assertRaises(ValueError):p.digest('https://public.test/file',source)
                 self.assertTrue(all(r.closed for r in source.replies))
     def test_ignored_ranges_fall_back_to_one_complete_stream(self):
         source=PublicSource(mutate=lambda h,b,s:(h,b,200))
@@ -83,12 +83,53 @@ class PublicReadbackTests(unittest.TestCase):
         source=PublicSource(data=b'small')
         p.digest('https://public.test/file',source);self.assertEqual(source.calls,[None])
     def test_precondition_failure_is_not_silently_retried_as_another_version(self):
+        source=PublicSource();errors=[]
+        def request(url,headers=None):
+            if headers:
+                error=HTTPError(url,412,'changed',{},None);errors.append(error);raise error
+            return source(url)
+        with self.assertRaises(HTTPError):p.digest('https://public.test/file',request)
+        self.assertTrue(all(error.closed for error in errors))
+    def test_mid_body_timeout_retries_only_the_failed_range_without_rehashing_prefix(self):
+        source=PublicSource();failed=[]
+        def request(url,headers=None):
+            reply=source(url,headers)
+            if headers and headers['Range']=='bytes=5-9' and not failed:
+                failed.append(True)
+                def timeout():raise TimeoutError('body stalled')
+                reply.before_read=timeout
+            return reply
+        with patch.object(p.time,'sleep'):
+            self.assertEqual(p.digest('https://public.test/file',request),(hashlib.sha256(source.data).hexdigest(),len(source.data)))
+        ranges=[h['Range'] for h in source.calls if h]
+        self.assertEqual(ranges.count('bytes=0-4'),1)
+        self.assertEqual(ranges.count('bytes=5-9'),2)
+        self.assertTrue(all(r.closed for r in source.replies))
+
+    def test_truncated_range_can_recover_from_the_same_validator(self):
+        first=[]
+        def truncate_once(headers,data,status):
+            if not first:
+                first.append(True);return headers,data[:-1],status
+            return headers,data,status
+        source=PublicSource(mutate=truncate_once)
+        with patch.object(p.time,'sleep'):
+            self.assertEqual(p.digest('https://public.test/file',source),(hashlib.sha256(source.data).hexdigest(),len(source.data)))
+
+    def test_transient_retries_are_bounded(self):
         source=PublicSource()
         def request(url,headers=None):
-            if headers:raise HTTPError(url,412,'changed',{},None)
-            return source(url)
-        with self.assertRaises(HTTPError) as caught:p.digest('https://public.test/file',request)
-        caught.exception.close()
+            reply=source(url,headers)
+            if headers:
+                def timeout():raise TimeoutError('body stalled')
+                reply.before_read=timeout
+            return reply
+        with patch.object(p.time,'sleep'),self.assertRaises(TimeoutError):p.digest('https://public.test/file',request)
+        from collections import Counter
+        attempts=Counter(h['Range'] for h in source.calls if h)
+        self.assertTrue(all(value<=p.RETRIES+1 for value in attempts.values()))
+        self.assertTrue(all(r.closed for r in source.replies))
+
     def test_failed_range_verification_keeps_the_unpublished_local_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=a.Store(tmp)

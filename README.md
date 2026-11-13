@@ -56,8 +56,9 @@ specific source record; IDs appear in the manifest and SQLite.
 Large public read-backs use two bounded byte ranges when the server advertises
 range support and a strong ETag. Each response must match its requested offsets,
 total length and validator; bytes feed the complete SHA-256 in their original
-order. Ignored ranges fall back to a complete streaming read, and verification
-failures retain the local file for retry.
+order. Timed-out or truncated ranges retry independently with the same validator.
+Ignored ranges fall back to a complete streaming read, and verification failures
+retain the local file for retry.
 
 `uv run python publication_watch.py --watch` drains verified local files that
 remain unpublished after a batch interruption. It shares per-file claims with
