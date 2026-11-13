@@ -225,7 +225,7 @@ Run the search tests with `node --test tests/search.test.mjs`.
 
 ### Binary captures from other dates
 
-`python wayback_recovery.py --limit 20` checks failed Holyseal downloads using
+`python wayback_recovery.py --limit 20` checks failed downloads across sources using
 the CDX index for each original binary URL. All returned successful capture dates
 are retained in SQLite, including repeated digests: a broken replay at one date
 must not hide another date. HTML captures and unrelated paths are excluded.
@@ -235,6 +235,15 @@ request failures are recorded separately. Results reaching the 10,000 capture
 limit are marked failed, never reported as an exhaustive search.
 After discovery, `archive-batch --site holyseal --retry-failed` tries alternate
 dates (newest first), checks file contents, publishes and reads back the result.
+
+`python redirect_recovery.py --site d_station --limit 100` checks archived
+redirect responses for failed download CGI URLs with publisher MD5 or SHA-256.
+It records the actual response and Location in SQLite, then adds only observed
+original file URLs to the source record. Multiple captures with identical redirect
+bodies remain separate because their Location headers may differ. The CGI's
+capture date is never reused as proof of a binary capture: run
+`wayback_recovery.py --site d_station` to index the discovered file URLs separately.
+Completed scan receipts let subsequent limited batches advance to other CGI URLs.
 
 ## ErogameScape metadata
 
