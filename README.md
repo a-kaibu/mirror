@@ -538,3 +538,8 @@ variants only after retrieving their explicitly linked MD5 documents. The public
 checksum text, actual replay URL and document SHA-256 are retained with source
 provenance. Audio variants remain separate; rounded sizes are descriptive.
 The normal acquisition workers download and publish these checksum-bound items.
+
+Holysealの製品ページは、取得済みURLを起点に別日時のHTMLも調べられます。
+`uv run python holy_history.py --watch` はCDX索引から内容の異なる保存版を収集待ちに追加し、
+`holy_watch.py --watch` がそのHTMLを解析します。配布欄のない日時だけで取得不能とは判断しません。
+索引照会には上限を設け、成功結果をSQLiteに保存し、失敗したURLは未照会分の後で順番に再試行します。
