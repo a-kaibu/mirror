@@ -27,12 +27,28 @@ class MetadataWatchTests(unittest.TestCase):
             self.assertEqual(w.pending_sources(self.tmp.name,'archive'),[])
     def test_batch_uses_existing_shared_crawler_and_page_bound(self):
         self.add('d_station','archive');self.add('getchu','archive')
-        with patch.object(m,'parallel_crawl') as crawl:
+        with patch.object(m,'parallel_crawl',return_value={'d_station':(5,2),'getchu':(5,1)}) as crawl:
             self.assertEqual(w.run_batch(self.tmp.name,'archive',100),2)
         args=crawl.call_args.args
         self.assertEqual({s['key'] for s in args[1]},{'d_station','getchu'})
         self.assertEqual(args[2:],('archive',100))
         self.assertEqual(crawl.call_args.kwargs['workers'],1)
+
+
+    def test_source_worker_error_propagates_and_preserves_pending_frontier(self):
+        self.add('d_station','archive');self.add('getchu','archive')
+        results={'d_station':(5,2),'getchu':'database is locked'}
+        with patch.object(m,'parallel_crawl',return_value=results):
+            with self.assertRaisesRegex(RuntimeError,'metadata source workers failed: getchu'):
+                w.run_batch(self.tmp.name,'archive',5)
+        self.assertEqual({s['key'] for s in w.pending_sources(self.tmp.name,'archive')},{'d_station','getchu'})
+
+    def test_missing_worker_result_is_not_success(self):
+        self.add('d_station','archive')
+        with patch.object(m,'parallel_crawl',return_value={}):
+            with self.assertRaisesRegex(RuntimeError,'d_station'):
+                w.run_batch(self.tmp.name,'archive',5)
+
 
 
 class MetadataSchedulingTests(unittest.TestCase):

@@ -85,6 +85,7 @@ def seed_platform(store,source,mode):
     if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='external_metadata'").fetchone():return
     from urllib.parse import quote,parse_qs
     rows=store.db.execute("SELECT data FROM external_metadata WHERE provider='erogamescape' AND entity='game' ORDER BY external_id DESC")
+    seeds=[]
     for row in rows:
         game=json.loads(row[0]);url=None
         if key=="getchu" and re.fullmatch(r"[0-9]+",str(game.get("comike", ""))) and int(game["comike"])>0:
@@ -100,9 +101,13 @@ def seed_platform(store,source,mode):
         elif key=="dlsite" and game.get("dlsite_id"):
             category=game.get("dlsite_domain") or ("pro" if str(game["dlsite_id"]).startswith("VJ") else "maniax")
             url=f"https://www.dlsite.com/{quote(str(category),safe='')}/work/=/product_id/{quote(str(game['dlsite_id']),safe='')}.html"
-        if url and allowed(source,url):
-            store.db.execute("INSERT OR IGNORE INTO mirror_frontier(site,url,mode) VALUES(?,?,?)",(key,clean(url),mode))
-    store.db.commit()
+        if url and allowed(source,url):seeds.append((key,clean(url),mode))
+    rows.close()
+    # Keep only compact URLs while parsing. Release the read snapshot before
+    # writing, and avoid holding a writer lock across every game payload.
+    for offset in range(0,len(seeds),256):
+        with store.db:
+            store.db.executemany("INSERT OR IGNORE INTO mirror_frontier(site,url,mode) VALUES(?,?,?)",seeds[offset:offset+256])
 
 
 def availability(fetcher,url,source):

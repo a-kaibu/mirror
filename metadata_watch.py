@@ -33,7 +33,12 @@ def run_batch(root,mode,max_pages,workers=1):
     print('metadata frontier batch',mode,[source['key'] for source in sources],flush=True)
     # All archive sources share the crawler's paced archive fetcher. Platform
     # live sources retain their individual host pacing and source claims.
-    m.parallel_crawl(root,sources,mode,max_pages,workers=workers)
+    results=m.parallel_crawl(root,sources,mode,max_pages,workers=workers)
+    # The shared crawler records worker exceptions as strings. Propagate an
+    # incomplete source pass so the supervisor applies its retry cooldown.
+    failed=[source['key'] for source in sources
+            if not isinstance(results.get(source['key']),tuple)]
+    if failed:raise RuntimeError('metadata source workers failed: '+', '.join(failed))
     return len(sources)
 
 

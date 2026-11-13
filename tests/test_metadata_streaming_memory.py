@@ -56,6 +56,40 @@ class MetadataStreamingMemoryTests(unittest.TestCase):
         self.assertLess(peak,3*1024**2)
         self.assertEqual(self.store.db.execute("SELECT count(*) FROM mirror_frontier WHERE site='dlsite'").fetchone()[0],80)
 
+    def test_platform_seeding_allows_other_writers_while_parsing_metadata(self):
+        from unittest.mock import patch
+        self.metadata();m.initialize(self.store)
+        writer=sqlite3.connect(self.store.root/'index.sqlite3',timeout=.1)
+        original=json.loads;parsed=[]
+        def load(payload):
+            game=original(payload);parsed.append(game['id'])
+            if len(parsed)==2:
+                writer.execute("UPDATE external_metadata SET data=json_set(data,'$.changed',1) WHERE entity='game' AND external_id=1")
+                writer.commit()
+            return game
+        try:
+            with patch.object(m.json,'loads',side_effect=load):
+                m.seed_platform(self.store,m.definitions()['dlsite'],'live')
+            self.assertEqual(len(parsed),80)
+            self.assertEqual(self.store.db.execute("SELECT count(*) FROM mirror_frontier WHERE site='dlsite'").fetchone()[0],80)
+            self.assertEqual(writer.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()[0],0)
+        finally:writer.close()
+
+    def test_platform_seed_writes_are_bounded_and_keep_existing_frontier_state(self):
+        self.metadata();m.initialize(self.store)
+        source=m.definitions()['dlsite'];m.seed_platform(self.store,source,'live')
+        prior=self.store.db.execute("SELECT url FROM mirror_frontier WHERE site='dlsite' ORDER BY url LIMIT 1").fetchone()[0]
+        self.store.db.execute("UPDATE mirror_frontier SET status='captured' WHERE site='dlsite' AND url=?",(prior,))
+        for number in range(81,302):
+            self.store.db.execute('INSERT INTO external_metadata VALUES(?,?,?,?)',('erogamescape','game',number,json.dumps({'id':number,'dlsite_id':f'VJ01{number:06d}'})))
+        self.store.db.commit();statements=[];self.store.db.set_trace_callback(statements.append)
+        try:m.seed_platform(self.store,source,'live')
+        finally:self.store.db.set_trace_callback(None)
+        self.assertEqual(sum(s.startswith('BEGIN') for s in statements),2)
+        self.assertEqual(sum(s=='COMMIT' for s in statements),2)
+        self.assertEqual(self.store.db.execute("SELECT count(*) FROM mirror_frontier WHERE site='dlsite'").fetchone()[0],301)
+        self.assertEqual(self.store.db.execute("SELECT status FROM mirror_frontier WHERE site='dlsite' AND url=?",(prior,)).fetchone()[0],'captured')
+
     def test_official_seeds_are_lazy_keep_order_and_release_read_cursor(self):
         self.metadata();tracemalloc.start()
         try:
