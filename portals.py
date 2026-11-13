@@ -508,7 +508,11 @@ def parse_getchu(html, page):
     if parts.hostname not in {"www.getchu.com","getchu.com"} or not (parts.path.endswith("/soft.phtml") or re.fullmatch(r"/item/\d+/?",parts.path)):
         return []
     root=a.DOM(html).root
-    titles=[re.sub(r"\s+\[同人\]$", "", n.text().strip()) for n in root.all({"h1"}) if n.attrs.get("id")=="soft-title"]
+    titles=[]
+    for node in root.all({'h1','h2'}):
+        if node.attrs.get('id')!='soft-title':continue
+        title=re.sub(r'\s*[（(]このタイトルの関連商品[)）]\s*$','',node.text()).strip()
+        titles.append(re.sub(r"\s+\[同人\]$", "",title))
     og=[n.attrs.get("content","") for n in root.all({"meta"}) if n.attrs.get("property")=="og:title"]
     if len(og)!=1:return []
     brand=re.fullmatch(re.escape(titles[0])+r"\s*[(（](.+)[)）]",og[0]) if len(titles)==1 else None
@@ -533,7 +537,6 @@ def parse_getchu(html, page):
         if binary.hostname!="trial.getchu.com" or not re.search(r"\.(mp4|wmv|mpg|mpeg|webm)$",binary.path,re.I):continue
         if not product_id.isdigit() or (product_id not in binary.path.split('/') and Path(binary.path).stem!=product_id):continue
         label=parent.attrs.get("getchutitle", "")
-        if not label.startswith(titles[0]):continue
         filename=unquote(Path(binary.path).name)
         ident=hashlib.sha256(("getchu\n"+a.original(page)+"\n"+binary.path).encode()).hexdigest()
         stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
@@ -555,10 +558,12 @@ def parse_getchu(html, page):
         # compromised filenames; a labelled button alone cannot identify a build.
         if filename.casefold() in restricted:continue
         labels=[node.text()]+[image.attrs.get('alt','') for image in node.all({'img'})]
-        trial_button=any(Path(urlsplit(a.original(image.attrs.get('src',''))).path).name=='demo_t.gif' for image in node.all({'img'}))
+        buttons={Path(urlsplit(a.original(image.attrs.get('src',''))).path).name for image in node.all({'img'})}
+        trial_button='demo_t.gif' in buttons;movie_button='demo_m.gif' in buttons
         label=' '.join(labels).strip()
         if trial_button or '体験版' in label:release='体験版'
         elif '修正' in label or 'パッチ' in label:release='修正パッチ'
+        elif movie_button or 'ムービー' in label or '動画' in label:release='ムービー'
         else:continue
         ident=hashlib.sha256(('getchu\n'+a.original(page)+'\n'+binary.path).encode()).hexdigest()
         stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
@@ -566,7 +571,7 @@ def parse_getchu(html, page):
             'title':titles[0],'brand':brand_name,'release_name':release,'filename':filename,
             'mirrors':([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
             'expected_md5':None,'expected_size':None,'size_text':None,'published_at':None,
-            'fields':{'published_media_label':label,'published_button':'demo_t.gif' if trial_button else None,'getchu_product_url':a.original(page)}}
+            'fields':{'published_media_label':label,'published_button':'demo_t.gif' if trial_button else ('demo_m.gif' if movie_button else None),'getchu_product_url':a.original(page)}}
     return list(result.values())
 
 

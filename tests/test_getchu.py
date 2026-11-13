@@ -8,6 +8,26 @@ from portals import parse_getchu
 from test_archiver import Fetch,Response
 
 class GetchuTests(unittest.TestCase):
+    def test_related_product_link_is_not_part_of_legacy_title(self):
+        html=Path("tests/fixtures/getchu-legacy-buttons.html").read_text()
+        rows=parse_getchu(html,"http://web.archive.org/web/20180815174717/http://www.getchu.com:80/soft.phtml?id=764035")
+        self.assertEqual(len(rows),2)
+        self.assertEqual({r["title"] for r in rows},{"堕天の記憶 〜業〜 初回限定版"})
+        self.assertEqual({r["brand"] for r in rows},{"Black Rabbit"})
+        files={r["filename"]:r for r in rows}
+        self.assertEqual(files["daten_kioku_gou_mv.zip"]["release_name"],"ムービー")
+        self.assertEqual(files["daten_kioku_gou_trial.zip"]["release_name"],"体験版")
+        self.assertEqual(files["daten_kioku_gou_mv.zip"]["fields"]["published_button"],"demo_m.gif")
+
+    def test_generic_video_label_still_requires_exact_product_id(self):
+        html=Path("tests/fixtures/getchu-generic-movie.html").read_text()
+        rows=parse_getchu(html,"https://www.getchu.com/item/995624/")
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]["filename"],"go_demo.mp4")
+        self.assertEqual(rows[0]["brand"],"わるきゅ〜れ")
+        self.assertEqual(rows[0]["fields"]["published_media_label"],"デモムービー")
+        self.assertEqual(parse_getchu(html.replace('/D090/995624/','/D090/999999/'),"https://www.getchu.com/item/995624/"),[])
+
     def test_modern_product_metadata_and_video_agree(self):
         html=Path("tests/fixtures/getchu-modern-product.html").read_text()
         rows=parse_getchu(html,"https://www.getchu.com/item/1037604/?gc=gc")
