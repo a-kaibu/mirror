@@ -757,3 +757,49 @@ class TsundereCircleTests(unittest.TestCase):
         self.assertEqual(row['published_at'],'2015-09-01')
         self.assertEqual(row['mirrors'][0],'https://web.archive.org/web/20250621074011id_/https://mirror.tsundere.ne.jp/download/area-zero/c5175a48a7cf2b7b1d0846adf05d288c/MBAN_M_update_Ver107a.zip')
         self.assertEqual(parse_tsundere(html.replace('サークル名','不明な項目'),page),[])
+
+
+class MultiInsideJnodeTests(unittest.TestCase):
+    page='https://web.archive.org/web/20030402150202/http://www.pachi.ac/~multi/download/index/jnode.html'
+    def group(self,title,brand,filename,digest,release='体験版'):
+        return ('<a name="20030401">[2003/04/01公開]</a><br>◇ <b>『'+title+'』</b> /(c) <a href="https://publisher.test/">'+brand+'</a> '+release+'：<br>'
+                '・<b>'+filename+'</b> ['+'ZIP,26MB] → <a href="http://demomirror.pachi.ac:8000/'+brand+'/'+filename+'">ミラー</a><br>'
+                'MD5(<b>'+filename+'</b>) : <b>'+digest+'</b><hr>')
+
+    def test_manufacturers_and_reused_filenames_stay_separate(self):
+        from portals import parse_multi_inside
+        html='<div>'+self.group('作品A','ブランドA','trial.zip','a'*32)+self.group('作品B','ブランドB','trial.zip','b'*32)+'</div>'
+        rows=parse_multi_inside(html,self.page)
+        self.assertEqual([(r['title'],r['brand'],r['expected_md5']) for r in rows],[('作品A','ブランドA','a'*32),('作品B','ブランドB','b'*32)])
+        self.assertNotEqual(rows[0]['id'],rows[1]['id'])
+        self.assertEqual(rows[0]['published_at'],'2003-04-01')
+        self.assertEqual(rows[0]['size_text'],'26MB')
+        self.assertIsNone(rows[0]['expected_size'])
+        self.assertTrue(rows[0]['mirrors'][0].startswith('https://web.archive.org/web/20030402150202id_/'))
+
+    def test_missing_credit_does_not_borrow_another_product_brand(self):
+        from portals import parse_multi_inside
+        bad=self.group('作品B','ブランドB','trial-b.zip','b'*32).replace('/(c)','')
+        html='<div>'+self.group('作品A','ブランドA','trial-a.zip','a'*32)+bad+'</div>'
+        self.assertEqual([r['filename'] for r in parse_multi_inside(html,self.page)],['trial-a.zip'])
+
+    def test_filename_specific_hashes_apply_to_trial_and_movie(self):
+        from portals import parse_multi_inside
+        group=self.group('作品A','ブランドA','trial.zip','a'*32,'デモ/体験版').replace('<hr>','')
+        group=group.replace('trial.zip</b> [','trial.zip</b> (体験版) [',1)
+        group+='・<b>movie.zip</b> (デモ) [ZIP,29MB] → <a href="http://demomirror.pachi.ac:8000/movie.zip">ミラー</a><br>MD5(<b>movie.zip</b>) : <b>'+('b'*32)+'</b><hr>'
+        rows=parse_multi_inside('<div>'+group+'</div>',self.page)
+        self.assertEqual([(r['filename'],r['expected_md5'],r['release_name']) for r in rows],[('trial.zip','a'*32,'体験版'),('movie.zip','b'*32,'デモ')])
+
+    def test_conflicting_hash_rejects_only_the_affected_file(self):
+        from portals import parse_multi_inside
+        bad=self.group('作品A','ブランドA','trial.zip','a'*32).replace('<hr>','MD5(trial.zip) : '+('c'*32)+'<hr>')
+        html='<div>'+bad+self.group('作品B','ブランドB','b.zip','b'*32)+'</div>'
+        self.assertEqual([r['filename'] for r in parse_multi_inside(html,self.page)],['b.zip'])
+
+    def test_earliest_plain_text_dates_are_also_scoped_to_each_product(self):
+        from portals import parse_multi_inside
+        html='<div>'+self.group('作品A','ブランドA','a.zip','a'*32)+self.group('作品B','ブランドB','b.zip','b'*32)+'</div>'
+        html=html.replace('<a name="20030401">[2003/04/01公開]</a>','[2003/04/01公開]')
+        rows=parse_multi_inside(html,self.page)
+        self.assertEqual([(r['brand'],r['filename'],r['expected_md5']) for r in rows],[('ブランドA','a.zip','a'*32),('ブランドB','b.zip','b'*32)])

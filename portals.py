@@ -94,6 +94,63 @@ def _parse_multi_inside_legacy(root,page):
 
 
 
+
+def _parse_multi_inside_jnode(root,page):
+    groups=[]
+    for div in root.all({'div'}):
+        current=None
+        for child in div.children:
+            date_text=child if isinstance(child,str) else child.text() if child.tag=='a' and child.attrs.get('name') else ''
+            date=re.fullmatch(r'\[(\d{4})/(\d{2})/(\d{2})公開\]',date_text.strip())
+            if date:
+                current={'date':'-'.join(date.groups()),'children':[child]};groups.append(current)
+            elif isinstance(child,a.Node) and child.tag=='hr':current=None
+            elif current is not None:current['children'].append(child)
+    results={}
+    for group in groups:
+        block=a.Node();block.children=group['children']
+        titles=[n.text().strip()[1:-1] for n in block.all({'b'}) if re.fullmatch(r'『.+』',n.text().strip())]
+        publishers=[];prefix=''
+        for child in block.children:
+            if isinstance(child,a.Node) and child.tag=='a' and child.attrs.get('href') and re.search(r'/\s*\(c\)\s*$',prefix,re.I):publishers.append(child)
+            prefix+=child.text() if isinstance(child,a.Node) else child
+        if len(titles)!=1 or len(publishers)!=1 or not publishers[0].text().strip():continue
+        title=titles[0];publisher=publishers[0];brand=publisher.text().strip()
+        following=block.children[block.children.index(publisher)+1:];label=[]
+        for node in following:
+            if isinstance(node,a.Node) and node.tag=='br':break
+            label.append(node.text() if isinstance(node,a.Node) else node)
+        material=re.fullmatch(r'\s*([^：:]+)\s*[：:]\s*',''.join(label))
+        if not material:continue
+        hashes={}
+        for match in re.finditer(r'MD5\s*\(\s*([^()]+?)\s*\)\s*[:=]\s*([a-fA-F0-9]{32})(?![a-fA-F0-9])',block.text()):
+            hashes.setdefault(match[1].strip(),set()).add(match[2].lower())
+        filename=None;detail=[]
+        for node in block.children:
+            name=node.text().strip() if isinstance(node,a.Node) and node.tag=='b' else ''
+            ext=a.EXT.search(name)
+            if ext and ext.end()==len(name) and '/' not in name:
+                filename=name;detail=[];continue
+            if isinstance(node,a.Node) and node.tag=='a':
+                target=a.resolve(page,node.attrs.get('href',''))
+                if target and filename and a.filename_from_url(target)==filename:
+                    values=hashes.get(filename,set())
+                    if len(values)>1:continue
+                    text=' '.join(detail);size=re.search(r'\[[^\],]+,\s*([\d.]+\s*[KMGT]B)\s*\]',text,re.I)
+                    subtype=re.search(r'\(([^)]+)\)',text)
+                    release=subtype[1].strip() if subtype else material[1].strip()
+                    raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+                    ident=hashlib.sha256(('multi_inside_jnode\n'+a.original(page)+'\n'+brand+'\n'+title+'\n'+group['date']+'\n'+filename).encode()).hexdigest()
+                    record=results.setdefault(ident,{'id':ident,'site':'multi_inside','page_url':page,'original_page_url':a.original(page),
+                        'title':title,'brand':brand,'release_name':release,'filename':filename,'mirrors':[],
+                        'expected_md5':next(iter(values),None),'expected_size':None,'size_text':size[1] if size else None,
+                        'published_at':group['date'],'fields':{'parser':'multi_inside_jnode','publisher_credit':publisher.text(),'size_is_rounded':True}})
+                    record['mirrors']+=([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw]
+            detail.append(node.text() if isinstance(node,a.Node) else node)
+    for record in results.values():record['mirrors']=list(dict.fromkeys(record['mirrors']))
+    return list(results.values())
+
+
 def _parse_multi_inside_catalogue(root,page):
     result={}
     for block in root.all({'div'}):
@@ -139,6 +196,7 @@ def parse_multi_inside(html,page):
     root=a.DOM(html).root
     if parts.path in {'/~multi/mirror.shtml','/~multi/demo.mirror.shtml'}:return _parse_multi_inside_catalogue(root,page)
     if not parts.path.startswith("/~multi/download/index/"):return []
+    if parts.path=='/~multi/download/index/jnode.html':return _parse_multi_inside_jnode(root,page)
     def classified(node,name):return name in node.attrs.get("class", "").split()
     brands=[n for n in root.all({"div"}) if classified(n,"brand")]
     titles=[n for n in root.all({"div"}) if classified(n,"title")]
