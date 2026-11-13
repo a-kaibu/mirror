@@ -956,13 +956,29 @@ def healthy_source_mirrors(store,site,mirrors):
     return list(dict.fromkeys(result))
 
 
+def transfer_rows(store, site, ident):
+    if ident is None:
+        return store.rows(site)
+    # A batch already selected one source observation. Do not materialize the
+    # entire source catalogue again or keep its payloads alive during transfer.
+    query="SELECT i.* FROM items i JOIN item_catalog c ON c.item_id=i.id WHERE i.id=?"
+    params=(ident,)
+    if site!="both":
+        query+=" AND i.site=?"
+        params+=(site,)
+    cursor=store.db.execute(query,params)
+    try:
+        row=cursor.fetchone()
+        return [row] if row is not None else []
+    finally:cursor.close()
+
+
 def download(store, fetcher, site="both", limit=None, ident=None, export=True):
     failures = processed = 0
-    if ident is not None and not any(row["id"] == ident for row in store.rows(site)):
+    rows=transfer_rows(store,site,ident)
+    if ident is not None and not rows:
         raise ValueError("source record ID not found for selected site: " + ident)
-    for row in store.rows(site):
-        if ident is not None and row["id"] != ident:
-            continue
+    for row in rows:
         record = json.loads(row["data"])
         if row["status"] == "archived" and row["sha256"] and row["remote_sha256"] == row["sha256"] and row["remote_verified_at"]:
             continue
@@ -1119,9 +1135,7 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
     config = TransferConfig(multipart_threshold=256 * 1024**2, multipart_chunksize=256 * 1024**2, max_concurrency=2)
     count = 0
     checked = {}
-    for row in store.rows(site):
-        if ident is not None and row["id"] != ident:
-            continue
+    for row in transfer_rows(store,site,ident):
         if row["status"] not in {"verified", "archived"}:
             continue
         expected_key = f"{namespace}/{bucket}/files/{row['sha256']}"
