@@ -534,3 +534,25 @@ class EarlyMultiInsideCatalogueTests(unittest.TestCase):
         for url in ['http://kokoron.madoka.org/mirror/r/ryoujokukangofugakuin/rkgr_vista.iso','http://kokoron.madoka.org/mirror/f/futaane/FUTAANE_loveero.msi','http://www.pachi.ac/~multi/download/200206/kon_2048.asf']:
             self.assertIsNotNone(a.EXT.search(url))
         self.assertIsNone(a.EXT.search('http://mirror.test/notes.iso.html'))
+
+
+class DlsiteMovieTests(unittest.TestCase):
+    def test_explicit_product_movie_and_rounded_size(self):
+        from portals import parse_dlsite
+        html='<h1>Game</h1><table><tr><th>ブランド名</th><td>Brand</td></tr></table><a href="//trial.dlsite.com/professional/VJ004000/VJ003549_trial_mov.zip">ムービーダウンロード (28.54MB)</a>'
+        page='https://www.dlsite.com/pro/work/=/product_id/VJ003549.html'
+        rows=parse_dlsite(html,page)
+        self.assertEqual(len(rows),1);self.assertEqual(rows[0]['release_name'],'ムービー')
+        self.assertEqual(rows[0]['filename'],'VJ003549_trial_mov.zip')
+        self.assertEqual(rows[0]['size_text'],'28.54MB');self.assertIsNone(rows[0]['expected_size'])
+        self.assertEqual(rows[0]['mirrors'],['https://trial.dlsite.com/professional/VJ004000/VJ003549_trial_mov.zip'])
+        self.assertEqual(parse_dlsite(html.replace('VJ003549_trial','VJ999999_trial'),page),[])
+        self.assertEqual(parse_dlsite(html.replace('trial.dlsite.com','other.test'),page),[])
+        self.assertEqual(parse_dlsite(html.replace('ムービーダウンロード','関連商品'),page),[])
+
+    def test_archived_movie_preserves_observed_capture(self):
+        from portals import parse_dlsite
+        html='<h1>Game</h1><table><tr><th>ブランド名</th><td>Brand</td></tr></table><a href="http://trial.dlsite.com/professional/VJ004000/VJ003549_trial_mov.zip">ムービーダウンロード</a>'
+        page='http://web.archive.org/web/20150102030405/http://www.dlsite.com/pro/work/=/product_id/VJ003549.html'
+        row=parse_dlsite(html,page)[0]
+        self.assertEqual(row['mirrors'][0],'http://web.archive.org/web/20150102030405id_/http://trial.dlsite.com/professional/VJ004000/VJ003549_trial_mov.zip')

@@ -294,17 +294,21 @@ def parse_dlsite(html,page):
     if not brand or not titles:return []
     results=[]
     for link in root.all({'a'}):
-        if '体験版' not in link.text():continue
+        label=link.text()
+        release='体験版' if '体験版' in label else ('ムービー' if re.search(r'ムービー\s*ダウンロード',label) else None)
+        if release is None:continue
         target=a.resolve(page,link.attrs.get('href',''))
         if not target:continue
         raw=a.original(target)
         if urlsplit(raw).hostname!='trial.dlsite.com' or not a.EXT.search(urlsplit(raw).path):continue
         filename=unquote(Path(urlsplit(raw).path).name);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        if release=='ムービー' and not filename.upper().startswith(product[1].upper()+'_'):continue
+        size=re.search(r'\(([0-9.,]+\s*(?:[KMGT]i?B))\)',label,re.I)
         ident=hashlib.sha256(('dlsite\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
         results.append({'id':ident,'site':'dlsite','page_url':page,'original_page_url':a.original(page),
-            'title':titles[0],'brand':brand,'release_name':'体験版','filename':filename,
+            'title':titles[0],'brand':brand,'release_name':release,'filename':filename,
             'mirrors':([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
-            'expected_md5':None,'expected_size':None,'size_text':None,'published_at':None,
+            'expected_md5':None,'expected_size':None,'size_text':size[1] if size else None,'published_at':None,
             'fields':{'dlsite_product_id':product[1],'published_link':target}})
     return list({r['id']:r for r in results}.values())
 
