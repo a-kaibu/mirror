@@ -323,7 +323,7 @@ def parse_nekoneko(html,page):
 def parse_tsundere(html,page):
     if urlsplit(a.original(page)).hostname!="mirror.tsundere.ne.jp":return []
     root=a.DOM(html).root;fields=a.labels(root)
-    label=fields.get("タイトル", "");brand=fields.get("ブランド")
+    label=fields.get("タイトル", "");brand=fields.get("ブランド") or fields.get("サークル名")
     identity=re.split(r"\s{2,}|　",label,maxsplit=1)
     if not brand or len(identity)!=2:return []
     title,release=(v.strip() for v in identity)

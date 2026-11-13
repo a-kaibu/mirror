@@ -737,3 +737,23 @@ class LapistanPatchListTests(unittest.TestCase):
         self.assertEqual(row['release_name'],'体験版')
         self.assertEqual(parse_lapistan(html.replace('当サイトは 株式会社エクスペリエンス','当サイトは 他社'),page),[])
         self.assertEqual(parse_lapistan(html,page.replace('lapistan.jp','other.test')),[])
+
+
+class TsundereCircleTests(unittest.TestCase):
+    def test_circle_patch_retains_title_checksum_exact_size_and_replay(self):
+        from portals import parse_tsundere
+        html=('<table><tr><th>タイトル</th><td>マジカルバトルアリーナNEXT・魔法少女空閃姫　アップデートVer.1.07a</td></tr>'
+              '<tr><th>サークル名</th><td>領域ZERO</td></tr><tr><th>当サイト公開日</th><td>2015-09-01</td></tr>'
+              '<tr><th>ファイルサイズ</th><td>226.06MB(237,037,873Byte)</td></tr>'
+              '<tr><th>md5/sha1</th><td>c5175a48a7cf2b7b1d0846adf05d288c / 44d993392e47d03bfd9037d5bbeb23e803327786</td></tr>'
+              '<tr><th>ダウンロード</th><td><span class="downloadlink"><a href="/download/area-zero/c5175a48a7cf2b7b1d0846adf05d288c/MBAN_M_update_Ver107a.zip">MBAN_M_update_Ver107a.zip</a></span></td></tr></table>')
+        page='https://web.archive.org/web/20250621074011/https://mirror.tsundere.ne.jp/mirrorinfo/dojin/consumer/area-zero/MBAN_M-patchv107a.html'
+        row=parse_tsundere(html,page)[0]
+        self.assertEqual(row['brand'],'領域ZERO')
+        self.assertEqual(row['title'],'マジカルバトルアリーナNEXT・魔法少女空閃姫')
+        self.assertEqual(row['release_name'],'アップデートVer.1.07a')
+        self.assertEqual(row['expected_md5'],'c5175a48a7cf2b7b1d0846adf05d288c')
+        self.assertEqual(row['expected_size'],237037873)
+        self.assertEqual(row['published_at'],'2015-09-01')
+        self.assertEqual(row['mirrors'][0],'https://web.archive.org/web/20250621074011id_/https://mirror.tsundere.ne.jp/download/area-zero/c5175a48a7cf2b7b1d0846adf05d288c/MBAN_M_update_Ver107a.zip')
+        self.assertEqual(parse_tsundere(html.replace('サークル名','不明な項目'),page),[])
