@@ -130,6 +130,12 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
             names={a.filename_from_url(u) for _,u in node_binaries}
             paths={urlsplit(a.original(u)).path for _,u in node_binaries}
             if len(text)>6000:break
+            if not scoped and node.tag=="section":
+                headings=[child.text() for child in node.children if isinstance(child,a.Node) and child.tag in {"h1","h2"}]
+                if headings and not any(product_title_present(game,title) for title in headings):
+                    # A shared support menu may name the requested game above
+                    # another product's section. Never climb past that boundary.
+                    break
             if len(names)>1 or (not scoped and len(paths)>1):
                 if release_info({'title':context+' '+filename,'filename':filename})[0]=='other':
                     group=group_heading(node,link,page)

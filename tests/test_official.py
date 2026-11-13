@@ -376,3 +376,9 @@ class SharedSupportProductIdentityTests(unittest.TestCase):
     def test_title_shortening_or_translation_requires_separate_evidence(self):
         for text in ['Short Title','ムーン・ゴースト']:
             self.assertFalse(o.product_title_present({'gamename':'Moon Ghost Full Title'},text))
+
+    def test_shared_navigation_cannot_assign_another_product_patch(self):
+        html='<article><nav>anemoi</nav><section><h2>Other Game</h2><div><p><a href="/other/update.zip">修正パッチ</a></p></div></section></article>'
+        rows,unknown=o.parse(html,PAGE,GAME,BRAND,scoped=False)
+        self.assertEqual(rows,[])
+        self.assertEqual(unknown,['https://key.visualarts.co.jp/other/update.zip'])
