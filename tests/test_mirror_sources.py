@@ -144,6 +144,17 @@ class MimimaidTests(unittest.TestCase):
 
 
 class NekonekoTests(unittest.TestCase):
+    def test_series_heading_preserves_individual_episode_titles(self):
+        from portals import parse_nekoneko
+        rows=parse_nekoneko(Path("tests/fixtures/nekoneko-skyfish.html").read_text(),"http://web.archive.org/web/20241107213402/http://nekoneko-web.multi-band.net/nekoneko-web/mirror/sky-fish/sky-fish_dl-menu.html")
+        self.assertEqual(len(rows),3)
+        self.assertEqual(rows[0]["title"],"星空TeaParty〜第三話「さよなら」と少女は言った〜")
+        self.assertEqual(rows[2]["title"],"星空TeaParty〜第一話「冒険」始めました〜")
+        self.assertEqual(rows[0]["filename"],"hosisoraTP03.zip")
+        self.assertEqual(rows[0]["expected_md5"],"c9ad656a090a8d490cbe7d9ca14be393")
+        self.assertTrue(all(r["release_name"]=="Windows用配信版" for r in rows))
+        self.assertTrue(all(r["expected_size"] is None for r in rows))
+
     def test_unquoted_product_keeps_each_file_checksum(self):
         from portals import parse_nekoneko
         html=Path("tests/fixtures/nekoneko-zweitrial.html").read_text()

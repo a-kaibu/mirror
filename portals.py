@@ -173,6 +173,8 @@ def parse_nekoneko(html,page):
     for node in root.all({"font","a"}):
         if node.tag=="font" and node.attrs.get("color", "").lower()=="#000000":
             heading=re.fullmatch(r"\s*(?:□\s*)?『(.+?)』\s*",node.text())
+            if not heading:
+                heading=re.fullmatch(r"\s*[^『』\n]+『([^『』]+)』\s*",node.text())
             if heading:title=heading[1]
             elif node.attrs.get("size")=="3":
                 heading=re.fullmatch(r"\s*□\s+(.+?)\s*",node.text())
@@ -190,11 +192,14 @@ def parse_nekoneko(html,page):
         if len(binaries)!=1:continue
         text=context.text();size=re.search(r"『サイズ[：:]\s*([\d.]+\s*[KMG]B)』",text)
         if not size:continue
-        release=text[:size.start()].strip()
+        release=text[:size.start()].strip();file_title=title
+        episode=re.fullmatch(r"『([^『』]+)』\s*(.+)",release)
+        if episode:
+            file_title=episode[1];release=episode[2]
         raw=a.original(target);filename=unquote(Path(urlsplit(raw).path).name);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
         ident=hashlib.sha256(("nekoneko\n"+a.original(page)+"\n"+filename).encode()).hexdigest()
         results.append({"id":ident,"site":"nekoneko","page_url":page,"original_page_url":a.original(page),
-            "title":title,"brand":brand,"release_name":release,"filename":filename,
+            "title":file_title,"brand":brand,"release_name":release,"filename":filename,
             "mirrors":([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
             "expected_md5":digest[1].lower(),"expected_size":None,"size_text":size[1],"published_at":None,
             "fields":{"parser":"nekoneko","size_is_rounded":True}})
