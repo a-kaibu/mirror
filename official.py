@@ -148,13 +148,16 @@ def seeds(store):
         yield game,brand,a.canonical(seed)
 
 
-def scan(store, fetcher, game, brand, seed, max_pages=20):
-    queue=deque([(seed,0)]);seen=set();found=0;failures=[];unclassified=[]
-    hints={seed: {"trial"}} if game.get("trial_url") and a.canonical(game["trial_url"])==seed else {}
-    while queue and len(seen)<max_pages:
+def scan(store, fetcher, game, brand, seed, max_pages=20, continuation=None):
+    if continuation and continuation.get('seed')!=seed:raise ValueError('official continuation seed changed')
+    queue=deque((entry['url'],entry['depth']) for entry in continuation['pending']) if continuation else deque([(seed,0)])
+    seen=set(continuation.get('seen',[])) if continuation else set()
+    found=processed=0;failures=list(continuation.get('failures',[])) if continuation else [];unclassified=[]
+    hints={entry['url']:set(entry.get('hints',[])) for entry in continuation['pending']} if continuation else ({seed:{'trial'}} if game.get('trial_url') and a.canonical(game['trial_url'])==seed else {})
+    while queue and processed<max_pages:
         url,depth=queue.popleft()
         if url in seen:continue
-        seen.add(url)
+        seen.add(url);processed+=1
         rel="html/"+hashlib.sha256(url.encode()).hexdigest()+".html"
         try:
             with fetcher.open(url) as response:
@@ -190,11 +193,17 @@ def scan(store, fetcher, game, brand, seed, max_pages=20):
         except (OSError,ValueError,http.client.HTTPException) as error:
             failures.append({"url":url,"error":str(error)})
             store.db.execute("INSERT OR REPLACE INTO pages(url,site,path,fetched_at,status,error,response_url) VALUES(?,?,?,?,?,?,?)",(url,"official",rel if (store.root/rel).exists() else None,a.now(),"failed",str(error),None));store.db.commit()
-    if queue:failures.append({"error":"page bound reached; needs continuation","remaining":len(queue)})
+    pending={}
+    for url,depth in queue:
+        if url not in seen and (url not in pending or depth<pending[url]['depth']):
+            pending[url]={'url':url,'depth':depth,'hints':sorted(hints.get(url,set()))}
+    if pending:failures.append({'error':'page bound reached; needs continuation','remaining':len(pending),
+        'seed':seed,'pending':list(pending.values()),'seen':sorted(seen)})
     if unclassified:failures.append({"error":"unclassified binary links need review","urls":list(dict.fromkeys(unclassified))})
-    status="review" if failures else ("found" if found else "no_direct_links")
-    store.db.execute("INSERT OR REPLACE INTO official_scans VALUES(?,?,?,?,?,?)",(game["id"],seed,status,found,json.dumps(failures,ensure_ascii=False) if failures else None,a.now()));store.db.commit()
-    print("official",game["id"],brand["brandname"],game["gamename"],status,found,flush=True)
+    total_found=found+(continuation.get('found',0) if continuation else 0)
+    status="review" if failures else ("found" if total_found else "no_direct_links")
+    store.db.execute("INSERT OR REPLACE INTO official_scans VALUES(?,?,?,?,?,?)",(game["id"],seed,status,total_found,json.dumps(failures,ensure_ascii=False) if failures else None,a.now()));store.db.commit()
+    print("official",game["id"],brand["brandname"],game["gamename"],status,total_found,flush=True)
     return found
 
 
