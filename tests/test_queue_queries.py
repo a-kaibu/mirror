@@ -60,3 +60,33 @@ class QueueQueryTests(unittest.TestCase):
         self.assertTrue({'items_site_status','items_status'}<=indexes)
         self.store.db.close();self.store=a.Store(self.tmp.name)
         self.assertEqual([tuple(r) for r in self.store.db.execute('SELECT * FROM items ORDER BY id')],before)
+
+    def test_streaming_rows_preserve_order_with_bounded_python_memory(self):
+        import json
+        import tracemalloc
+        base=a.parse_detail(HTML,'https://example.test/items/large','lathercraft')[0]
+        base['fields']['large_fixture']='x'*65536
+        for index in range(120):
+            record=dict(base,id='large-'+str(index),site='large')
+            self.store.add(record)
+        tracemalloc.start()
+        try:
+            streamed=[row['id'] for row in self.store.iter_rows('large')]
+            stream_peak=tracemalloc.get_traced_memory()[1]
+            tracemalloc.reset_peak()
+            materialized=self.store.rows('large')
+            list_peak=tracemalloc.get_traced_memory()[1]
+            self.assertEqual(streamed,[row['id'] for row in materialized])
+            self.assertLess(stream_peak,list_peak/4)
+        finally:tracemalloc.stop()
+
+    def test_closed_stream_releases_sqlite_snapshot(self):
+        import sqlite3
+        other=sqlite3.connect(self.store.root/'index.sqlite3',timeout=.1)
+        try:
+            stream=self.store.iter_rows('official');next(stream)
+            other.execute("UPDATE items SET error='fixture' WHERE site='official'");other.commit()
+            self.assertEqual(other.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()[0],1)
+            stream.close()
+            self.assertEqual(other.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()[0],0)
+        finally:other.close()

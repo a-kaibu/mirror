@@ -100,7 +100,7 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
     # Rank checksum-linked live mirrors ahead of dead historical hosts. This
     # only schedules work; matching_mirrors still enforces manufacturer and MD5.
     live_sizes = {}
-    for source in store.rows("lathercraft"):
+    for source in store.iter_rows("lathercraft"):
         data = json.loads(source["data"])
         if data.get("expected_md5") and any("storage1.lathercraft.net" == urlsplit(u).hostname for u in data["mirrors"]):
             live_sizes[data["expected_md5"]] = data.get("expected_size")
@@ -113,10 +113,12 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
             scheduling_size(record,live_sizes), row["id"])
     visited = set()
     while True:
-        candidates = [r for r in store.rows(site) if r["id"] not in visited and int.from_bytes(hashlib.sha256(r["id"].encode()).digest(), "big") % shards == shard_index and (retry_failed or r["status"] != "failed")]
-        if not candidates:
+        # Exhaust the cursor before claiming/mutating rows or starting network
+        # I/O. Retain only the best candidate rather than every JSON payload.
+        candidates = (r for r in store.iter_rows(site) if r["id"] not in visited and int.from_bytes(hashlib.sha256(r["id"].encode()).digest(), "big") % shards == shard_index and (retry_failed or r["status"] != "failed"))
+        row = min(candidates, key=priority, default=None)
+        if row is None:
             break
-        row = min(candidates, key=priority)
         visited.add(row["id"])
         # Claims protect managed partial files even if two callers choose
         # overlapping shard configurations. Busy sources remain queued while

@@ -30,6 +30,22 @@ class BulkTests(unittest.TestCase):
         self.store.update(ident, status="verified", path=path, size=len(PAYLOAD), md5=hashlib.md5(PAYLOAD).hexdigest(), sha256=sha,
             remote_sha256=sha, remote_key="vn-archive/mirrors/files/" + sha, remote_verified_at=a.now())
 
+    def test_queue_selection_streams_and_closes_readers_before_transfer(self):
+        self.add("a");self.add("b")
+        active=[];selected=[];original=self.store.iter_rows
+        def rows(site="both"):
+            active.append(site)
+            try:yield from original(site)
+            finally:active.remove(site)
+        def transfer(store,fetcher,site,ident=None,**kwargs):
+            self.assertEqual(active,[])
+            selected.append(ident);store.update(ident,status="failed");return 1
+        with patch.object(self.store,"rows",side_effect=AssertionError("materialized queue")),patch.object(self.store,"iter_rows",side_effect=rows),patch.object(bulk,"download",side_effect=transfer),patch.object(bulk,"publish_metadata"):
+            stats=bulk.archive_batch(self.store,Fetch([]),reserve_bytes=0)
+        self.assertEqual(selected,["a","b"])
+        self.assertEqual(stats["failed"],2)
+        self.assertEqual(active,[])
+
     def test_stream_publish_evict_and_reuse_without_second_download(self):
         self.add("a")
         self.add("b")

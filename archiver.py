@@ -667,11 +667,18 @@ class Store:
         return export_manifest(self)
 
     def rows(self, site="both"):
+        return list(self.iter_rows(site))
+
+    def iter_rows(self, site="both"):
         # A parameterized OR prevents the source equality from using its index.
         where="" if site=="both" else " WHERE i.site=?"
         query="SELECT i.* FROM items i JOIN item_catalog c ON c.item_id=i.id"+where
         query+=" ORDER BY CASE c.kind WHEN 'trial' THEN 0 WHEN 'patch' THEN 1 WHEN 'full' THEN 2 WHEN 'movie' THEN 3 ELSE 4 END,i.id"
-        return self.db.execute(query,() if site=="both" else (site,)).fetchall()
+        cursor=self.db.execute(query,() if site=="both" else (site,))
+        try:
+            yield from cursor
+        finally:
+            cursor.close()
 
 
 def is_detail(url, site):
