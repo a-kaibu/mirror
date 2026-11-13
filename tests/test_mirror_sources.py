@@ -253,6 +253,20 @@ class DlsiteTests(unittest.TestCase):
 
 
 class DStationTests(unittest.TestCase):
+    def test_rounded_legacy_sizes_are_not_exact_constraints(self):
+        from portals import parse_d_station
+        rows=parse_d_station(Path("tests/fixtures/d-station-200406.html").read_text(),"https://web.archive.org/web/20040604204931/http://mirror.studio-ramble.com:80/")
+        self.assertEqual(len(rows),5)
+        self.assertEqual(rows[0]["brand"],"Alster")
+        self.assertEqual(rows[0]["expected_md5"],"8ff5a5cfb3f2acbac2447cb1760af1d6")
+        self.assertEqual(rows[0]["size_text"],"36MB")
+        trial=next(r for r in rows if r["title"]=="3days" and r["release_name"]=="体験版")
+        self.assertEqual(trial["expected_md5"],"f863b7266605b69af05b340b77fe8917")
+        self.assertEqual(trial["published_at"],"2004-05-01")
+        self.assertTrue(all(r["expected_size"] is None for r in rows))
+        self.assertTrue(all(r["fields"]["size_is_rounded"] for r in rows))
+        self.assertIn("download.php?cid=",rows[0]["fields"]["download_endpoint"])
+
     def test_php_downloads_are_not_lost_and_versions_are_separate(self):
         from portals import parse_d_station
         html=Path('tests/fixtures/d-station-2004.html').read_text()

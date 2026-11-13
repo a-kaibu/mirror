@@ -266,7 +266,8 @@ def parse_d_station(html,page):
         while context.parent and context.tag!='table':context=context.parent
         text=context.text();digest=re.search(r'MD5[：:]\s*([a-fA-F0-9]{32})',text)
         size=re.search(r'ファイルサイズ[：:]\s*([\d,]+)\s*バイト',text)
-        if not digest or not size:continue
+        rounded=re.search(r'ファイルサイズ[：:]\s*([\d,.]+\s*[KMGT]B)\b',text,re.I)
+        if not digest or not (size or rounded):continue
         headers=list(context.all({'tr'}))
         if len(headers)<2:continue
         makers=list(headers[1].all({'a'}))
@@ -282,9 +283,9 @@ def parse_d_station(html,page):
         results.append({'id':ident,'site':'d_station','page_url':page,'original_page_url':a.original(page),
             'title':title,'brand':brand,'release_name':release,'filename':None,
             'mirrors':([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
-            'expected_md5':digest[1].lower(),'expected_size':int(size[1].replace(',','')),'size_text':size[0],
+            'expected_md5':digest[1].lower(),'expected_size':int(size[1].replace(',','')) if size else None,'size_text':size[0] if size else rounded[1],
             'published_at':f'{date[1]}-{int(date[2]):02}-{int(date[3]):02}' if date else None,
-            'fields':{'parser':'d_station','download_endpoint':raw}})
+            'fields':{'parser':'d_station','download_endpoint':raw,'size_is_rounded':not bool(size)}})
     return list({r['id']:r for r in results}.values())
 
 
