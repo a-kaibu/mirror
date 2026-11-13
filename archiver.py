@@ -543,6 +543,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY, item_id TEXT, url TEXT,
           attempted_at TEXT, error TEXT);
         CREATE INDEX IF NOT EXISTS attempts_item ON attempts(item_id,id);
+        CREATE INDEX IF NOT EXISTS items_expected_md5 ON items(json_extract(data,'$.expected_md5'));
         CREATE TABLE IF NOT EXISTS archive_index_transports(target_url TEXT PRIMARY KEY,index_url TEXT NOT NULL,checked_at TEXT NOT NULL);
         """)
         from catalog import initialize

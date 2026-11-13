@@ -296,3 +296,22 @@ class CatalogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MirrorLookupIndexTests(unittest.TestCase):
+    def test_existing_catalogue_migrates_without_changing_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            record=a.parse_detail(HTML,'https://example.test/items/1','lathercraft')[0]
+            store.add(record)
+            store.db.execute('DROP INDEX items_expected_md5');store.db.commit()
+            before=dict(store.rows()[0]);store.db.close()
+            store=a.Store(tmp)
+            try:
+                self.assertEqual(dict(store.rows()[0]),before)
+                query="SELECT id FROM items WHERE json_extract(data,'$.expected_md5')=?"
+                self.assertEqual(store.db.execute(query,(record['expected_md5'],)).fetchone()[0],record['id'])
+                plan=' '.join(r[3] for r in store.db.execute('EXPLAIN QUERY PLAN '+query,(record['expected_md5'],)))
+                self.assertIn('SEARCH',plan)
+                self.assertNotIn('SCAN',plan)
+            finally:store.db.close()
