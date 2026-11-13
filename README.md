@@ -256,6 +256,12 @@ hashes and exact sizes must agree when present; ambiguous names are left unresol
 The evidence and an atomic recovery receipt remain in SQLite. `--watch` checks
 again every five minutes without blocking active downloads.
 
+`python reuse_recovery.py --watch` checks every five minutes for waiting or failed
+observations whose published MD5 and manufacturer match an already verified public
+file. Exact sizes and SHA-256 constraints must agree; existing matching SHA-256
+identity is preserved. Active item claims are deferred. This updates SQLite and
+the local JSON without downloading or uploading the binary again.
+
 ## ErogameScape metadata
 
 `python erogamescape.py --export --upload` reads the public SQL form with bounded
