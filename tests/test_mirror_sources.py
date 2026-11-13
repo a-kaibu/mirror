@@ -89,6 +89,28 @@ class MirrorSourcesTests(unittest.TestCase):
             parse_moepedia('<div class="trial"><h3>体験版</h3><a href="https://source.test/a.zip">DL</a></div>',page)
         self.assertEqual(parse_moepedia('<h2>作品A</h2><a href="https://source.test/a.zip">購入</a>',page),[])
 
+    def test_moepedia_calendar_stays_within_publisher_selected_years(self):
+        page='https://moepedia.net/trial/2026/12/'
+        html='<form action="https://moepedia.net/trial"><select name="year"><option value="1992">1992</option><option value="2027">2027</option></select></form><a href="/trial/1991/12/">Previous</a><a href="/trial/2028/1/">Next</a><a href="/trial/1992/1/">Oldest</a><a href="/trial/2027/12/">Future</a><a href="/game/42/">Game</a>'
+        source={**m.definitions()['moepedia'],'homes':[page],'seeds':[page]}
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);m.initialize(store)
+            try:
+                m.crawl(store,source,Fetch([Response(html.encode(),url=page)]),mode='live',max_pages=1)
+                urls={r[0] for r in store.db.execute("SELECT url FROM mirror_frontier WHERE status='pending'")}
+                self.assertIn('https://moepedia.net/trial/1992/1/',urls)
+                self.assertIn('https://moepedia.net/trial/2027/12/',urls)
+                self.assertIn('https://moepedia.net/game/42/',urls)
+                self.assertNotIn('https://moepedia.net/trial/1991/12/',urls)
+                self.assertNotIn('https://moepedia.net/trial/2028/1/',urls)
+            finally:store.db.close()
+
+    def test_moepedia_years_are_not_invented_or_taken_from_other_forms(self):
+        root=a.DOM('<form action="https://foreign.test/trial"><select name="year"><option value="2000">2000</option></select></form>').root
+        self.assertIsNone(m.moepedia_calendar_years(root,'https://moepedia.net/trial/'))
+        self.assertTrue(m.moepedia_calendar_allowed('https://moepedia.net/trial/1980/1/',None))
+        self.assertFalse(m.moepedia_calendar_allowed('https://moepedia.net/trial/2027/13/',{'2027'}))
+
     def test_actual_moepedia_trial_block_excludes_purchase_links(self):
         html=a.decode_html((Path(__file__).parent/"fixtures/moepedia-98727.html").read_bytes())
         result=parse_moepedia(html,"https://moepedia.net/game/98727/")

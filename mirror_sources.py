@@ -43,6 +43,25 @@ def enqueue(store,source,mode,urls=None):
     store.db.commit()
 
 
+def moepedia_calendar_years(root,page):
+    years=set()
+    for form in root.all({'form'}):
+        action=a.resolve(page,form.attrs.get('action',''))
+        if not action:continue
+        parts=urlsplit(a.original(action))
+        if parts.hostname!='moepedia.net' or parts.path.rstrip('/')!='/trial':continue
+        for select in form.all({'select'}):
+            if select.attrs.get('name')!='year':continue
+            years.update(option.attrs['value'] for option in select.all({'option'})
+                if re.fullmatch(r'\d{4}',option.attrs.get('value','')))
+    return years or None
+
+
+def moepedia_calendar_allowed(url,years):
+    match=re.fullmatch(r'/trial/(\d{4})/(\d{1,2})/?',urlsplit(a.original(url)).path)
+    return not match or years is None or (match[1] in years and 1<=int(match[2])<=12)
+
+
 def navigable(source,url):
     path=urlsplit(a.original(url)).path
     key=source["key"]
@@ -257,6 +276,7 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
             (store.root/rel).parent.mkdir(parents=True,exist_ok=True);(store.root/rel).write_bytes(raw)
             store.db.execute("INSERT OR REPLACE INTO pages(url,site,path,fetched_at,status,error,response_url) VALUES(?,?,?,?,?,?,?)",(actual,source["key"],rel,a.now(),"ok",None,actual));store.db.commit()
             count=0;children=0
+            calendar_years=moepedia_calendar_years(root,actual) if source['key']=='moepedia' else None
             for node in root.all({"a","area","iframe","frame"}):
                 link=a.resolve(actual,node.attrs.get("href") or node.attrs.get("src", ""))
                 if not link:continue
@@ -266,7 +286,8 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
                     store.db.execute("INSERT OR IGNORE INTO mirror_links VALUES(?,?,?,?,?,?,?)",(source["key"],actual,original,node.text(),"binary" if binary else "page",None,a.now()))
                 if binary:count+=1;continue
                 extension=Path(parts.path).suffix.lower()
-                if allowed(source,original) and navigable(source,original) and extension in {"",".html",".htm",".shtml",".shtm",".php",".phtml",".cgi",".asp",".aspx"}:
+                calendar_ok=source['key']!='moepedia' or moepedia_calendar_allowed(original,calendar_years)
+                if calendar_ok and allowed(source,original) and navigable(source,original) and extension in {"",".html",".htm",".shtml",".shtm",".php",".phtml",".cgi",".asp",".aspx"}:
                     store.db.execute("INSERT OR IGNORE INTO mirror_frontier(site,url,mode) VALUES(?,?,?)",(source["key"],link if mode=="archive" and a.WAYBACK.match(url) else original,mode));children+=1
             store.db.commit()
             matched=match_records(store,source,html,actual,index) if count else 0
