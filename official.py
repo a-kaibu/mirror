@@ -78,6 +78,22 @@ def appetite_kind(html,page,game,target,requested_page=None):
     return 'trial' if trial else 'movie'
 
 
+def group_heading(node,link,page):
+    """Find the preceding section heading without borrowing sibling hashes."""
+    branch=link
+    while branch.parent is not None and branch.parent is not node:branch=branch.parent
+    if branch.parent is not node:return None
+    heading=None
+    for child in node.children:
+        if child is branch:break
+        if not isinstance(child,a.Node) or child.tag not in {'h1','h2','h3','h4','h5','h6','table'}:continue
+        text=child.text().strip()
+        if not text or len(text)>80 or binary_links(child,page):continue
+        kind=release_info({'title':text,'filename':''})[0]
+        heading=(kind,text) if kind in {'trial','patch','movie'} else None
+    return heading
+
+
 def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
     root=a.DOM(html).root
     records={}
@@ -90,15 +106,23 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
             trial=" 体験版" if re.search(r"(?<![a-z])trial(?![a-z])",marker,re.I) else ""
             return " ".join([n.text(),n.attrs.get("title","")]+[img.attrs.get("alt","") for img in n.all({"img"})])+trial
         context=describe(link);context_node=link;node=link.parent
+        group=None;metadata_context=None
         while node is not None and node.tag not in {"body","html","root"}:
             text=describe(node)
             names={unquote(urlsplit(u).path.rsplit("/",1)[-1]) for _,u in binary_links(node,page)}
-            if len(text)>6000 or len(names)>1:break
+            if len(text)>6000:break
+            if len(names)>1:
+                if release_info({'title':context+' '+filename,'filename':filename})[0]=='other':
+                    group=group_heading(node,link,page)
+                if group:
+                    metadata_context=context
+                    context=text;context_node=node
+                break
             context=text;context_node=node
             if re.search(r"体験|trial|taiken|パッチ|patch|修正|アップデート|update|ムービー|movie|動画|(?:^|\W)PV(?:$|\W)",text,re.I):break
             node=node.parent
         label=context+" "+filename
-        kind=release_info({"title":label,"filename":filename})[0]
+        kind=release_info({"title":label,"filename":filename})[0] if group is None else group[0]
         if kind=="other" and re.search(r"フライヤー|チラシ|バナー|壁紙|アイコン|ポスター|説明書|セーブ|banner|wallpaper|flyer|manual",label,re.I):
             continue  # Publisher scan targets trials, patches and movies.
         if kind=="other" and hint in KINDS and hint!="other" and len(filenames)==1:
@@ -112,14 +136,16 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
             unsupported.append(target);continue
         key=hashlib.sha256(("official\n"+page+"\n"+filename).encode()).hexdigest()
         if key not in records:
-            md5s=re.findall(r"MD5\s*[:：]?\s*([a-f0-9]{32})",context,re.I)
-            exact=re.findall(r"([0-9][0-9,]*)\s*bytes",context,re.I)
+            measured_context=context if metadata_context is None else metadata_context
+            md5s=re.findall(r"MD5\s*[:：]?\s*([a-f0-9]{32})",measured_context,re.I)
+            exact=re.findall(r"([0-9][0-9,]*)\s*bytes",measured_context,re.I)
             version=re.search(r"(?:ver(?:sion)?[._ -]*|v)(\d+(?:\.\d+)*)",filename,re.I)
             records[key]={"id":key,"site":"official","page_url":page,"original_page_url":page,
                 "title":game["gamename"],"brand":brand["brandname"],"release_name":KINDS[kind]+(" ver"+version[1] if version else ""),
                 "filename":filename,"mirrors":[],"expected_md5":md5s[0].lower() if len(set(md5s))==1 else None,
                 "expected_size":int(exact[0].replace(",","")) if len(set(exact))==1 else None,
                 "size_text":None,"published_at":None,"fields":{"erogamescape_game_id":game["id"],"erogamescape_brand_id":brand["id"],"official_page":page}}
+        if group:records[key]['fields']['official_group_heading']=group[1]
         if common_scope:
             records[key]['title']=common_scope
             records[key]['fields'].pop('erogamescape_game_id',None)

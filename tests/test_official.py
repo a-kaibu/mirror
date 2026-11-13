@@ -193,3 +193,38 @@ class ParallelOfficialTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp,patch.object(o,'seeds',return_value=iter([(GAME,BRAND,PAGE),(other,BRAND,'https://other.test/download.html')])),patch.object(o,'scan',side_effect=scan):
             self.assertEqual(o.collect_parallel(tmp,workers=2),2)
             self.assertEqual(len(set(connections)),2)
+
+
+class GroupedOfficialDistributionTests(unittest.TestCase):
+    def test_legacy_update_table_classifies_multiple_patches_without_shared_hash(self):
+        html='<table><tr><td><table><tr><td>UPDATE</td></tr></table><a href="build1.zip"><img src="dl.gif"></a><a href="build2.zip"><img src="dl.gif"></a> MD5: '+('a'*32)+'</td></tr></table>'
+        rows,unknown=o.parse(html,PAGE,GAME,BRAND)
+        self.assertEqual(len(rows),2);self.assertEqual(unknown,[])
+        self.assertTrue(all(row['release_name']=='パッチ' for row in rows))
+        self.assertTrue(all(row['expected_md5'] is None for row in rows))
+        self.assertTrue(all(row['fields']['official_group_heading']=='UPDATE' for row in rows))
+
+    def test_local_file_hash_is_kept_and_not_copied_to_next_file(self):
+        html='<section><h2>修正ファイル</h2><p><a href="build1.zip">Download</a> MD5: '+('a'*32)+'</p><p><a href="build2.zip">Download</a></p></section>'
+        rows,unknown=o.parse(html,PAGE,GAME,BRAND)
+        self.assertEqual(len(rows),2);self.assertEqual(unknown,[])
+        self.assertEqual(rows[0]['expected_md5'],'a'*32)
+        self.assertIsNone(rows[1]['expected_md5'])
+
+    def test_later_trial_heading_does_not_inherit_patch_category(self):
+        html='<section><h2>修正ファイル</h2><p><a href="build1.zip">Download</a></p><h2>体験版</h2><p><a href="build2.zip">Download</a></p></section>'
+        rows,_=o.parse(html,PAGE,GAME,BRAND)
+        self.assertEqual([row['release_name'] for row in rows],['パッチ','体験版'])
+
+    def test_unclassified_later_section_and_unscoped_product_remain_unmatched(self):
+        html='<section><h2>修正ファイル</h2><p><a href="build1.zip">Download</a></p><h2>FAQ</h2><p><a href="build2.zip">Download</a></p></section>'
+        rows,unknown=o.parse(html,PAGE,GAME,BRAND)
+        self.assertEqual([row['filename'] for row in rows],['build1.zip'])
+        self.assertEqual(unknown,['https://key.visualarts.co.jp/anemoi/build2.zip'])
+        self.assertEqual(o.parse(html,'https://key.visualarts.co.jp/support.html',GAME,BRAND,scoped=False)[0],[])
+
+    def test_explicit_trial_link_inside_update_section_keeps_its_own_kind(self):
+        html='<section><h2>UPDATE</h2><a href="trial.zip">体験版</a><a href="build2.zip">Download</a></section>'
+        rows,unknown=o.parse(html,PAGE,GAME,BRAND)
+        self.assertEqual(unknown,[])
+        self.assertEqual([row['release_name'] for row in rows],['体験版','パッチ'])
