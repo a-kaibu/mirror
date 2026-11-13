@@ -121,8 +121,8 @@ not repeatedly uploaded. SQLite remains the only authoritative state.
   `dltbl` and `fixtbl` tables are parsed release by release across rows, associating
   the correct filename, version label, date, MD5 and mirror links. Entries without
   surviving links are retained. Archived binary URLs are tried before live URLs.
-- **Suezo**: dedicated site crawling is deferred. Existing Wayback binary copies
-  linked from Holyseal can be recovered as Holyseal provenance.
+- **Suezo**: live catalogue discovery and archived captures are supported.
+  A three-hour recovery monitor schedules live discovery and acquisition.
 
 Pass repeated `--holyseal-url` options to replace the default seeds with explicit
 captures. Original HTML bytes, including legacy encodings, are saved. HTML schema
@@ -138,9 +138,7 @@ archive/                         # local, ignored by Git
   files/<source>/<record-id>/...  # local verified downloads
 
 HF vn-archive/mirrors/
-  ABOUT.txt
   index.sqlite3                  # consistent backup of SQLite for Pages builds
-  manifest.json                  # generated from the same catalog
   html/<page-id>.html
   files/<sha256>                 # ID only, no Japanese or original filename
 ```
@@ -405,6 +403,9 @@ saved cursor. Observed descendants are checked before unrelated year indexes,
 even when already present in the saved catalogue. Pending descendants resume
 at the next scheduled check when the three-page budget is exhausted. Response HTML and
 health-check history are retained locally with their SHA-256 values in SQLite.
+For checksum-bound files, fresh healthy hosts are preferred across source-site
+labels, using only already observed mirror URLs. Posted checksums still apply,
+and archived captures remain fallback candidates. Health expires after three hours.
 The persistent timer catches missed runs
 when the user manager returns; checks require the host to be running.
 HF credentials remain in the local AWS profile and are not copied into CI.

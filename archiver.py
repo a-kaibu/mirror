@@ -902,27 +902,30 @@ def recover_completed_transfer(store,row,record,path,rel):
 
 
 def healthy_source_mirrors(store,site,mirrors):
-    """Return observed originals on a recently recovered catalogue host."""
+    """Prefer observed URLs on fresh healthy hosts, starting with the source site."""
     if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_health'").fetchone():return []
-    health=store.db.execute('SELECT checked_at,data FROM source_health WHERE site=? AND healthy=1',(site,)).fetchone()
-    if not health:return []
-    try:
-        checked=datetime.fromisoformat(health['checked_at'])
-        age=(datetime.now(timezone.utc)-checked).total_seconds()
-        data=json.loads(health['data'])
-        if not isinstance(data,dict) or not isinstance(data.get('url'),str):return []
-        root=urlsplit(data['url'])
-        if not 0<=age<=3*60*60 or root.scheme not in {'http','https'} or not root.hostname:return []
-    except (ValueError,TypeError):return []
-    result=[]
-    for url in mirrors:
-        raw=original(url)
+    hosts=[]
+    for health in store.db.execute('SELECT checked_at,data FROM source_health WHERE healthy=1 ORDER BY (site=?) DESC,site',(site,)):
         try:
-            parts=urlsplit(raw)
-            if parts.scheme in {'http','https'} and parts.hostname==root.hostname:
-                archive_url_identity(raw)
-                result.append(raw)
-        except ValueError:continue
+            checked=datetime.fromisoformat(health['checked_at'])
+            age=(datetime.now(timezone.utc)-checked).total_seconds()
+            data=json.loads(health['data'])
+            if not isinstance(data,dict) or not isinstance(data.get('url'),str):continue
+            root=urlsplit(data['url'])
+            if not 0<=age<=3*60*60 or root.scheme not in {'http','https'} or not root.hostname:continue
+            hosts.append(root.hostname)
+        except (ValueError,TypeError):continue
+    if not hosts:return []
+    observed=list(dict.fromkeys(original(url) for url in mirrors))
+    result=[]
+    for host in dict.fromkeys(hosts):
+        for raw in observed:
+            try:
+                parts=urlsplit(raw)
+                if parts.scheme in {'http','https'} and parts.hostname==host:
+                    archive_url_identity(raw)
+                    result.append(raw)
+            except ValueError:continue
     return list(dict.fromkeys(result))
 
 
