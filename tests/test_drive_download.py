@@ -27,3 +27,32 @@ class DriveDownloadTests(unittest.TestCase):
             fetch=Fetch([Response(PAYLOAD,headers={'Content-Type':'application/zip','Content-Length':str(len(PAYLOAD))},url='https://drive.usercontent.google.com/download')])
             result=a.transfer(fetch,URL,Path(tmp)/'日本語.zip',{'expected_size':len(PAYLOAD)})
             self.assertEqual(result['size'],len(PAYLOAD))
+
+class DropboxDownloadTests(unittest.TestCase):
+    def test_public_shared_files_keep_access_parameters_and_range_headers(self):
+        from urllib.parse import urlsplit,parse_qsl
+        for path in ['/s/public-share/patch.zip','/scl/fi/public-share/patch.zip']:
+            with self.subTest(path=path):
+                url='https://www.dropbox.com'+path+'?dl=0&raw=1&rlkey=a%2Bb&empty=&dl=0'
+                fetch=Fetch([Response(PAYLOAD,headers={'Content-Type':'application/zip'})])
+                with open_download(fetch,url,{'Range':'bytes=10-','If-Range':'etag'}) as response:
+                    self.assertEqual(response.read(),PAYLOAD)
+                target,headers=fetch.requests[0]
+                self.assertEqual(urlsplit(target).path,path)
+                self.assertEqual(parse_qsl(urlsplit(target).query,keep_blank_values=True),[('rlkey','a+b'),('empty',''),('dl','1')])
+                self.assertEqual(headers,{'Range':'bytes=10-','If-Range':'etag'})
+
+    def test_other_hosts_folders_and_authenticated_urls_are_unchanged(self):
+        for url in ['https://dropbox.com.evil.test/s/id/file.zip?dl=0','https://www.dropbox.com/scl/fo/id/folder?dl=0','https://user:pass@www.dropbox.com/s/id/file.zip?dl=0']:
+            with self.subTest(url=url):
+                fetch=Fetch([Response(PAYLOAD)])
+                with open_download(fetch,url):pass
+                self.assertEqual(fetch.requests[0][0],url)
+
+    def test_transfer_retains_normal_size_and_checksum_validation(self):
+        import hashlib
+        url='https://www.dropbox.com/s/id/file.zip?dl=0'
+        with tempfile.TemporaryDirectory() as tmp:
+            fetch=Fetch([Response(PAYLOAD,headers={'Content-Type':'application/zip','Content-Length':str(len(PAYLOAD))})])
+            checked=a.transfer(fetch,url,Path(tmp)/'patch.zip',{'expected_size':len(PAYLOAD),'expected_sha256':hashlib.sha256(PAYLOAD).hexdigest()})
+            self.assertEqual(checked['sha256'],hashlib.sha256(PAYLOAD).hexdigest())

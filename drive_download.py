@@ -1,6 +1,6 @@
-"""Resolve public Google Drive share links through published download forms."""
+"""Resolve public file-sharing links through their published download mechanisms."""
 import re
-from urllib.parse import urlsplit,parse_qs,urlencode,urljoin
+from urllib.parse import urlsplit,urlunsplit,parse_qs,parse_qsl,urlencode,urljoin
 
 
 def file_id(url):
@@ -13,6 +13,16 @@ def file_id(url):
 
 def open_download(fetcher,url,headers=None):
     import archiver as a
+    parts=urlsplit(url)
+    # Dropbox documents dl=1 for public shared files; retain the original
+    # link in provenance and preserve its access parameters (including rlkey).
+    # https://help.dropbox.com/share/force-download
+    if (parts.scheme in {'http','https'} and parts.hostname in {'dropbox.com','www.dropbox.com'}
+            and not parts.username and not parts.password
+            and re.fullmatch(r'/(?:s|scl/fi)/[^/]+/[^/]+',parts.path)):
+        query=[(k,v) for k,v in parse_qsl(parts.query,keep_blank_values=True) if k not in {'dl','raw'}]
+        target=urlunsplit((parts.scheme,parts.netloc,parts.path,urlencode(query+[('dl','1')]),parts.fragment))
+        return fetcher.open(target,headers)
     ident=file_id(url)
     if ident is None:return fetcher.open(url,headers)
     target='https://drive.usercontent.google.com/download?'+urlencode({'id':ident,'export':'download'})
