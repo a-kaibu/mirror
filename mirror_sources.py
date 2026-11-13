@@ -1,5 +1,6 @@
 """Registered mirror discovery with persistent archive/live frontiers."""
 import argparse
+from collections.abc import Mapping
 import hashlib
 import http.client
 import json
@@ -202,15 +203,37 @@ def add_record(store,record):
     return record["id"]
 
 
+class _KnownDonors(Mapping):
+    """Retain source IDs; load and revalidate full metadata only when matched."""
+    def __init__(self,store,site,kind,ids):
+        self.store,self.site,self.kind,self.ids=store,site,kind,ids
+
+    def __iter__(self):return iter(self.ids)
+    def __len__(self):return len(self.ids)
+
+    def __getitem__(self,key):
+        records=[]
+        for ident in dict.fromkeys(self.ids[key]):
+            row=self.store.db.execute('SELECT site,data FROM items WHERE id=?',(ident,)).fetchone()
+            if not row or row['site']==self.site:continue
+            data=json.loads(row['data'])
+            if data.get('fields',{}).get('source_association_quarantined'):continue
+            if self.kind=='md5' and data.get('expected_md5')!=key:continue
+            if self.kind=='url' and not any(clean(url)==key for url in data['mirrors']):continue
+            records.append(data)
+        return records
+
+
 def known_files(store,site):
     by_hash={};by_url={}
-    for row in store.rows():
-        if row["site"]==site:continue
-        data=json.loads(row["data"])
+    # Streaming avoids retaining the raw JSON rows as well as every decoded
+    # catalogue record in each concurrent HTML crawler.
+    for row in store.db.execute('SELECT id,data FROM items WHERE site!=?',(site,)):
+        data=json.loads(row['data'])
         if data.get('fields',{}).get('source_association_quarantined'):continue
-        if data.get("expected_md5"):by_hash.setdefault(data["expected_md5"],[]).append(data)
-        for url in data["mirrors"]:by_url.setdefault(clean(url),[]).append(data)
-    return by_hash,by_url
+        if data.get('expected_md5'):by_hash.setdefault(data['expected_md5'],[]).append(row['id'])
+        for url in data['mirrors']:by_url.setdefault(clean(url),[]).append(row['id'])
+    return _KnownDonors(store,site,'md5',by_hash),_KnownDonors(store,site,'url',by_url)
 
 
 def match_records(store,source,html,page,index):
@@ -360,9 +383,10 @@ class SharedArchiveFetcher:
         with self.lock:return self.fetcher.open(url,headers)
 
 
-def parallel_crawl(root,sources,mode="auto",max_pages=100):
+def parallel_crawl(root,sources,mode="auto",max_pages=100,workers=2):
     from concurrent.futures import ThreadPoolExecutor,as_completed
     from archive_lock import exclusive_file
+    if workers<1:raise ValueError("workers must be positive")
     archive=SharedArchiveFetcher(a.Fetcher(delay=10,timeout=25,retries=2))
     def collect(source):
         selected=("live" if source["adapter"]=="platform" else "archive") if mode=="auto" else mode
@@ -372,7 +396,7 @@ def parallel_crawl(root,sources,mode="auto",max_pages=100):
             try:return crawl(store,source,fetcher,selected,max_pages)
             finally:store.db.close()
     results={}
-    with ThreadPoolExecutor(max_workers=max(1,len(sources)),thread_name_prefix="mirror") as pool:
+    with ThreadPoolExecutor(max_workers=max(1,min(workers,len(sources))),thread_name_prefix="mirror") as pool:
         jobs={pool.submit(collect,source):source["key"] for source in sources}
         for job in as_completed(jobs):
             key=jobs[job]
@@ -385,11 +409,12 @@ if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root",default="archive");parser.add_argument("--site",choices=["all",*definitions()],default="all")
     parser.add_argument("--mode",choices=["auto","live","archive"],default="auto");parser.add_argument("--max-pages",type=a.positive,default=100)
+    parser.add_argument("--workers",type=a.positive,default=2,help="maximum concurrent source crawls")
     args=parser.parse_args();store=a.Store(args.root)
     try:
         initialize(store)
         sources=[source for key,source in definitions().items()
             if args.site==key or (args.site=="all" and source["adapter"] not in {"native","curated"})]
         store.db.close()
-        parallel_crawl(args.root,sources,args.mode,args.max_pages)
+        parallel_crawl(args.root,sources,args.mode,args.max_pages,args.workers)
     finally:store.db.close()

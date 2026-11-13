@@ -37,6 +37,14 @@ files, nested sources/attempts, and saved-page records. It is generated atomical
 from SQLite, ignored by Git, and never edited or imported as the source of truth.
 There are no separate JSONL or search catalogs.
 
+Source matching streams a compact ID index and loads full donor records from
+SQLite only when needed, rechecking their current checksum, URL and quarantine.
+HTML discovery uses bounded workers: `mirror_sources.py --workers 2`, and
+`metadata_watch.py --workers 1 --max-pages 10` (one source per mode, two total
+with `--mode both`). Fresh metadata batches release their DOMs and caches at exit.
+Official continuation defaults to one worker. Increase these limits only with
+enough memory; source coverage and saved frontiers are retained at lower limits.
+
 ## Setup and small run
 
 ```sh
@@ -412,8 +420,8 @@ When refreshing, replace the complete snapshot so deleted/opted-out rows are rem
 
 ### Continuous discovery and acquisition
 
-`python mirror_sources.py --site all --max-pages 10000` runs independent workers
-for every additional source. Archive HTML requests share pacing and Retry-After
+`python mirror_sources.py --site all --max-pages 10 --workers 2` visits every
+additional source through a pool of at most two workers. Archive HTML requests share pacing and Retry-After
 state within the process. Live platform sessions have separate cookie jars.
 `python mirror_history.py --site lapistan` queues distinct historical HTML bodies
 from CDX, including captures before closure. Explicit dated frontier URLs preserve
@@ -425,7 +433,8 @@ phase is bounded to 50 entries; subsequent batches run fresh parser code and kee
 source claims separate from the file-transfer workers.
 
 `python metadata_watch.py` continues saved archive and platform frontiers in
-100-page batches per source with fresh parser code. Existing discovery claims are deferred;
+10-page batches per source with fresh parser code, one source per mode at a time.
+Existing discovery claims are deferred;
 archive sources share one paced fetcher. Native and curated adapters keep their
 own acquisition jobs. Run long-lived jobs with stdout/stderr redirected to a log
 file so a disconnected terminal does not terminate acquisition.

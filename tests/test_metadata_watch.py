@@ -29,3 +29,4 @@ class MetadataWatchTests(unittest.TestCase):
         args=crawl.call_args.args
         self.assertEqual({s['key'] for s in args[1]},{'d_station','getchu'})
         self.assertEqual(args[2:],('archive',100))
+        self.assertEqual(crawl.call_args.kwargs['workers'],1)

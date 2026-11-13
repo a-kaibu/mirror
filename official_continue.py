@@ -40,7 +40,7 @@ def queue_product_homes(store,seeds,limit=10):
     return queued
 
 
-def collect(root,limit=10,workers=3,fetcher=None):
+def collect(root,limit=10,workers=1,fetcher=None):
     store=a.Store(root)
     try:
         o.initialize(store);seeds={game['id']:(game,brand,seed) for game,brand,seed in o.seeds(store)}
@@ -75,7 +75,7 @@ def collect(root,limit=10,workers=3,fetcher=None):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',default='archive')
-    parser.add_argument('--limit',type=a.positive,default=10);parser.add_argument('--workers',type=a.positive,default=3);parser.add_argument('--watch',action='store_true');args=parser.parse_args()
+    parser.add_argument('--limit',type=a.positive,default=10);parser.add_argument('--workers',type=a.positive,default=1);parser.add_argument('--watch',action='store_true');args=parser.parse_args()
     if args.watch:
         with exclusive_file(Path(args.root)/'.claims'/'official-continuation-watch.lock',blocking=False):
             while True:

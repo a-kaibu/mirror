@@ -27,17 +27,17 @@ def pending_sources(root,mode):
     return sources
 
 
-def run_batch(root,mode,max_pages):
+def run_batch(root,mode,max_pages,workers=1):
     sources=pending_sources(root,mode)
     if not sources:return 0
     print('metadata frontier batch',mode,[source['key'] for source in sources],flush=True)
     # All archive sources share the crawler's paced archive fetcher. Platform
     # live sources retain their individual host pacing and source claims.
-    m.parallel_crawl(root,sources,mode,max_pages)
+    m.parallel_crawl(root,sources,mode,max_pages,workers=workers)
     return len(sources)
 
 
-def watch(root,modes,max_pages,interval):
+def watch(root,modes,max_pages,interval,workers=1):
     stop=threading.Event();children={};guard=threading.Lock()
     def halt(*_):
         stop.set()
@@ -50,7 +50,7 @@ def watch(root,modes,max_pages,interval):
             if pending_sources(root,mode):
                 with guard:
                     if stop.is_set():return
-                    child=subprocess.Popen([sys.executable,'-u',__file__,'--root',str(root),'--mode',mode,'--batch','--max-pages',str(max_pages)])
+                    child=subprocess.Popen([sys.executable,'-u',__file__,'--root',str(root),'--mode',mode,'--batch','--max-pages',str(max_pages),'--workers',str(workers)])
                     children[mode]=child
                 result=child.wait()
                 with guard:children.pop(mode,None)
@@ -65,11 +65,12 @@ def watch(root,modes,max_pages,interval):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root',default='archive');parser.add_argument('--mode',choices=['both','archive','live'],default='both')
-    parser.add_argument('--batch',action='store_true');parser.add_argument('--max-pages',type=a.positive,default=100);parser.add_argument('--interval',type=a.positive,default=60)
+    parser.add_argument('--batch',action='store_true');parser.add_argument('--max-pages',type=a.positive,default=10);parser.add_argument('--interval',type=a.positive,default=60)
+    parser.add_argument('--workers',type=a.positive,default=1,help='concurrent source crawls per mode; both runs two modes')
     args=parser.parse_args()
     if args.batch and args.mode=='both':parser.error('--batch requires one mode')
     store=a.Store(args.root)
     try:m.initialize(store)
     finally:store.db.close()
-    if args.batch:print('metadata sources processed',run_batch(args.root,args.mode,args.max_pages),flush=True)
-    else:watch(args.root,['archive','live'] if args.mode=='both' else [args.mode],args.max_pages,args.interval)
+    if args.batch:print('metadata sources processed',run_batch(args.root,args.mode,args.max_pages,args.workers),flush=True)
+    else:watch(args.root,['archive','live'] if args.mode=='both' else [args.mode],args.max_pages,args.interval,args.workers)
