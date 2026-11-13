@@ -429,3 +429,46 @@ class Fuzzy2JdmTests(unittest.TestCase):
         self.assertTrue(all('daia_demo.lzh' in u for u in row['mirrors']))
         self.assertTrue(any('girilove_demo.exe' in u for u in row['fields']['mismatched_file_links']))
         self.assertEqual(files['girilove_demo.exe']['expected_md5'],'69bcdbd0f2eaa019b51b7e5b92643446')
+
+
+class EarlyMultiInsideCatalogueTests(unittest.TestCase):
+    page='http://web.archive.org/web/20020802052401/http://www.pachi.ac/~multi/mirror.shtml'
+
+    def test_real_catalogue_keeps_per_product_identity_and_rounded_sizes(self):
+        from portals import parse_multi_inside
+        from catalog import release_info
+        rows=parse_multi_inside(Path('tests/fixtures/multi-inside-catalogue-2002.html').read_text(),self.page)
+        self.assertEqual(len(rows),2)
+        files={r['filename']:r for r in rows}
+        trial=files['woe_9b.exe'];movie=files['kon_2048.asf']
+        self.assertEqual((trial['brand'],trial['title']),('Studio e.go!','エーベンブルグの風'))
+        self.assertEqual(movie['brand'],'シュピール')
+        self.assertEqual(movie['published_at'],'2002-06-22')
+        self.assertEqual(movie['size_text'],'24MB')
+        self.assertIsNone(movie['expected_size']);self.assertIsNone(movie['expected_md5'])
+        self.assertEqual(release_info(trial)[0],'trial');self.assertEqual(release_info(movie)[0],'movie')
+        self.assertEqual(movie['mirrors'][-1],'http://www.pachi.ac/~multi/download/200206/kon_2048.asf')
+
+    def test_reused_basename_does_not_merge_different_source_observations(self):
+        from portals import parse_multi_inside
+        html=Path('tests/fixtures/multi-inside-catalogue-2002.html').read_text()
+        other=html.replace('200206/','200207/').replace('Studio e.go!','Other studio')
+        rows=parse_multi_inside(html+other,self.page)
+        self.assertEqual(len(rows),4)
+        self.assertEqual(len({r['id'] for r in rows}),4)
+        self.assertEqual(len(parse_multi_inside(html+html.replace('-2002/06/22-','-2002/07/01-'),self.page)),4)
+        self.assertEqual(parse_multi_inside(html,self.page.replace('www.pachi.ac','unrelated.test')),[])
+
+    def test_mixed_category_does_not_turn_the_demo_into_a_trial(self):
+        from portals import parse_multi_inside
+        from catalog import release_info
+        rows=parse_multi_inside(Path('tests/fixtures/multi-inside-catalogue-mixed-2002.html').read_text(),self.page)
+        files={r['filename']:r for r in rows}
+        self.assertEqual(release_info(files['woe_demo.exe'])[0],'movie')
+        self.assertEqual(release_info(files['woe_9b.exe'])[0],'trial')
+        self.assertIn('[デモ/体験/Web]',files['woe_demo.exe']['fields']['published_category'])
+
+    def test_legacy_trial_and_movie_formats_are_files(self):
+        for url in ['http://kokoron.madoka.org/mirror/r/ryoujokukangofugakuin/rkgr_vista.iso','http://kokoron.madoka.org/mirror/f/futaane/FUTAANE_loveero.msi','http://www.pachi.ac/~multi/download/200206/kon_2048.asf']:
+            self.assertIsNotNone(a.EXT.search(url))
+        self.assertIsNone(a.EXT.search('http://mirror.test/notes.iso.html'))

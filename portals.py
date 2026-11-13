@@ -93,10 +93,52 @@ def _parse_multi_inside_legacy(root,page):
     return list(result.values())
 
 
+
+def _parse_multi_inside_catalogue(root,page):
+    result={}
+    for block in root.all({'div'}):
+        if 'main' not in block.attrs.get('class','').split():continue
+        brands=[n.text().strip('[] ') for n in block.all({'span'}) if 'color-3' in n.attrs.get('class','').split()]
+        titles=[n.text().strip() for n in block.all({'span'}) if 'color-4' in n.attrs.get('class','').split()]
+        dates=[n.text() for n in block.all({'span'}) if 'date' in n.attrs.get('class','').split()]
+        categories=[n.text() for n in block.all({'span'}) if 'color-9' in n.attrs.get('class','').split()]
+        if len(brands)!=1 or len(titles)!=1 or len(dates)!=1 or not brands[0] or not titles[0]:continue
+        date=re.fullmatch(r'-(\d{4})/(\d{2})/(\d{2})-',dates[0].strip())
+        if not date:continue
+        published='-'.join(date.groups())
+        for link in block.all({'a'}):
+            target=a.resolve(page,link.attrs.get('href',''))
+            if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
+            raw=a.original(target)
+            try:a.archive_url_identity(raw)
+            except ValueError:continue
+            filename=unquote(Path(urlsplit(raw).path).name)
+            siblings=link.parent.children;position=siblings.index(link);tail=[]
+            for node in siblings[position+1:]:
+                if isinstance(node,a.Node) and node.tag in {'a','hr','div'}:break
+                tail.append(node.text() if isinstance(node,a.Node) else node)
+            text=' '.join(tail);size=re.search(r'\[[^\],]+,\s*([\d.]+\s*[KMGT]B)\s*\]',text,re.I)
+            label=re.search(r'\(([^)]+)\)',text)
+            release=label[1].strip() if label else (' '.join(categories) or filename)
+            # Preserve separate source observations even when a basename or
+            # download URL was reused for another product or publication date.
+            ident=hashlib.sha256(('multi_inside_catalogue\n'+a.original(page)+'\n'+brands[0]+'\n'+titles[0]+'\n'+published+'\n'+raw).encode()).hexdigest()
+            stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+            mirrors=([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw]
+            result[ident]={'id':ident,'site':'multi_inside','page_url':page,'original_page_url':a.original(page),
+                'title':titles[0],'brand':brands[0],'release_name':release,'filename':filename,
+                'expected_md5':None,'expected_size':None,'size_text':size[1] if size else None,
+                'published_at':published,'mirrors':mirrors,
+                'fields':{'parser':'multi_inside_catalogue','published_category':categories,'published_link':link.attrs.get('href'),'size_is_rounded':True}}
+    return list(result.values())
+
+
 def parse_multi_inside(html,page):
     parts=urlsplit(a.original(page))
-    if parts.hostname not in {"www.pachi.ac","pachi.ac"} or not parts.path.startswith("/~multi/download/index/"):return []
+    if parts.hostname not in {"www.pachi.ac","pachi.ac"}:return []
     root=a.DOM(html).root
+    if parts.path in {'/~multi/mirror.shtml','/~multi/demo.mirror.shtml'}:return _parse_multi_inside_catalogue(root,page)
+    if not parts.path.startswith("/~multi/download/index/"):return []
     def classified(node,name):return name in node.attrs.get("class", "").split()
     brands=[n for n in root.all({"div"}) if classified(n,"brand")]
     titles=[n for n in root.all({"div"}) if classified(n,"title")]
