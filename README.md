@@ -364,7 +364,9 @@ Discovered records use the usual verified upload pipeline, for example
 
 For parallel transfers use the same `--shards N` and distinct `--shard-index`
 values from zero through N-1. Per-record process locks protect partial files
-against overlapping batches; metadata publication is serialized separately.
+against overlapping batches. Busy records are skipped for the current pass
+and remain queued for a later pass, so other files can proceed. Metadata
+publication is serialized separately.
 
 ### Suezo recovery monitoring
 

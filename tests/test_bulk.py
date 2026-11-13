@@ -210,6 +210,41 @@ class BulkTests(unittest.TestCase):
         self.assertFalse(first.is_alive() or second.is_alive())
         self.assertEqual(errors,[]);self.assertEqual(calls,["shared"])
 
+    def test_busy_first_source_does_not_block_other_work_and_is_retried(self):
+        import threading
+        from archive_lock import exclusive_file
+        self.add('a');self.add('b')
+        claim=self.store.root/'.claims'/(hashlib.sha256(b'a').hexdigest()+'.lock')
+        done=threading.Event();result=[];errors=[]
+        client,objects=Mock(),{}
+        client.upload_file.side_effect=lambda path,bucket,key,**kw:objects.update({key:Path(path).read_bytes()})
+        def worker():
+            store=a.Store(self.store.root)
+            try:result.append(bulk.archive_batch(store,Fetch([Response(PAYLOAD)]),reserve_bytes=0))
+            except BaseException as error:errors.append(error)
+            finally:store.db.close();done.set()
+        with patch.object(a,'s3_client',return_value=client),patch.object(a,'public_digest',side_effect=lambda ns,bucket,key:(hashlib.sha256(objects[key]).hexdigest(),len(objects[key]))):
+            with exclusive_file(claim,blocking=False):
+                thread=threading.Thread(target=worker);thread.start()
+                finished_while_busy=done.wait(3)
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(finished_while_busy,'free source must finish while earlier source stays locked')
+        self.assertEqual(errors,[])
+        self.assertEqual(result[0]['processed'],1)
+        self.assertEqual(result[0]['busy'],1)
+        self.assertEqual(self.store.db.execute("SELECT status FROM items WHERE id='a'").fetchone()[0],'pending')
+        self.assertEqual(self.store.db.execute("SELECT status FROM items WHERE id='b'").fetchone()[0],'archived')
+        with patch.object(bulk,'publish_metadata'):
+            resumed=bulk.archive_batch(self.store,Fetch([]),reserve_bytes=0)
+        self.assertEqual(resumed['reused'],1)
+        self.assertEqual(self.store.db.execute("SELECT status FROM items WHERE id='a'").fetchone()[0],'archived')
+    def test_transfer_blocking_io_errors_are_not_mistaken_for_busy_claims(self):
+        self.add('a')
+        with patch.object(bulk,'download',side_effect=BlockingIOError('body write failed')):
+            with self.assertRaisesRegex(BlockingIOError,'body write failed'):
+                bulk.archive_batch(self.store,Fetch([]),reserve_bytes=0)
+
     def test_working_primary_is_tried_before_timing_out_secondary(self):
         record = self.add("a")
         record["mirrors"] = ["http://storage2.lathercraft.net/file.zip", "https://storage1.lathercraft.net/file.zip"]

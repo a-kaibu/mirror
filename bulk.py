@@ -1,5 +1,6 @@
 """Bounded-disk archival batches; only verified public copies permit eviction."""
 import json
+from contextlib import ExitStack
 import hashlib
 import re
 import unicodedata
@@ -84,7 +85,7 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
                   limit=None, keep_local=False, reserve_bytes=16 * 1024**3, checkpoint_every=10, retry_failed=False, shards=1, shard_index=0):
     if shards < 1 or not 0 <= shard_index < shards:
         raise ValueError("invalid shard assignment")
-    stats = {"processed": 0, "published": 0, "reused": 0, "failed": 0, "evicted_bytes": 0}
+    stats = {"processed": 0, "published": 0, "reused": 0, "failed": 0, "evicted_bytes": 0, "busy": 0}
     fetcher.reserve_bytes = reserve_bytes
     # Rank checksum-linked live mirrors ahead of dead historical hosts. This
     # only schedules work; matching_mirrors still enforces manufacturer and MD5.
@@ -108,9 +109,15 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
         row = min(candidates, key=priority)
         visited.add(row["id"])
         # Claims protect managed partial files even if two callers choose
-        # overlapping shard configurations. Re-read state after waiting.
+        # overlapping shard configurations. Busy sources remain queued while
+        # this pass drains other work; re-read state after taking the claim.
         claim = store.root / ".claims" / (hashlib.sha256(row["id"].encode()).hexdigest()+".lock")
-        with exclusive_file(claim):
+        with ExitStack() as claims:
+            try:
+                claims.enter_context(exclusive_file(claim,blocking=False))
+            except BlockingIOError:
+                stats['busy'] += 1
+                continue
             row = store.db.execute("SELECT * FROM items WHERE id=?",(row["id"],)).fetchone()
             if row is None or (row["status"]=="failed" and not retry_failed):
                 continue
