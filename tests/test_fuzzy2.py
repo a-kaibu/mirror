@@ -73,3 +73,43 @@ class Fuzzy2Tests(unittest.TestCase):
                 store.db.execute('delete from item_catalog');store.db.execute('delete from items');store.db.commit()
                 self.assertEqual(collect(store,never),(2,0));never.open.assert_not_called()
             finally:store.db.close()
+
+
+class MeltyTrialMirrorTests(unittest.TestCase):
+    page='https://web.archive.org/web/20030204024953/http://mirror.fuzzy2.com:80/MBtrial0930/index.html'
+    html=('<p><a href="http://publisher.test/">渡辺製作所</a>のMELTY BLOOD Trial Edition2です。</p>'
+          '<table><tr><td></td><td>readme.txt (Japanese) (2,419bytes)</td>'
+          '<td>体験版プログラム Executable (Trial Ver.) (65,298,839bytes)</td></tr>'
+          '<tr><td>ミラー1</td><td><a href="readme.txt">Download</a></td>'
+          '<td><a href="http://mirror2.fuzzy2.com/MBtrial0930/MBTRIAL0930.zip">Download</a></td></tr>'
+          '<tr><td>ミラー2</td><td><a href="readme.txt">Download</a></td>'
+          '<td><a href="http://mirror3.fuzzy2.com/MBtrial0930/MBTRIAL0930.zip">Download</a></td></tr></table>')
+
+    def test_trial_column_retains_all_mirrors_and_its_own_size(self):
+        from portals import parse_fuzzy2
+        rows=parse_fuzzy2('<table><tr><td>'+self.html+'</td></tr></table>',self.page)
+        self.assertEqual(len(rows),1)
+        row=rows[0]
+        self.assertEqual(row['title'],'MELTY BLOOD')
+        self.assertEqual(row['brand'],'渡辺製作所')
+        self.assertEqual(row['expected_size'],65298839)
+        self.assertEqual(row['release_name'],'体験版 Trial Edition2')
+        self.assertEqual(row['filename'],'MBTRIAL0930.zip')
+        self.assertIsNone(row['expected_md5'])
+        self.assertEqual(len(row['mirrors']),4)
+        self.assertTrue(all('readme' not in u for u in row['mirrors']))
+        self.assertTrue(row['mirrors'][0].startswith('https://web.archive.org/web/20030204024953id_/'))
+
+    def test_unknown_release_publisher_path_and_unrelated_files_are_rejected(self):
+        from portals import parse_fuzzy2
+        for html,page in [(self.html.replace('Trial Edition2','Trial Edition3'),self.page),
+                          (self.html.replace('渡辺製作所','別メーカー'),self.page),
+                          (self.html,self.page.replace('/MBtrial0930/','/other/')),
+                          (self.html,self.page.replace('mirror.fuzzy2.com:80','other.test')),
+                          (self.html.replace('MBTRIAL0930.zip','other.zip'),self.page)]:
+            self.assertEqual(parse_fuzzy2(html,page),[])
+
+    def test_file_in_readme_column_cannot_borrow_trial_size(self):
+        from portals import parse_fuzzy2
+        swapped=self.html.replace('readme.txt (Japanese) (2,419bytes)','temp').replace('体験版プログラム Executable (Trial Ver.) (65,298,839bytes)','readme.txt (Japanese) (2,419bytes)').replace('temp','体験版プログラム Executable (Trial Ver.) (65,298,839bytes)')
+        self.assertEqual(parse_fuzzy2(swapped,self.page),[])

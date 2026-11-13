@@ -923,10 +923,52 @@ def _fuzzy2_file_sections(block,page):
     return sections
 
 
+
+def _parse_fuzzy2_melty_trial(root,page):
+    text=' '.join(root.text().split())
+    if not re.search(r'MELTY\s+BLOOD\s+Trial Edition2',text):return []
+    if not any(n.text().strip()=='渡辺製作所' for n in root.all({'a'})):return []
+    result=[]
+    for table in root.all({'table'}):
+        rows=[]
+        for row in table.all({'tr'}):
+            owner=row.parent
+            while owner is not None and owner.tag!='table':owner=owner.parent
+            if owner is not table:continue
+            cells=[n for n in row.children if isinstance(n,a.Node) and n.tag in {'td','th'}]
+            rows.append(cells)
+        headers=[]
+        for cells in rows:
+            for column,cell in enumerate(cells):
+                header=' '.join(cell.text().split())
+                size=re.fullmatch(r'体験版プログラム\s+Executable\s*\(Trial Ver\.\)\s*\(([0-9,]+)bytes\)',header,re.I)
+                if size:headers.append((column,int(size[1].replace(',','')),len(cells)))
+        if len(headers)!=1:continue
+        column,size,width=headers[0];mirrors=[]
+        for cells in rows:
+            if len(cells)!=width:continue
+            for link in cells[column].all({'a'}):
+                target=a.resolve(page,link.attrs.get('href',''))
+                if not target or a.filename_from_url(target)!='MBTRIAL0930.zip':continue
+                raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+                mirrors+=([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw]
+        if not mirrors:continue
+        filename='MBTRIAL0930.zip'
+        ident=hashlib.sha256(('fuzzy2\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
+        result.append({'id':ident,'site':'fuzzy2','page_url':page,'original_page_url':a.original(page),
+            'title':'MELTY BLOOD','brand':'渡辺製作所','release_name':'体験版 Trial Edition2','filename':filename,
+            'mirrors':list(dict.fromkeys(mirrors)),'expected_md5':None,'expected_size':size,'size_text':str(size)+'bytes',
+            'published_at':None,'fields':{'parser':'fuzzy2-melty-trial','published_trial_label':'MELTY BLOOD Trial Edition2','distribution_kind':'trial'}})
+    return list({r['id']:r for r in result}.values())
+
+
 def parse_fuzzy2(html,page):
     parts=urlsplit(a.original(page))
-    if parts.hostname!='mirror.fuzzy2.com' or parts.path not in {'/distributes_jp/main.html','/jdm/main.html'}:return []
-    root=a.DOM(html).root;title=brand=date=None;credits=[];results=[]
+    if parts.hostname!='mirror.fuzzy2.com':return []
+    root=a.DOM(html).root
+    if parts.path=='/MBtrial0930/index.html':return _parse_fuzzy2_melty_trial(root,page)
+    if parts.path not in {'/distributes_jp/main.html','/jdm/main.html'}:return []
+    title=brand=date=None;credits=[];results=[]
     for block in root.all({'p'}):
         text=" ".join(block.text().split())
         headings=[n for n in block.children if isinstance(n,a.Node) and n.tag=='font'
