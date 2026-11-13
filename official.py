@@ -97,6 +97,14 @@ def group_heading(node,link,page):
     return heading
 
 
+def product_title_present(game,text):
+    # Publishers vary spacing around punctuation; retain every other character
+    # so short names and translated titles do not become fuzzy associations.
+    compact=lambda value:re.sub(r"\s+","",normalized(value))
+    title=compact(game["gamename"])
+    return bool(title and title in compact(text))
+
+
 def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
     root=a.DOM(html).root
     records={}
@@ -118,9 +126,11 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
         group=None;metadata_context=None
         while node is not None and node.tag not in {"body","html","root"}:
             text=describe(node)
-            names={a.filename_from_url(u) for _,u in binary_links(node,page)}
+            node_binaries=binary_links(node,page)
+            names={a.filename_from_url(u) for _,u in node_binaries}
+            paths={urlsplit(a.original(u)).path for _,u in node_binaries}
             if len(text)>6000:break
-            if len(names)>1:
+            if len(names)>1 or (not scoped and len(paths)>1):
                 if release_info({'title':context+' '+filename,'filename':filename})[0]=='other':
                     group=group_heading(node,link,page)
                 if group:
@@ -128,7 +138,8 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
                     context=text;context_node=node
                 break
             context=text;context_node=node
-            if re.search(r"体験|trial|taiken|パッチ|patch|修正|アップデート|update|ムービー|movie|動画|(?:^|\W)PV(?:$|\W)",text,re.I):break
+            if re.search(r"体験|trial|taiken|パッチ|patch|修正|アップデート|アップデータ|update|ムービー|movie|動画|(?:^|\W)PV(?:$|\W)",text,re.I):
+                if scoped or product_title_present(game,text) or labelled_product(node,page)==a.canonical(game.get('shoukai') or '') or publisher_patch_scope(node,brand):break
             node=node.parent
         label=context+" "+filename
         kind=release_info({"title":label,"filename":filename})[0] if group is None else group[0]
@@ -141,7 +152,7 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
         product_link=a.canonical(page) if published_kind else labelled_product(context_node,page)
         linked=bool(published_kind or (game.get('shoukai') and product_link==a.canonical(game['shoukai'])))
         common_scope=publisher_patch_scope(context_node,brand) if kind=='patch' else None
-        if kind=="other" or (not scoped and normalized(game["gamename"]) not in normalized(context) and not linked and not common_scope):
+        if kind=="other" or (not scoped and not product_title_present(game,context) and not linked and not common_scope):
             unsupported.append(target);continue
         key=hashlib.sha256(("official\n"+page+"\n"+filename).encode()).hexdigest()
         if key not in records:

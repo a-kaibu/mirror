@@ -357,3 +357,22 @@ class PublisherSupportNavigationTests(unittest.TestCase):
                 self.assertEqual(json.loads(rows[0]['data'])['filename'],'game_update.zip')
                 self.assertEqual([url for url,_ in fetch.requests],[game['shoukai'],'https://publisher.test/support/game.html'])
             finally:store.db.close()
+
+class SharedSupportProductIdentityTests(unittest.TestCase):
+    def test_support_heading_can_identify_the_enclosing_single_file_section(self):
+        game={**GAME,'gamename':'夜が来る! -Square of the MOON- Remastered'}
+        html='<section><h2>夜が来る！-Square of the MOON- Remastered</h2><div><h4>アップデータVer.1.01</h4><p><a href="NightRemaster_updater_ver101.zip">ダウンロード</a></p></div></section>'
+        rows,_=o.parse(html,PAGE,game,BRAND,scoped=False)
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['filename'],'NightRemaster_updater_ver101.zip')
+        self.assertEqual(rows[0]['release_name'],'パッチ ver101')
+
+    def test_same_filename_in_other_game_section_does_not_borrow_identity(self):
+        html='<main><section><h2>anemoi</h2><p><a href="/one/update.zip">修正パッチ</a></p></section><section><h2>Other Game</h2><p><a href="/two/update.zip">修正パッチ</a></p></section></main>'
+        rows,unknown=o.parse(html,PAGE,GAME,BRAND,scoped=False)
+        self.assertEqual([r['mirrors'] for r in rows],[['https://key.visualarts.co.jp/one/update.zip']])
+        self.assertEqual(unknown,['https://key.visualarts.co.jp/two/update.zip'])
+
+    def test_title_shortening_or_translation_requires_separate_evidence(self):
+        for text in ['Short Title','ムーン・ゴースト']:
+            self.assertFalse(o.product_title_present({'gamename':'Moon Ghost Full Title'},text))
