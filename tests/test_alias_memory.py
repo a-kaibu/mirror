@@ -59,3 +59,25 @@ class AliasMemoryTests(unittest.TestCase):
             self.assertLess(tracemalloc.get_traced_memory()[1],2*1024**2)
         finally:tracemalloc.stop()
         self.assertEqual(self.manufacturer('alias'),'Canonical')
+
+    def test_foreign_key_checks_and_manufacturer_lookup_use_indexes(self):
+        for table,column in [('item_catalog','product_id'),('products','manufacturer_id'),('manufacturer_aliases','manufacturer_id')]:
+            plan=[r[3] for r in self.store.db.execute('EXPLAIN QUERY PLAN SELECT rowid FROM '+table+' WHERE '+column+'=?',('fixture',))]
+            self.assertTrue(any('SEARCH '+table+' ' in step for step in plan),plan)
+            self.assertFalse(any('SCAN '+table in step for step in plan),plan)
+        for table in ['products','manufacturers']:
+            plan=[r[3] for r in self.store.db.execute('EXPLAIN QUERY PLAN DELETE FROM '+table+' WHERE id=?',('fixture',))]
+            self.assertFalse(any('SCAN ' in step for step in plan),plan)
+
+    def test_existing_catalogue_index_migration_preserves_data_and_is_idempotent(self):
+        self.add('a','Typo');self.add('b','Canonical');c.alias_maker(self.store,'Typo','Canonical')
+        tables=['manufacturers','manufacturer_aliases','products','item_catalog','items']
+        before={t:[tuple(r) for r in self.store.db.execute('SELECT * FROM '+t+' ORDER BY 1')] for t in tables}
+        for index in ['item_catalog_product','products_manufacturer','manufacturer_aliases_manufacturer']:
+            self.store.db.execute('DROP INDEX '+index)
+        self.store.db.commit()
+        c.initialize(self.store);c.initialize(self.store)
+        after={t:[tuple(r) for r in self.store.db.execute('SELECT * FROM '+t+' ORDER BY 1')] for t in tables}
+        self.assertEqual(after,before)
+        for table,index in [('item_catalog','item_catalog_product'),('products','products_manufacturer'),('manufacturer_aliases','manufacturer_aliases_manufacturer')]:
+            self.assertIn(index,{r[1] for r in self.store.db.execute('PRAGMA index_list('+table+')')})

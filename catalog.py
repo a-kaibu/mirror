@@ -53,6 +53,9 @@ def initialize(store):
       CREATE TABLE IF NOT EXISTS wayback_lookups(url TEXT PRIMARY KEY,queried_at TEXT NOT NULL,status TEXT NOT NULL,data TEXT,error TEXT);
       CREATE TABLE IF NOT EXISTS wayback_candidates(item_id TEXT NOT NULL,url TEXT NOT NULL,original_url TEXT NOT NULL,captured_at TEXT NOT NULL,index_digest TEXT,PRIMARY KEY(item_id,url));
       CREATE TABLE IF NOT EXISTS published_objects(key TEXT PRIMARY KEY, sha256 TEXT NOT NULL, size INTEGER NOT NULL, verified_at TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS item_catalog_product ON item_catalog(product_id);
+      CREATE INDEX IF NOT EXISTS products_manufacturer ON products(manufacturer_id);
+      CREATE INDEX IF NOT EXISTS manufacturer_aliases_manufacturer ON manufacturer_aliases(manufacturer_id);
     """)
     if "remote_verified_at" not in {r[1] for r in db.execute("PRAGMA table_info(items)")}:
         db.execute("ALTER TABLE items ADD COLUMN remote_verified_at TEXT")
