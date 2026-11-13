@@ -1,5 +1,7 @@
 """Keep acquiring newly discovered records while source discovery continues."""
 import argparse
+import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
@@ -24,7 +26,38 @@ def queue_refused_replays(store,site):
             (row['item_id'],alternate,row['original_url'],row['captured_at'],row['index_digest']))
 
 
+
+def queue_recovered_mirrors(store,site):
+    """Retry an untried observed healthy mirror once; never loop on old failures."""
+    if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='source_health' AND type='table'").fetchone():return 0
+    if not store.db.execute('SELECT 1 FROM source_health WHERE healthy=1 LIMIT 1').fetchone():return 0
+    store.db.execute('CREATE TABLE IF NOT EXISTS recovered_mirror_requeues(item_id TEXT,url TEXT,requeued_at TEXT,PRIMARY KEY(item_id,url))');store.db.commit()
+    ids=[r[0] for r in store.db.execute("SELECT id FROM items WHERE site=? AND status='failed'",(site,))]
+    count=0
+    for ident in ids:
+        try:
+            with exclusive_file(store.root/'.claims'/(hashlib.sha256(ident.encode()).hexdigest()+'.lock'),blocking=False):
+                row=store.db.execute("SELECT * FROM items WHERE id=? AND status='failed'",(ident,)).fetchone()
+                if not row:continue
+                record=json.loads(row['data'])
+                if not (record.get('expected_md5') or record.get('expected_sha256')):continue
+                if (record.get('fields') or {}).get('source_association_quarantined'):continue
+                mirrors=record.get('mirrors',[])+a.matching_mirrors(store,row,record)
+                fresh=[url for url in a.healthy_source_mirrors(store,site,mirrors)
+                    if not store.db.execute('SELECT 1 FROM attempts WHERE item_id=? AND url=? LIMIT 1',(ident,url)).fetchone()
+                    and not store.db.execute('SELECT 1 FROM recovered_mirror_requeues WHERE item_id=? AND url=?',(ident,url)).fetchone()]
+                if not fresh:continue
+                with store.db:
+                    changed=store.db.execute("UPDATE items SET status='pending',error=NULL WHERE id=? AND status='failed' AND data=?",(ident,row['data'])).rowcount
+                    if changed:
+                        store.db.executemany('INSERT INTO recovered_mirror_requeues VALUES(?,?,?)',[(ident,url,a.now()) for url in fresh])
+                        count+=1
+        except BlockingIOError:continue
+    return count
+
+
 def ready(store,site):
+    queue_recovered_mirrors(store,site)
     queue_refused_replays(store,site)
     # A newly discovered dated binary capture is a reason to retry immediately.
     # Previously failed URLs alone do not cause a tight retry loop.

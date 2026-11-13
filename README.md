@@ -406,6 +406,10 @@ health-check history are retained locally with their SHA-256 values in SQLite.
 For checksum-bound files, fresh healthy hosts are preferred across source-site
 labels, using only already observed mirror URLs. Posted checksums still apply,
 and archived captures remain fallback candidates. Health expires after three hours.
+Archive watchers requeue a failed checksum-bound observation when a recovered
+host supplies an observed URL that has never been attempted. Per-file claims and
+SQLite `recovered_mirror_requeues` prevent repeated requeues of that URL; hashless
+and quarantined observations are excluded. Source metadata is preserved.
 The persistent timer catches missed runs
 when the user manager returns; checks require the host to be running.
 HF credentials remain in the local AWS profile and are not copied into CI.
