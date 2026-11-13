@@ -142,7 +142,10 @@ def parse_mimimaid(html,page):
     for heading in root.all({"span"}):
         classes=heading.attrs.get("class", "").split()
         if "style9" not in classes:
-            if "style6" not in classes or heading.parent.tag!="p" or not heading.parent.text().lstrip().startswith("■"):continue
+            if heading.parent.tag!="p":continue
+            before=heading.parent.children[:heading.parent.children.index(heading)]
+            prefix="".join(n.text() if isinstance(n,a.Node) else n for n in before)
+            if not re.fullmatch(r"\s*■\s*",prefix):continue
         title=heading.text();group=heading.parent
         while group.parent and group.tag!="table":group=group.parent
         for block in group.all({"table"}):

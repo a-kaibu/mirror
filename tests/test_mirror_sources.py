@@ -130,6 +130,19 @@ class MultiInsideTests(unittest.TestCase):
 
 
 class MimimaidTests(unittest.TestCase):
+    def test_old_circle_heading_uses_its_marker_not_a_css_number(self):
+        from portals import parse_mimimaid
+        html=Path("tests/fixtures/mimimaid-sage-2008.html").read_text()
+        rows=parse_mimimaid(html,"http://web.archive.org/web/20080803164204/http://mimimaid.moe.hm/html/x18-doujin/Sage/index.htm")
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]["brand"],"Sage")
+        self.assertEqual(rows[0]["title"],"さま☆ばけ")
+        self.assertEqual(rows[0]["expected_size"],25630005)
+        self.assertEqual(rows[0]["expected_md5"],"62470d7fcab628dff28e2e7c32502e4b")
+        self.assertEqual(rows[0]["published_at"],"2007-08-31")
+        self.assertEqual(rows[0]["release_name"],"体験版")
+        self.assertEqual(parse_mimimaid(html.replace('■<span class="style4">','<span class="style4">'),"http://mimimaid.moe.hm/html/x18-doujin/Sage/index.htm"),[])
+
     def test_2008_heading_retains_trial_movie_and_exact_constraints(self):
         from portals import parse_mimimaid
         rows=parse_mimimaid(Path("tests/fixtures/mimimaid-2008.html").read_text(),"http://web.archive.org/web/20081202021820/http://mimimaid.moe.hm:80/html/x18/studio-jyaren/index.htm")
