@@ -246,7 +246,13 @@ def collect(path, request=e.query, max_tables=None, max_pages=None, delay=3):
             state=db.execute("SELECT status FROM _capture_state WHERE name=?",(table["table_name"],)).fetchone()
             if state and state[0]=="complete":continue
             if max_tables is not None and attempted>=max_tables:break
-            capture(db,table,request,delay,max_pages);attempted+=1
+            planned=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_range_plans'").fetchone()
+            if planned:planned=db.execute("SELECT 1 FROM _range_plans WHERE name=?",(table["table_name"],)).fetchone()
+            if planned:
+                from erogamescape_ranges import capture_ranges
+                capture_ranges(db,table,request,delay,max_pages)
+            else:capture(db,table,request,delay,max_pages)
+            attempted+=1
         print("full metadata states",[tuple(r) for r in db.execute("SELECT status,count(*) FROM _capture_state GROUP BY status")],flush=True)
         return len(targets),db.execute("SELECT count(*) FROM _capture_state WHERE status='complete'").fetchone()[0]
     finally:db.close()

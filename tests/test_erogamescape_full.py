@@ -150,3 +150,30 @@ class FixedCharacterBatchTests(unittest.TestCase):
             with self.subTest(length=length):self.assertEqual(f.capture_batch_size({'columns':[{'type':'character','max_length':length}]}),500)
         self.assertEqual(f.capture_batch_size({'columns':[{'type':'text','max_length':1}]}),500)
         self.assertEqual(f.capture_batch_size({'columns':[{'type':'character','max_length':1}]*17}),500)
+
+
+class FullCollectionResumeTests(unittest.TestCase):
+    def test_saved_ranges_are_resumed_and_one_failed_table_does_not_hide_others(self):
+        import erogamescape_ranges as ranges
+        schema=[{'table_name':name,'columns':[column('id','integer')],'primary_key':['id']} for name in ['ranged','regular','done','users']]
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'full.sqlite3'
+            db=sqlite3.connect(path);f.initialize(db);ranges.initialize(db)
+            db.execute("INSERT INTO _capture_state(name,status) VALUES('done','complete')")
+            db.execute("INSERT INTO _range_plans VALUES('ranged','id','integer','null','original-plan-time')")
+            db.execute("INSERT INTO _capture_ranges VALUES('ranged','01','10','20','pending','checkpoint-time',NULL)")
+            db.commit();db.close()
+            calls=[]
+            def failed(db,table,request,delay,max_pages):
+                calls.append(('regular',table['table_name'],delay,max_pages))
+                db.execute("INSERT OR REPLACE INTO _capture_state(name,status) VALUES(?,'failed')",(table['table_name'],));db.commit()
+            def resumed(db,table,request,delay,max_pages):
+                calls.append(('range',table['table_name'],delay,max_pages))
+                self.assertEqual(tuple(db.execute("SELECT path,lower_key,upper_key,status FROM _capture_ranges").fetchone()),('01','10','20','pending'))
+                db.execute("INSERT OR REPLACE INTO _capture_state(name,status) VALUES(?,'failed')",(table['table_name'],));db.commit()
+            def request(sql):
+                self.assertEqual(sql,f.SCHEMA_SQL)
+                return html([{'id':1,'tables':schema}])
+            with patch.object(f,'capture',side_effect=failed),patch.object(ranges,'capture_ranges',side_effect=resumed):
+                self.assertEqual(f.collect(path,request=request,delay=0,max_pages=7),(3,1))
+            self.assertEqual(calls,[('range','ranged',0,7),('regular','regular',0,7)])
