@@ -64,9 +64,9 @@ class NestedSuezoCatalogueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store=a.Store(tmp)
             try:
-                first=Fetch([Response(root,url=w.URL),Response(b'<a href="brand.html">Brand</a>',url=w.URL+'top.html'),Response(b'empty',url=w.URL+'old-top.html'),Response(b'empty',url=w.URL+'dl3.html')])
+                first=Fetch([Response(root,url=w.URL),Response(b'<a href="middle.html">More</a>',url=w.URL+'top.html'),Response(b'<a href="deep.html">More</a>',url=w.URL+'middle.html'),Response(b'<a href="brand.html">Brand</a>',url=w.URL+'deep.html')])
                 result=w.check(store,first,capture=False)
-                self.assertFalse(result['healthy']);self.assertEqual(result['next_catalog_offset'],3)
+                self.assertFalse(result['healthy']);self.assertEqual(result['next_catalog_offset'],5)
                 self.assertIn(w.URL+'brand.html',result['catalog_urls'])
                 failed=w.check(store,Fetch([Response(b'Unavailable',url=w.URL)]),capture=False)
                 self.assertEqual(failed['catalog_urls'],result['catalog_urls'])
@@ -79,3 +79,25 @@ class NestedSuezoCatalogueTests(unittest.TestCase):
     def test_frame_targets_are_observed_but_foreign_or_archived_targets_are_not_followed(self):
         html='<iframe src="brands/menu.html"></iframe><a href="http://evil.test/brand.html">Bad</a><a href="http://web.archive.org/web/20000101000000/http://suezou.dyndns.org/brand.html">Old</a><a href="profile.html">Profile</a>'
         self.assertEqual(w.catalogue_links(a.DOM(html).root,w.URL),[w.URL+'brands/menu.html'])
+
+
+class SuezoYearIndexPriorityTests(unittest.TestCase):
+    def test_existing_brand_target_is_checked_before_other_year_indexes(self):
+        urls=[w.URL+'dl-18info_2024.html',w.URL+'dl-18info_2023.html',w.URL+'dl-18info_2022.html',w.URL+'brand.html']
+        root=('<title>すえぞう</title>'+''.join('<a href="'+url+'">Year</a>' for url in urls[:3])).encode()
+        fetch=Fetch([Response(root,url=w.URL),Response(b'<iframe src="brand.html"></iframe>',url=urls[0]),Response(b'<a href="demo.zip">Trial</a>',url=urls[3])])
+        result=w.probe(fetch,catalog_urls=urls)
+        self.assertTrue(result['healthy'])
+        self.assertEqual([url for url,_ in fetch.requests],[w.URL,urls[0],urls[3]])
+        self.assertEqual(len(result['publisher_checks']),2)
+        self.assertEqual(w.INTERVAL,10800)
+    def test_pending_known_descendant_resumes_after_three_children(self):
+        urls=[w.URL+'brand.html',w.URL+'year.html',w.URL+'nav-a.html',w.URL+'nav-b.html']
+        root='<title>すえぞう</title>'.encode()
+        first=Fetch([Response(root,url=w.URL),Response(b'<a href="nav-b.html">Next</a>',url=urls[2]),Response(b'<a href="year.html">Next</a>',url=urls[3]),Response(b'<a href="brand.html">Publisher</a>',url=urls[1])])
+        result=w.probe(first,catalog_offset=2,catalog_urls=urls)
+        self.assertFalse(result['healthy']);self.assertEqual(len(first.requests),4)
+        self.assertEqual(result['next_catalog_offset'],0)
+        second=Fetch([Response(root,url=w.URL),Response(b'<a href="demo.zip">Trial</a>',url=urls[0])])
+        resumed=w.probe(second,catalog_offset=result['next_catalog_offset'],catalog_urls=result['catalog_urls'])
+        self.assertTrue(resumed['healthy']);self.assertEqual(second.requests[1][0],urls[0])

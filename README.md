@@ -381,8 +381,10 @@ units with `systemctl --user link` using absolute paths, then run
 `systemctl --user enable --now mirror-suezou-watch.timer`.
 The probe requires recognizable catalogue content and binary links, not merely
 HTTP 200. Recovery triggers live discovery and the separate archive worker.
-Each check inspects up to three publisher pages and advances a saved cursor, so
-an empty first catalogue does not hide recovery elsewhere. Response HTML and
+Each check inspects up to three catalogue or publisher pages and advances a
+saved cursor. Observed descendants are checked before unrelated year indexes,
+even when already present in the saved catalogue. Pending descendants resume
+at the next scheduled check when the three-page budget is exhausted. Response HTML and
 health-check history are retained locally with their SHA-256 values in SQLite.
 The persistent timer catches missed runs
 when the user manager returns; checks require the host to be running.

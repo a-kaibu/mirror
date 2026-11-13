@@ -49,29 +49,39 @@ def probe(fetcher, catalog_offset=0, save_page=None, catalog_urls=None):
             if isinstance(target,str) and not a.WAYBACK.match(target) and m.allowed(source,target) and urlsplit(target).scheme in {'http','https'} and re.search(r'\.html?$',urlsplit(target).path,re.I):prior.append(target)
         catalog=list(dict.fromkeys(prior+catalogue_links(root,actual)))
         if not catalog:return {'healthy':False,'error':'no publisher catalogue links','catalog_urls':[]}
-        checks=[];cursor=catalog_offset%len(catalog);checked=set()
-        # Follow only observed links. Newly discovered nested catalogue pages
-        # join the persistent rotation; each scheduled check still reads at most
-        # three children, even if the catalogue has several navigation levels.
+        checks=[];cursor=catalog_offset%len(catalog);checked=set();priority=[]
+        # Prefer observed descendants within the same three-child budget.
+        # Otherwise a root containing many yearly indexes delays all actual
+        # publisher pages for many scheduled checks, despite a reachable site.
+        def resume_cursor():
+            pending=next((url for url in priority if url not in checked),None)
+            return catalog.index(pending) if pending else cursor
         for step in range(3):
-            choices=[(cursor+delta)%len(catalog) for delta in range(len(catalog)) if catalog[(cursor+delta)%len(catalog)] not in checked]
-            if not choices:break
-            index=choices[0];target=catalog[index];checked.add(target)
+            while priority and priority[0] in checked:priority.pop(0)
+            if priority:
+                target=priority.pop(0);index=catalog.index(target)
+            else:
+                choices=[(cursor+delta)%len(catalog) for delta in range(len(catalog)) if catalog[(cursor+delta)%len(catalog)] not in checked]
+                if not choices:break
+                index=choices[0];target=catalog[index]
+            checked.add(target)
             try:
                 child_url,child,charset=read(target,4*1024*1024)
                 page=a.DOM(a.decode_html(child,charset)).root
-                for discovered in catalogue_links(page,child_url):
+                children=catalogue_links(page,child_url)
+                for discovered in children:
                     if discovered not in catalog:catalog.append(discovered)
+                priority=list(dict.fromkeys([url for url in children if url not in checked]+priority))
                 binaries=[a.resolve(child_url,n.attrs.get('href','')) for n in page.all({'a'})]
                 found=any(u and a.EXT.search(urlsplit(a.original(u)).path) for u in binaries)
                 checks.append({'url':target,'response_url':child_url,'distribution_links':found})
                 cursor=(index+1)%len(catalog)
-                if found:return {'healthy':True,'url':actual,'sha256':hashlib.sha256(raw).hexdigest(),'publisher_checks':checks,'next_catalog_offset':cursor,'catalog_urls':catalog}
+                if found:return {'healthy':True,'url':actual,'sha256':hashlib.sha256(raw).hexdigest(),'publisher_checks':checks,'next_catalog_offset':resume_cursor(),'catalog_urls':catalog}
             except (OSError,ValueError,a.http.client.HTTPException) as error:
                 if isinstance(error,a.HTTPError):error.close()
                 checks.append({'url':target,'error':str(error)})
                 cursor=(index+1)%len(catalog)
-        return {'healthy':False,'error':'checked publisher pages have no distribution links','publisher_checks':checks,'next_catalog_offset':cursor,'catalog_urls':catalog}
+        return {'healthy':False,'error':'checked publisher pages have no distribution links','publisher_checks':checks,'next_catalog_offset':resume_cursor(),'catalog_urls':catalog}
 
     except (OSError,ValueError,a.http.client.HTTPException) as error:
         if isinstance(error,a.HTTPError):error.close()
