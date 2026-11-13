@@ -130,6 +130,30 @@ class CatalogTests(unittest.TestCase):
         row=self.store.db.execute("SELECT * FROM items WHERE id='other'").fetchone()
         self.assertEqual(a.matching_mirrors(self.store,row,other),[])
 
+    def test_recovery_uses_other_sources_and_their_indexed_capture_dates(self):
+        donor=self.record("donor",site="multi_inside")
+        donor["mirrors"]=["https://mirror.test/shared.zip"]
+        self.store.add(donor)
+        capture="http://web.archive.org/web/20030102030405id_/https://mirror.test/shared.zip"
+        self.store.db.execute("INSERT INTO wayback_candidates VALUES(?,?,?,?,?)",("donor",capture,donor["mirrors"][0],"20030102030405","indexed-digest"));self.store.db.commit()
+        target=self.record("target",site="fuzzy2");target["mirrors"]=[];self.store.add(target)
+        row=self.store.db.execute("SELECT * FROM items WHERE id='target'").fetchone()
+        self.assertEqual(a.matching_mirrors(self.store,row,target),[capture,*donor['mirrors']])
+        fetch=Fetch([Response(PAYLOAD)])
+        self.assertEqual(a.download(self.store,fetch,ident='target',export=False),0)
+        updated=self.store.db.execute("SELECT * FROM items WHERE id='target'").fetchone()
+        self.assertEqual(updated['source_url'],capture)
+        self.assertEqual(json.loads(updated['data'])['mirrors'],[])
+
+    def test_other_source_recovery_respects_sha256_and_can_help_lathercraft(self):
+        donor=self.record('donor',site='holyseal');donor['mirrors']=['https://mirror.test/shared.zip']
+        donor['expected_sha256']='a'*64;self.store.add(donor)
+        target=self.record('target');target['mirrors']=[];target['expected_sha256']='b'*64;self.store.add(target)
+        row=self.store.db.execute("SELECT * FROM items WHERE id='target'").fetchone()
+        self.assertEqual(a.matching_mirrors(self.store,row,target),[])
+        target['expected_sha256']='a'*64
+        self.assertEqual(a.matching_mirrors(self.store,row,target),donor['mirrors'])
+
     def test_repaired_movies_are_not_game_patches(self):
         record = self.record("movie")
         record["filename"] = "opening_movie.zip"

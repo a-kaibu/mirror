@@ -775,27 +775,34 @@ def transfer(fetcher, url, destination, record):
 
 
 def matching_mirrors(store, row, record):
-    """Recover URLs only from an explicit same-maker published MD5 match.
+    """Recover observed URLs from any same-maker published MD5 association.
 
     Original source metadata remains unchanged. Actual selected URLs and every
     failed attempt are recorded by download; all bytes still pass validate().
     """
-    if record["site"] == "lathercraft" or not record.get("expected_md5") or not record.get("brand"):
+    if not record.get("expected_md5") or not record.get("brand"):
         return []
-    candidates = store.db.execute("""SELECT i.data FROM items i
+    candidates = store.db.execute("""SELECT i.id,i.data FROM items i
         JOIN item_catalog c ON c.item_id=i.id JOIN products p ON p.id=c.product_id
-        WHERE i.site='lathercraft' AND p.manufacturer_id=(SELECT p2.manufacturer_id
-        FROM item_catalog c2 JOIN products p2 ON p2.id=c2.product_id WHERE c2.item_id=?)""", (row["id"],))
+        WHERE i.id!=? AND json_extract(i.data,'$.expected_md5')=?
+        AND p.manufacturer_id=(SELECT p2.manufacturer_id
+        FROM item_catalog c2 JOIN products p2 ON p2.id=c2.product_id WHERE c2.item_id=?)""",
+        (row["id"],record["expected_md5"],row["id"]))
     mirrors = []
     for candidate in candidates:
-        donor = json.loads(candidate[0])
-        if donor.get("expected_md5") != record["expected_md5"]:
-            continue
+        donor = json.loads(candidate['data'])
         if (record.get("expected_size") is not None and donor.get("expected_size") is not None
                 and record["expected_size"] != donor["expected_size"]):
             continue
-        mirrors.extend(sorted(donor["mirrors"], key=lambda u: urlsplit(u).hostname != "storage1.lathercraft.net"))
-    return list(dict.fromkeys(mirrors))
+        if (record.get("expected_sha256") and donor.get("expected_sha256")
+                and record['expected_sha256']!=donor['expected_sha256']):
+            continue
+        # These are indexed captures of the donor's actual published URLs,
+        # never a guessed path or a capture date borrowed from another file.
+        mirrors.extend(r[0] for r in store.db.execute(
+            'SELECT url FROM wayback_candidates WHERE item_id=? ORDER BY captured_at DESC',(candidate['id'],)))
+        mirrors.extend(donor["mirrors"])
+    return sorted(dict.fromkeys(mirrors),key=lambda u:urlsplit(u).hostname!='storage1.lathercraft.net')
 
 
 def recover_completed_transfer(store,row,record,path,rel):
@@ -842,7 +849,10 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
         path.parent.mkdir(parents=True, exist_ok=True)
         if recover_completed_transfer(store,row,record,path,rel):continue
         captures = [r[0] for r in store.db.execute("SELECT url FROM wayback_candidates WHERE item_id=? ORDER BY captured_at DESC", (row["id"],))]
-        mirrors = list(dict.fromkeys(matching_mirrors(store, row, record) + captures + record["mirrors"]))
+        recovered = matching_mirrors(store, row, record)
+        primary = [u for u in recovered if urlsplit(u).hostname=='storage1.lathercraft.net']
+        fallback = [u for u in recovered if u not in primary]
+        mirrors = list(dict.fromkeys(primary + captures + record["mirrors"] + fallback))
         if not mirrors:
             store.update(row["id"], status="failed", error="No mirror link preserved on source page")
         if record["site"] == "lathercraft":
