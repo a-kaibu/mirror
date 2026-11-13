@@ -634,6 +634,31 @@ def parse_getchu(html, page):
     return list(result.values())
 
 
+def xgame_labeled_variants(fields):
+    """Join multiline filename and MD5 rows by their explicit quality labels."""
+    lines=lambda value:[line.strip() for line in value.splitlines() if line.strip()]
+    names=lines(fields.get('登録名',''))
+    if len(names)<2:return None
+    title_lines=lines(fields.get('素材名',''))
+    title=re.fullmatch(r'『(.+?)』',title_lines[0]) if title_lines else None
+    if not title:return []
+    key=lambda value:re.sub(r'\s+',' ',unicodedata.normalize('NFKC',value)).strip()
+    filenames={};digests={}
+    for line in names:
+        match=re.fullmatch(r'(.+?)\s+(\S+)',line)
+        if not match or not a.EXT.search(match[2]) or Path(match[2]).name!=match[2]:return []
+        label=key(match[1])
+        if label in filenames:return []
+        filenames[label]=(match[1],match[2])
+    for line in lines(fields.get('ファイルサイズ/MD5','')):
+        match=re.fullmatch(r'(.+?)\s+([0-9]+(?:\.[0-9]+)?\s*[KMGT]i?B)\s*/\s*MD5\s*[:：]\s*([a-f0-9]{32})',key(line),re.I)
+        if not match or key(match[1]) in digests:return []
+        digests[key(match[1])]=(match[2],match[3].lower())
+    if set(filenames)!=set(digests) or set(filenames)!={key(label) for label in title_lines[1:]}:return []
+    if len({filename for label,filename in filenames.values()})!=len(filenames):return []
+    return [(title[1],release,filename,*digests[label]) for label,(release,filename) in filenames.items()]
+
+
 def parse_xgame(html,page):
     parts=urlsplit(a.original(page))
     if parts.hostname not in {'www.xgamedata.com','xgamedata.com'} or not re.fullmatch(r'/demo\d+/g\d+/',parts.path):return []
@@ -665,21 +690,42 @@ def parse_xgame(html,page):
     if len(brands)!=1:return []
     brand=brands.pop();result=[]
     if not evidence:evidence={'method':'brand_navigation','published_name':brand}
+    def append_record(title,release,filename,md5,byte_count,size_text,fields):
+        candidates=[target for target in links if unquote(Path(urlsplit(a.original(target)).path).name)==filename]
+        mirrors=[]
+        for target in candidates:
+            raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+            if stamp:mirrors.append(a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme))
+            mirrors.append(raw)
+        ident=hashlib.sha256(('xgame\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
+        result.append({'id':ident,'site':'xgame','page_url':page,'original_page_url':a.original(page),
+            'title':title,'brand':brand,'release_name':release,'filename':filename,
+            'expected_md5':md5,'expected_size':byte_count,'size_text':size_text,
+            'published_at':None,'mirrors':list(dict.fromkeys(mirrors)),
+            'fields':{'published_distribution_fields':fields,'動作条件':fields.get('動作条件'),
+                '適用条件':fields.get('動作条件'),'転載条件':fields.get('転載条件'),
+                'brand_evidence':evidence,'source_link_missing':not bool(candidates)}})
     sections=re.split(r'(?=【\s*(?:素\s*材|ソ\s*フ\s*ト)\s*名\s*】)',root.text())
     for section in sections[1:]:
-        fields={re.sub(r'\s+','',unicodedata.normalize('NFKC',key)):value.strip().splitlines()[0].strip()
+        raw_fields={re.sub(r'\s+','',unicodedata.normalize('NFKC',key)):value.strip()
                 for key,value in re.findall(r'【([^】]+)】\s*(.*?)(?=【|$)',section,re.S) if value.strip()}
+        fields={key:value.splitlines()[0].strip() for key,value in raw_fields.items()}
         legacy='ソフト名' in fields
+        variants=xgame_labeled_variants(raw_fields) if not legacy else None
+        if variants is not None:
+            for title,release,filename,size_text,md5 in variants:
+                append_record(title,release,filename,md5,None,size_text,raw_fields)
+            continue
         label=fields.get('素材名') or fields.get('ソフト名','')
         title=re.fullmatch(r'『(.+?)』\s*(.+)',label)
         size=fields.get('ファイルサイズ/MD5','');checksum=re.search(r'MD5\s*[:：]\s*([a-fA-F0-9]{32})(?![a-fA-F0-9])',size,re.I)
-        names=[name.strip() for name in fields.get('登録名','').split('/')]
+        names=[name.strip() for name in fields.get('登録名','').replace('／','/').split('/')]
         sizes=[]
         if legacy:
             # Older XES readmes publish exact byte counts, sometimes parallel
             # slash-separated filename/size/quality lists. Bind by position only
             # when every count is explicit and the lists have equal lengths.
-            byte_values=fields.get('バイト数','').split('/')
+            byte_values=fields.get('バイト数','').replace('／','/').split('/')
             if len(byte_values)!=len(names):continue
             for value in byte_values:
                 match=re.fullmatch(r'\s*([0-9][0-9,]*)\s*(?:bytes?|バイト)\s*',unicodedata.normalize('NFKC',value),re.I)
@@ -688,23 +734,11 @@ def parse_xgame(html,page):
             if len(sizes)!=len(names) or any(size<=0 for size in sizes):continue
         elif not checksum or len(names)!=1:continue
         if not title or any(not name or not a.EXT.search(name) for name in names):continue
-        releases=title[2].split('/')
+        releases=title[2].replace('／','/').split('/')
         for index,filename in enumerate(names):
-            candidates=[target for target in links if unquote(Path(urlsplit(a.original(target)).path).name)==filename]
-            mirrors=[]
-            for target in candidates:
-                raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
-                if stamp:mirrors.append(a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme))
-                mirrors.append(raw)
-            ident=hashlib.sha256(('xgame\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
-            result.append({'id':ident,'site':'xgame','page_url':page,'original_page_url':a.original(page),
-                'title':title[1],'brand':brand,'release_name':releases[index].strip() if len(releases)==len(names) else title[2],'filename':filename,
-                'expected_md5':checksum[1].lower() if checksum else None,'expected_size':sizes[index] if legacy else None,
-                'size_text':str(sizes[index])+' bytes' if legacy else size.split('/')[0].strip(),
-                'published_at':None,'mirrors':list(dict.fromkeys(mirrors)),
-                'fields':{'published_distribution_fields':fields,'動作条件':fields.get('動作条件'),
-                    '適用条件':fields.get('動作条件'),'転載条件':fields.get('転載条件'),
-                    'brand_evidence':evidence,'source_link_missing':not bool(candidates)}})
+            append_record(title[1],releases[index].strip() if len(releases)==len(names) else title[2],filename,
+                checksum[1].lower() if checksum else None,sizes[index] if legacy else None,
+                str(sizes[index])+' bytes' if legacy else size.split('/')[0].strip(),fields)
     return result
 
 

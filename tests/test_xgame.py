@@ -106,3 +106,42 @@ class LegacyXgameTests(unittest.TestCase):
     def test_modern_format_still_requires_its_published_digest(self):
         html=HTML.replace('MD5:8CE2307C23D1E149A679BA89E12C6126','').replace('MD5:73BC3AF33BF4227F2297FD68127393E9','')
         self.assertEqual(parse_xgame(html,PAGE),[])
+
+
+class LabeledXgameTests(unittest.TestCase):
+    def html(self):
+        return """<a href="http://www.xgamedata.com/ti0/su.html#ＺＥＲＯ">このブランドの他のタイトルデータを見る</a>
+<a href="http://xes.plala.jp/demo5/g5413/mama_demo640.mpg">高画質</a>
+<a href="http://xes1.plala.jp/demo5/g5413/mama_demo320.mpg">低画質</a>
+<div>【素　材　名】『Game』
+デモムービー高解像度版（６４０×４８０）
+デモムービー低解像度版（３２０×２４０）
+【登　録　名】
+デモムービー高解像度版（６４０×４８０）　mama_demo640.mpg
+デモムービー低解像度版（３２０×２４０）　mama_demo320.mpg
+【ﾌｧｲﾙｻｲｽﾞ/MD5】
+デモムービー低解像度版（３２０×２４０）　22.5MB/MD5:74F32DA9BA3C860B2944EB5C5B931FE5
+デモムービー高解像度版（６４０×４８０）　46.8MB/MD5:75EA8C6A45BA1E66AA3161EB2D4DC2B2
+【動作条件】MPEG再生環境
+【転載条件】著作権者の了承無き転載不可</div>"""
+
+    def test_md5_rows_match_quality_labels_even_when_reordered(self):
+        rows=parse_xgame(self.html(),'http://www.xgamedata.com/demo5/g5413/')
+        self.assertEqual([r['filename'] for r in rows],['mama_demo640.mpg','mama_demo320.mpg'])
+        self.assertEqual([r['expected_md5'] for r in rows],['75ea8c6a45ba1e66aa3161eb2d4dc2b2','74f32da9ba3c860b2944eb5c5b931fe5'])
+        self.assertEqual([r['size_text'] for r in rows],['46.8MB','22.5MB'])
+        self.assertTrue(all(r['expected_size'] is None for r in rows))
+        self.assertEqual(rows[0]['title'],'Game')
+        self.assertEqual(rows[0]['fields']['適用条件'],'MPEG再生環境')
+
+    def test_incomplete_or_ambiguous_labels_never_borrow_other_md5(self):
+        html=self.html();page='http://www.xgamedata.com/demo5/g5413/'
+        self.assertEqual(parse_xgame(html.replace('22.5MB/MD5:74F32DA9BA3C860B2944EB5C5B931FE5','missing'),page),[])
+        self.assertEqual(parse_xgame(html.replace('22.5MB/MD5:74F32DA9BA3C860B2944EB5C5B931FE5','22.5MB/MD5:74F32DA9BA3C860B2944EB5C5B931FE5\nデモムービー低解像度版（３２０×２４０） 22.5MB/MD5:74F32DA9BA3C860B2944EB5C5B931FE5'),page),[])
+        self.assertEqual(parse_xgame(html.replace('mama_demo320.mpg','mama_demo640.mpg'),page),[])
+
+    def test_fullwidth_legacy_separators_preserve_quality_assignment(self):
+        html=LegacyXgameTests().html().replace('MOV_L.LZH/MOV_S.LZH','MOV_L.LZH／MOV_S.LZH').replace('27769131byte/4357297byte','27769131byte／4357297byte').replace('高解像度ムービー/低解像度ムービー','高解像度ムービー／低解像度ムービー')
+        rows=parse_xgame(html,'http://www.xgamedata.com/demo2/g1552/')
+        self.assertEqual(len(rows),3)
+        self.assertEqual([r['release_name'] for r in rows[1:]],['高解像度ムービー','低解像度ムービー'])
