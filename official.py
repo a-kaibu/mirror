@@ -187,7 +187,11 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
 def seeds(store):
     brands={row[0]:json.loads(row[1]) for row in store.db.execute("SELECT external_id,data FROM external_metadata WHERE provider='erogamescape' AND entity='brand'")}
     eligible={row[0] for row in store.db.execute("SELECT external_id FROM metadata_links WHERE entity='brand'")}
-    for row in store.db.execute("SELECT data FROM external_metadata WHERE provider='erogamescape' AND entity='game' ORDER BY CASE WHEN length(coalesce(json_extract(data,'$.trial_url'),''))>0 THEN 0 ELSE 1 END,external_id DESC").fetchall():
+    ids=[row[0] for row in store.db.execute("SELECT external_id FROM external_metadata WHERE provider='erogamescape' AND entity='game' ORDER BY CASE WHEN length(coalesce(json_extract(data,'$.trial_url'),''))>0 THEN 0 ELSE 1 END,external_id DESC")]
+    # No payload list or live read cursor survives a yield into a network scan.
+    for ident in ids:
+        row=store.db.execute("SELECT data FROM external_metadata WHERE provider='erogamescape' AND entity='game' AND external_id=?",(ident,)).fetchone()
+        if not row:continue
         game=json.loads(row[0]);brand=brands.get(game["brandname"])
         if not brand or brand["id"] not in eligible:continue
         home=game.get("shoukai") or brand.get("url")

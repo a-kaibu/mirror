@@ -39,6 +39,7 @@ There are no separate JSONL or search catalogs.
 
 Source matching streams a compact ID index and loads full donor records from
 SQLite only when needed, rechecking their current checksum, URL and quarantine.
+Startup classification and platform URL seeding also stream source records.
 HTML discovery uses bounded workers: `mirror_sources.py --workers 2`, and
 `metadata_watch.py --workers 1 --max-pages 10` (one source per mode, two total
 with `--mode both`). Fresh metadata batches release their DOMs and caches at exit.

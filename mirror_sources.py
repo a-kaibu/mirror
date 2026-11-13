@@ -84,7 +84,7 @@ def seed_platform(store,source,mode):
     if key not in {"getchu","dmm","dlsite"}:return
     if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='external_metadata'").fetchone():return
     from urllib.parse import quote,parse_qs
-    rows=store.db.execute("SELECT data FROM external_metadata WHERE provider='erogamescape' AND entity='game' ORDER BY external_id DESC").fetchall()
+    rows=store.db.execute("SELECT data FROM external_metadata WHERE provider='erogamescape' AND entity='game' ORDER BY external_id DESC")
     for row in rows:
         game=json.loads(row[0]);url=None
         if key=="getchu" and re.fullmatch(r"[0-9]+",str(game.get("comike", ""))) and int(game["comike"])>0:

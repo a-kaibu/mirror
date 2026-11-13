@@ -62,14 +62,19 @@ def initialize(store):
         db.execute("ALTER TABLE pages ADD COLUMN response_url TEXT")
     if "tls_pin" not in {r[1] for r in db.execute("PRAGMA table_info(attempts)")}:
         db.execute("ALTER TABLE attempts ADD COLUMN tls_pin TEXT")
-    for row in db.execute("SELECT data FROM items WHERE id NOT IN (SELECT item_id FROM item_catalog)").fetchall():
-        index_record(store, json.loads(row[0]))
+    missing=[row[0] for row in db.execute("SELECT id FROM items WHERE id NOT IN (SELECT item_id FROM item_catalog)")]
+    for ident in missing:
+        row=db.execute("SELECT data FROM items WHERE id=?",(ident,)).fetchone()
+        index_record(store,json.loads(row[0]))
     # Refresh derived classification when parser rules change; SQLite remains
     # authoritative and source records are never rewritten by this migration.
-    for row in db.execute("SELECT i.id,i.data,c.kind FROM items i JOIN item_catalog c ON c.item_id=i.id").fetchall():
+    changes=[]
+    for row in db.execute("SELECT i.id,i.data,c.kind FROM items i JOIN item_catalog c ON c.item_id=i.id"):
         kind = release_info(json.loads(row[1]))[0]
-        if kind != row[2]:
-            db.execute("UPDATE item_catalog SET kind=? WHERE item_id=?", (kind, row[0]))
+        if kind != row[2]:changes.append((kind,row[0]))
+    # Finish the read before mutating its joined classification table. Keep
+    # only changed IDs, rather than every source record's JSON payload.
+    db.executemany("UPDATE item_catalog SET kind=? WHERE item_id=?",changes)
     db.commit()
 
 
