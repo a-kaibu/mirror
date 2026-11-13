@@ -144,6 +144,20 @@ class MimimaidTests(unittest.TestCase):
 
 
 class NekonekoTests(unittest.TestCase):
+    def test_unquoted_product_keeps_each_file_checksum(self):
+        from portals import parse_nekoneko
+        html=Path("tests/fixtures/nekoneko-zweitrial.html").read_text()
+        rows=parse_nekoneko(html,"http://web.archive.org/web/20240907105822/http://nekoneko-web.multi-band.net/nekoneko-web/mirror/circle/circlegames/dl-menu/zweitrial_dl-menu.html")
+        self.assertEqual(len(rows),3)
+        self.assertEqual({r["title"] for r in rows},{"ElementEnsemble -Wind of Moon-"})
+        self.assertEqual({r["brand"] for r in rows},{"Zwei Trial"})
+        self.assertEqual({r["filename"]:r["expected_md5"] for r in rows},{
+            "ee_prom.wmv":"d9058b213ccbc290df30a1e6d1cf7213",
+            "ee_gamedemo1.wmv":"ddd4b05c670b82276acbe082f9aec50a",
+            "ee_gamedemo2.wmv":"d8387983c87394f37fd250a0a248cfcf"})
+        self.assertEqual(rows[0]["release_name"],"プロモーションムービー")
+        self.assertTrue(all(r["expected_size"] is None for r in rows))
+
     def test_legacy_square_product_heading(self):
         from portals import parse_nekoneko
         html=Path("tests/fixtures/nekoneko-aria.html").read_text()

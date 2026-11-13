@@ -174,6 +174,9 @@ def parse_nekoneko(html,page):
         if node.tag=="font" and node.attrs.get("color", "").lower()=="#000000":
             heading=re.fullmatch(r"\s*(?:□\s*)?『(.+?)』\s*",node.text())
             if heading:title=heading[1]
+            elif node.attrs.get("size")=="3":
+                heading=re.fullmatch(r"\s*□\s+(.+?)\s*",node.text())
+                if heading and "ミラーページ" not in heading[1]:title=heading[1]
         if node.tag!="a" or not title:continue
         target=a.resolve(page,node.attrs.get("href", ""))
         if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
