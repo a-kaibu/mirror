@@ -47,8 +47,11 @@ Startup classification and platform URL seeding also stream source records.
 Source and status queues use indexed lookups; source-specific passes avoid
 scanning unrelated records while preserving catalogue order and every status.
 HTML discovery uses bounded workers: `mirror_sources.py --workers 2`, and
-`metadata_watch.py --workers 1 --max-pages 10` (one source per mode, two total
-with `--mode both`). Fresh metadata batches release their DOMs and caches at exit.
+`metadata_watch.py --workers 1 --max-pages 10` (one source at a time, alternating
+archive and live batches with `--mode both`). Both modes retain their saved
+frontiers; an idle or failed mode still gives the other mode a turn. Add
+`--parallel-modes` only when enough memory is available for concurrent batches.
+Fresh metadata batches release their DOMs and caches at exit.
 Official continuation defaults to one worker. Increase these limits only with
 enough memory; source coverage and saved frontiers are retained at lower limits.
 
