@@ -106,8 +106,12 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
         def describe(n):
             images=list(n.all({"img"}))
             marker=" ".join((element.attrs.get(key) or "") for element in [n,*images] for key in ["id","class"])
+            # Container classes are often reused for unrelated layouts (for
+            # example op_movie_t around a patch). New image hints belong only
+            # to this link; retain the existing trial-container interpretation.
+            own_marker=" ".join((element.attrs.get(key) or "") for element in [link,*link.all({"img"})] for key in ["id","class"])
             categories={"trial":"体験版","movie":"ムービー","patch":"パッチ"}
-            labels=" ".join(label for token,label in categories.items() if re.search(r"(?<![a-z])"+token+r"(?![a-z])",marker,re.I))
+            labels=" ".join(label for token,label in categories.items() if re.search(r"(?<![a-z])"+token+r"(?![a-z])",marker if token=="trial" else own_marker,re.I))
             return " ".join([n.text(),n.attrs.get("title") or "",*[img.attrs.get("alt") or "" for img in images],labels])
         context=describe(link);context_node=link;node=link.parent
         group=None;metadata_context=None

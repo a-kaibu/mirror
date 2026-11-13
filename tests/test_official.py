@@ -336,3 +336,9 @@ class ImageDistributionClassTests(unittest.TestCase):
     def test_shared_publisher_page_still_requires_product_identity(self):
         html='<div><a href="one.zip"><img class="movie_download"></a></div>'
         self.assertEqual(o.parse(html,PAGE,GAME,BRAND,scoped=False)[0],[])
+
+    def test_reused_movie_table_layout_does_not_turn_programs_into_movies(self):
+        html='<table class="op_movie_t"><tr><td><a href="enhance106.exe">ダウンロード</a></td></tr></table>'
+        rows,unknown=o.parse(html,PAGE,GAME,BRAND)
+        self.assertEqual(rows,[])
+        self.assertEqual(unknown,['https://key.visualarts.co.jp/anemoi/enhance106.exe'])
