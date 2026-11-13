@@ -651,6 +651,8 @@ Holysealの製品ページは、取得済みURLを起点に別日時のHTMLも�
 一時的な取得失敗は `uv run python transient_recovery.py --watch` で再試行できます。
 各ミラーURLの最新試行を確認し、HTTP 429・サーバー障害・タイムアウト等を対象にします。
 初回は3時間、以降は最大24時間まで待機時間を延ばし、SQLiteの `transient_retries` に再投入理由を残します。
+同じ監視処理で、HTML巡回先の一時的な失敗も再試行し、`frontier_transient_retries` に理由を記録します。
+HTML収集中のサイトは排他ロックで避け、保存済みHTMLと他の巡回状態を維持します。
 404・チェックサム不一致・HTML応答・恒久的な名前解決エラーだけの配布物は、この処理では再投入しません。
 
 公式サイトで1回のページ上限に達した作品は、`uv run python official_continue.py --watch` で続きを調べられます。

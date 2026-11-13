@@ -50,6 +50,42 @@ def recover(store,at=None,cooldown=3*3600):
     return stats
 
 
+def recover_frontiers(store,at=None,cooldown=3*3600):
+    """Requeue transient HTML failures without competing with active crawlers."""
+    if cooldown<=0:raise ValueError('cooldown must be positive')
+    at=at or datetime.now(timezone.utc)
+    stats={'requeued':0,'deferred':0,'cooling':0}
+    if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='mirror_frontier'").fetchone():return stats
+    store.db.execute("""CREATE TABLE IF NOT EXISTS frontier_transient_retries(
+        site TEXT,url TEXT,mode TEXT,failed_at TEXT,requeued_at TEXT,reason TEXT,
+        PRIMARY KEY(site,url,mode,failed_at))""");store.db.commit()
+    # Retain only small transient candidates, and finish the reader before any
+    # write so another worker's commit cannot invalidate a read snapshot.
+    cursor=store.db.execute("SELECT site,url,mode,error,checked_at FROM mirror_frontier WHERE status='failed'")
+    try:candidates=[dict(row) for row in cursor if temporary(row['error'])]
+    finally:cursor.close()
+    for site in sorted({row['site'] for row in candidates}):
+        try:
+            with exclusive_file(store.root/'.claims'/('discovery-'+site+'.lock'),blocking=False):
+                for candidate in (r for r in candidates if r['site']==site):
+                    key=(site,candidate['url'],candidate['mode'])
+                    row=store.db.execute("SELECT error,checked_at FROM mirror_frontier WHERE site=? AND url=? AND mode=? AND status='failed'",key).fetchone()
+                    if not row or not temporary(row['error']):continue
+                    try:last=datetime.fromisoformat(row['checked_at'])
+                    except (ValueError,TypeError):continue
+                    if last.tzinfo is None:continue
+                    retries=store.db.execute('SELECT count(*) FROM frontier_transient_retries WHERE site=? AND url=? AND mode=?',key).fetchone()[0]
+                    if (at-last).total_seconds()<cooldown*2**min(retries,3):stats['cooling']+=1;continue
+                    if store.db.execute('SELECT 1 FROM frontier_transient_retries WHERE site=? AND url=? AND mode=? AND failed_at=?',(*key,row['checked_at'])).fetchone():continue
+                    with store.db:
+                        changed=store.db.execute("UPDATE mirror_frontier SET status='pending',error=NULL WHERE site=? AND url=? AND mode=? AND status='failed' AND checked_at=? AND error IS ?",(*key,row['checked_at'],row['error'])).rowcount
+                        if changed:
+                            store.db.execute('INSERT INTO frontier_transient_retries VALUES(?,?,?,?,?,?)',(*key,row['checked_at'],at.isoformat(),row['error']))
+                            stats['requeued']+=1
+        except BlockingIOError:stats['deferred']+=sum(r['site']==site for r in candidates)
+    return stats
+
+
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',default='archive');parser.add_argument('--watch',action='store_true');args=parser.parse_args()
     if args.watch:
@@ -68,4 +104,5 @@ if __name__=='__main__':
                 recovered=sum(queue_recovered_mirrors(store,site) for site in sites)
                 print('recovered mirror requeues',recovered,flush=True)
                 print('temporary failure recovery',recover(store),flush=True)
+                print('temporary HTML recovery',recover_frontiers(store),flush=True)
             finally:store.db.close()
