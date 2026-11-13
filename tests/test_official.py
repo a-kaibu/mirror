@@ -25,6 +25,20 @@ class OfficialTests(unittest.TestCase):
         html='<a href="apt_232/apt232_tr.zip"><img src="button.jpg"></a>'
         self.assertEqual(o.parse(html,page,game,BRAND,scoped=False)[0],[])
 
+    def test_publisher_wide_patch_retains_published_scope_without_game_assignment(self):
+        brand={'id':123,'brandname':'Miel'};page='https://www.miel-soft.com/support.html'
+        html='<div class="support"><div><font><b>タイトル名</b>：Mielタイトル全般【2016年より前の作品が対象】<br><b>修正項目</b>：ウィンドウの調整</font></div><div><a href="dl/patch.zip"><img src="download.gif"></a></div></div>'
+        rows,_=o.parse(html,page,GAME,brand,scoped=False)
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['title'],'Mielタイトル全般【2016年より前の作品が対象】')
+        self.assertEqual(rows[0]['fields']['scope_kind'],'publisher')
+        self.assertNotIn('erogamescape_game_id',rows[0]['fields'])
+        self.assertEqual(rows[0]['release_name'],'パッチ')
+        other,_=o.parse(html,page,{**GAME,'id':99,'gamename':'Other'},brand,scoped=False)
+        self.assertEqual(rows,other)
+        self.assertEqual(o.parse(html.replace('Mielタイトル全般','Otherタイトル全般'),page,GAME,brand,scoped=False)[0],[])
+        self.assertEqual(o.parse(html.replace('タイトル全般【2016年より前の作品が対象】','作品A'),page,GAME,brand,scoped=False)[0],[])
+
     def test_actual_anemoi_html(self):
         raw=(Path(__file__).parent/"fixtures/official-anemoi.html").read_bytes()
         records,unknown=o.parse(a.decode_html(raw),PAGE,GAME,BRAND)

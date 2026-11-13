@@ -41,6 +41,19 @@ def labelled_product(node,page):
     return next(iter(set(targets))) if len(set(targets))==1 else None
 
 
+def publisher_patch_scope(node,brand):
+    scopes=set()
+    for label in node.all({'b','strong'}):
+        if label.text().strip(' :：')!='タイトル名':continue
+        siblings=label.parent.children;parts=[]
+        for sibling in siblings[siblings.index(label)+1:]:
+            if isinstance(sibling,a.Node):break
+            parts.append(sibling)
+        value=''.join(parts).strip(' :：')
+        if re.fullmatch(re.escape(brand['brandname'])+r'タイトル全般【[^【】\r\n]{1,160}】',value):scopes.add(value)
+    return next(iter(scopes)) if len(scopes)==1 else None
+
+
 def appetite_kind(html,page,game,target):
     parts=urlsplit(page);binary=urlsplit(target)
     if parts.hostname not in {'www.appetite-game.com','appetite-game.com'} or binary.hostname!=parts.hostname:return None
@@ -83,7 +96,8 @@ def parse(html, page, game, brand, scoped=True, hint=None):
         if kind=='other' and published_kind:kind=published_kind
         product_link=a.canonical(page) if published_kind else labelled_product(context_node,page)
         linked=bool(game.get('shoukai') and product_link==a.canonical(game['shoukai']))
-        if kind=="other" or (not scoped and normalized(game["gamename"]) not in normalized(context) and not linked):
+        common_scope=publisher_patch_scope(context_node,brand) if kind=='patch' else None
+        if kind=="other" or (not scoped and normalized(game["gamename"]) not in normalized(context) and not linked and not common_scope):
             unsupported.append(target);continue
         key=hashlib.sha256(("official\n"+page+"\n"+filename).encode()).hexdigest()
         if key not in records:
@@ -95,6 +109,10 @@ def parse(html, page, game, brand, scoped=True, hint=None):
                 "filename":filename,"mirrors":[],"expected_md5":md5s[0].lower() if len(set(md5s))==1 else None,
                 "expected_size":int(exact[0].replace(",","")) if len(set(exact))==1 else None,
                 "size_text":None,"published_at":None,"fields":{"erogamescape_game_id":game["id"],"erogamescape_brand_id":brand["id"],"official_page":page}}
+        if common_scope:
+            records[key]['title']=common_scope
+            records[key]['fields'].pop('erogamescape_game_id',None)
+            records[key]['fields'].update(distribution_scope=common_scope,scope_kind='publisher')
         if linked:records[key]['fields']['publisher_product_link']=product_link
         if published_kind:records[key]['fields']['published_section_label']='体験版' if published_kind=='trial' else 'PV'
         records[key]["mirrors"].append(target)
