@@ -53,6 +53,12 @@ WAL. Transfers use a metadata comparison before recording success so changed sou
 expectations are never silently overwritten. Do not run overlapping download batches. `download --id <source-record-id>` selects a
 specific source record; IDs appear in the manifest and SQLite.
 
+Large public read-backs use two bounded byte ranges when the server advertises
+range support and a strong ETag. Each response must match its requested offsets,
+total length and validator; bytes feed the complete SHA-256 in their original
+order. Ignored ranges fall back to a complete streaming read, and verification
+failures retain the local file for retry.
+
 ## Large collections
 
 After crawling, `uv run python archiver.py archive-batch --site lathercraft`

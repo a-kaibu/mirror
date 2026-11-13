@@ -1030,12 +1030,8 @@ def public_url(namespace, bucket, key, download=False):
 
 
 def public_digest(namespace, bucket, key):
-    sha, size = hashlib.sha256(), 0
-    with Fetcher(delay=0).open(public_url(namespace, bucket, key)) as response:
-        while chunk := response.read(1024 * 1024):
-            sha.update(chunk)
-            size += len(chunk)
-    return sha.hexdigest(), size
+    from public_readback import digest
+    return digest(public_url(namespace,bucket,key),lambda url,headers=None:Fetcher(delay=0).open(url,headers))
 
 
 def init_bucket(namespace, bucket, profile="hf"):
