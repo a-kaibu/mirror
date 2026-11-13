@@ -96,19 +96,24 @@ def index_record(store, record):
 
 def alias_maker(store, alias, name):
     """An explicit curator decision. Never fuzzy-merge unrelated brands."""
-    target = store.db.execute("SELECT manufacturer_id FROM manufacturer_aliases WHERE alias=?", (normalized(name),)).fetchone()
-    target_id = target[0] if target else identity(normalized(name))
-    store.db.execute("INSERT OR IGNORE INTO manufacturers VALUES(?,?)", (target_id, name))
-    old = store.db.execute("SELECT manufacturer_id FROM manufacturer_aliases WHERE alias=?", (normalized(alias),)).fetchone()
-    if old and old[0] != target_id:
-        store.db.execute("UPDATE manufacturer_aliases SET manufacturer_id=? WHERE manufacturer_id=?", (target_id, old[0]))
-    for value in [alias, name]:
-        store.db.execute("INSERT OR REPLACE INTO manufacturer_aliases VALUES(?,?)", (normalized(value), target_id))
-    for row in store.db.execute("SELECT data FROM items").fetchall():
-        index_record(store, json.loads(row[0]))
-    store.db.execute("DELETE FROM products WHERE id NOT IN (SELECT product_id FROM item_catalog)")
-    store.db.execute("DELETE FROM manufacturers WHERE id NOT IN (SELECT manufacturer_id FROM products) AND id NOT IN (SELECT manufacturer_id FROM manufacturer_aliases)")
-    store.db.commit()
+    with store.db:
+        target = store.db.execute("SELECT manufacturer_id FROM manufacturer_aliases WHERE alias=?", (normalized(name),)).fetchone()
+        target_id = target[0] if target else identity(normalized(name))
+        store.db.execute("INSERT OR IGNORE INTO manufacturers VALUES(?,?)", (target_id, name))
+        old = store.db.execute("SELECT manufacturer_id FROM manufacturer_aliases WHERE alias=?", (normalized(alias),)).fetchone()
+        affected=[]
+        if old and old[0] != target_id:
+            affected=[r[0] for r in store.db.execute("SELECT c.item_id FROM item_catalog c JOIN products p ON p.id=c.product_id WHERE p.manufacturer_id=? ORDER BY c.item_id",(old[0],))]
+            store.db.execute("UPDATE manufacturer_aliases SET manufacturer_id=? WHERE manufacturer_id=?", (target_id, old[0]))
+        for value in [alias, name]:
+            store.db.execute("INSERT OR REPLACE INTO manufacturer_aliases VALUES(?,?)", (normalized(value), target_id))
+        # Finish the thin ID reader before writes, then load one affected payload.
+        # A spelling review must not retain or rewrite every source catalogue row.
+        for ident in affected:
+            row=store.db.execute("SELECT data FROM items WHERE id=?",(ident,)).fetchone()
+            if row:index_record(store,json.loads(row[0]))
+        store.db.execute("DELETE FROM products WHERE id NOT IN (SELECT product_id FROM item_catalog)")
+        store.db.execute("DELETE FROM manufacturers WHERE id NOT IN (SELECT manufacturer_id FROM products) AND id NOT IN (SELECT manufacturer_id FROM manufacturer_aliases)")
 
 
 def manifest(store):
