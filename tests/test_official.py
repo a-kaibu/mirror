@@ -228,3 +228,14 @@ class GroupedOfficialDistributionTests(unittest.TestCase):
         rows,unknown=o.parse(html,PAGE,GAME,BRAND)
         self.assertEqual(unknown,[])
         self.assertEqual([row['release_name'] for row in rows],['体験版','パッチ'])
+
+
+class LegacyJapaneseOfficialPatchTests(unittest.TestCase):
+    def test_cp932_patch_filename_is_classified_without_rewriting_download_url(self):
+        from urllib.parse import quote_from_bytes
+        name='学園表示バグ修正ファイル.EXE';target='https://key.visualarts.co.jp/anemoi/'+quote_from_bytes(name.encode('cp932'))
+        html='<a href="'+target+'">Download</a>'
+        rows,unknown=o.parse(html,PAGE,GAME,BRAND)
+        self.assertEqual(unknown,[]);self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['filename'],name);self.assertEqual(rows[0]['release_name'],'パッチ')
+        self.assertEqual(rows[0]['mirrors'],[target])

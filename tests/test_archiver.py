@@ -372,3 +372,22 @@ class GenericChecksumScopeTests(unittest.TestCase):
         html=''.join('<p><a href="https://'+host+'/demo.zip">Mirror</a> MD5: '+('1'*32)+' 100 bytes</p>' for host in ['one.test','two.test'])
         row=a.parse_detail(html,'https://source.test/page','fuzzy2')[0]
         self.assertEqual(row['expected_md5'],'1'*32);self.assertEqual(row['expected_size'],100)
+
+
+class LegacyURLFilenameTests(unittest.TestCase):
+    def test_utf8_cp932_and_literal_unicode_names(self):
+        from urllib.parse import quote_from_bytes,quote
+        name='学園表示バグ修正ファイル.EXE'
+        sjis='https://publisher.test/'+quote_from_bytes(name.encode('cp932'))
+        utf8='https://publisher.test/'+quote(name)
+        self.assertEqual(a.filename_from_url(sjis),name)
+        self.assertEqual(a.filename_from_url(utf8),name)
+        self.assertEqual(a.filename_from_url('https://publisher.test/'+name),name)
+        self.assertEqual(a.filename_from_url(a.replay(sjis,'20050102030405')),name)
+    def test_unsupported_byte_escape_remains_literal_instead_of_replacement(self):
+        self.assertEqual(a.filename_from_url('https://publisher.test/bad%81.zip'),'bad%81.zip')
+        self.assertEqual(a.filename_from_url('https://publisher.test/a%2520b.zip'),'a%20b.zip')
+    def test_mixed_literal_japanese_and_escaped_cp932_preserve_both(self):
+        from urllib.parse import quote_from_bytes
+        url='https://publisher.test/日本語'+quote_from_bytes('修正'.encode('cp932'))+'.zip'
+        self.assertEqual(a.filename_from_url(url),'日本語修正.zip')

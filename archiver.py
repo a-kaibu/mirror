@@ -93,6 +93,15 @@ def resolve(base, href):
     return result if urlsplit(result).scheme in {"http", "https"} else None
 
 
+def filename_from_url(url):
+    """Decode legacy Japanese URL names without replacement characters."""
+    name=urlsplit(original(url)).path.rsplit('/',1)[-1]
+    for encoding in ('utf-8','cp932'):
+        try:return unquote(name,encoding=encoding,errors='strict')
+        except UnicodeError:pass
+    return name
+
+
 class Node:
     def __init__(self, tag="root", attrs=(), parent=None):
         self.tag, self.attrs, self.parent = tag, dict(attrs), parent
@@ -239,7 +248,7 @@ def parse_detail(html, url, site):
     # several different files: Holyseal product pages may contain many releases.
     groups = {};link_names={}
     for a, target in links:
-        name = unquote(Path(urlsplit(original(target)).path).name)
+        name = filename_from_url(target)
         if not EXT.search(name):
             name = next((v for k, v in labels(root).items() if k in {"ファイル名", "Filename", "filename"}), name or "download.bin")
         groups.setdefault(name, []).append((a, target));link_names[id(a)]=name

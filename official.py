@@ -6,7 +6,7 @@ import http.client
 import json
 from pathlib import Path
 import re
-from urllib.parse import urlsplit, unquote
+from urllib.parse import urlsplit
 import archiver as a
 from catalog import release_info, normalized, KINDS
 import erogamescape as e
@@ -98,9 +98,9 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
     root=a.DOM(html).root
     records={}
     unsupported=[]
-    filenames={unquote(urlsplit(u).path.rsplit("/",1)[-1]) for _,u in binary_links(root,page)}
+    filenames={a.filename_from_url(u) for _,u in binary_links(root,page)}
     for link,target in binary_links(root,page):
-        filename=unquote(urlsplit(target).path.rsplit("/",1)[-1])
+        filename=a.filename_from_url(target)
         def describe(n):
             marker=" ".join([n.attrs.get("id",""),n.attrs.get("class","")])
             trial=" 体験版" if re.search(r"(?<![a-z])trial(?![a-z])",marker,re.I) else ""
@@ -109,7 +109,7 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
         group=None;metadata_context=None
         while node is not None and node.tag not in {"body","html","root"}:
             text=describe(node)
-            names={unquote(urlsplit(u).path.rsplit("/",1)[-1]) for _,u in binary_links(node,page)}
+            names={a.filename_from_url(u) for _,u in binary_links(node,page)}
             if len(text)>6000:break
             if len(names)>1:
                 if release_info({'title':context+' '+filename,'filename':filename})[0]=='other':

@@ -21,7 +21,7 @@ def parse_moepedia(html,page):
         for link in block.all({"a"}):
             target=a.resolve(page,link.attrs.get("href",""))
             if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
-            filename=unquote(Path(urlsplit(a.original(target)).path).name)
+            filename=a.filename_from_url(target)
             ident=hashlib.sha256(("moepedia\n"+original+"\n"+filename).encode()).hexdigest()
             from mirror_sources import clean
             raw=clean(target)
@@ -73,7 +73,7 @@ def _parse_multi_inside_legacy(root,page):
             href=node.attrs.get('href','');ftp=re.match(r'^(?:https?://web\.archive\.org/web/\d{14}(?:[a-z_]+)?/)?(ftp://.+)$',href)
             target=a.resolve(page,href);raw=ftp[1] if ftp else a.original(target) if target else None
             if raw and a.EXT.search(urlsplit(raw).path):
-                filename=unquote(Path(urlsplit(raw).path).name);values=hashes.get(filename,set())
+                filename=a.filename_from_url(raw);values=hashes.get(filename,set())
                 if len(values)<=1:
                     before=' '.join(prefix);labels=list(re.finditer(r'◇\s*([^：:\n]+)\s*[：:]',before))
                     label=labels[-1][1].strip() if labels else filename
@@ -112,7 +112,7 @@ def _parse_multi_inside_catalogue(root,page):
             raw=a.original(target)
             try:a.archive_url_identity(raw)
             except ValueError:continue
-            filename=unquote(Path(urlsplit(raw).path).name)
+            filename=a.filename_from_url(raw)
             siblings=link.parent.children;position=siblings.index(link);tail=[]
             for node in siblings[position+1:]:
                 if isinstance(node,a.Node) and node.tag in {'a','hr','div'}:break
@@ -156,7 +156,7 @@ def parse_multi_inside(html,page):
         filename=names[0];mirrors=[]
         for link in block.all({"a"}):
             target=a.resolve(page,link.attrs.get("href", ""))
-            if not target or unquote(Path(urlsplit(a.original(target)).path).name)!=filename:continue
+            if not target or a.filename_from_url(target)!=filename:continue
             stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
             raw=a.original(target)
             mirrors.extend(([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw])
@@ -206,7 +206,7 @@ def parse_mimimaid(html,page):
             for link in block.all({"a"}):
                 target=a.resolve(page,link.attrs.get("href", ""))
                 if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
-                raw=a.original(target);filename=unquote(Path(urlsplit(raw).path).name)
+                raw=a.original(target);filename=a.filename_from_url(raw)
                 stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
                 mirrors=([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw]
                 ident=hashlib.sha256(("mimimaid\n"+a.original(page)+"\n"+filename).encode()).hexdigest()
@@ -249,7 +249,7 @@ def parse_nekoneko(html,page):
         episode=re.fullmatch(r"『([^『』]+)』\s*(.+)",release)
         if episode:
             file_title=episode[1];release=episode[2]
-        raw=a.original(target);filename=unquote(Path(urlsplit(raw).path).name);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        raw=a.original(target);filename=a.filename_from_url(raw);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
         ident=hashlib.sha256(("nekoneko\n"+a.original(page)+"\n"+filename).encode()).hexdigest()
         results.append({"id":ident,"site":"nekoneko","page_url":page,"original_page_url":a.original(page),
             "title":file_title,"brand":brand,"release_name":release,"filename":filename,
@@ -275,7 +275,7 @@ def parse_tsundere(html,page):
         for link in span.all({"a"}):
             target=a.resolve(page,link.attrs.get("href", ""))
             if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
-            raw=a.original(target);filename=unquote(Path(urlsplit(raw).path).name);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+            raw=a.original(target);filename=a.filename_from_url(raw);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
             ident=hashlib.sha256(("tsundere\n"+a.original(page)+"\n"+filename).encode()).hexdigest()
             results.append({"id":ident,"site":"tsundere","page_url":page,"original_page_url":a.original(page),
                 "title":title,"brand":brand,"release_name":release,"filename":filename,
@@ -301,7 +301,7 @@ def parse_dlsite(html,page):
         if not target:continue
         raw=a.original(target)
         if urlsplit(raw).hostname!='trial.dlsite.com' or not a.EXT.search(urlsplit(raw).path):continue
-        filename=unquote(Path(urlsplit(raw).path).name);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        filename=a.filename_from_url(raw);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
         if release=='ムービー' and not filename.upper().startswith(product[1].upper()+'_'):continue
         size=re.search(r'\(([0-9.,]+\s*(?:[KMGT]i?B))\)',label,re.I)
         ident=hashlib.sha256(('dlsite\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
@@ -376,7 +376,7 @@ def parse_lapistan(html,page):
         size=re.search(r'\[([\d.]+\s*[KMG]B)\]',text,re.I)
         if not digest:continue
         date=re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日',date_text)
-        raw=a.original(target);filename=unquote(Path(urlsplit(raw).path).name);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        raw=a.original(target);filename=a.filename_from_url(raw);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
         ident=hashlib.sha256(('lapistan\n'+a.original(page)+'\n'+filename+'\n'+digest[1].lower()).encode()).hexdigest()
         results.append({'id':ident,'site':'lapistan','page_url':page,'original_page_url':a.original(page),
             'title':title,'brand':brand,'release_name':release,'filename':filename,
@@ -409,7 +409,7 @@ def parse_kokoron(html,page):
             links=([child] if child.tag=='a' else list(child.all({'a'}))) if isinstance(child,a.Node) else []
             for link in links:
                 target=a.resolve(page,link.attrs.get('href',''))
-                if not target or unquote(Path(urlsplit(a.original(target)).path).name)!=filename:continue
+                if not target or a.filename_from_url(target)!=filename:continue
                 raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
                 mirrors.extend(([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw])
         sha=re.search(r'SHA256\s*\('+re.escape(filename)+r'\)\s*=\s*([a-fA-F0-9]{64})',text)
@@ -462,7 +462,7 @@ def parse_dmm(html,page):
         if not target:continue
         raw=a.original(target)
         if not re.fullmatch(r'sample[0-9]+\.dmm\.(?:co\.jp|com)',urlsplit(raw).hostname or '') or not a.EXT.search(urlsplit(raw).path):continue
-        filename=unquote(Path(urlsplit(raw).path).name);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        filename=a.filename_from_url(raw);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
         ident=hashlib.sha256(('dmm\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
         results.append({'id':ident,'site':'dmm','page_url':page,'original_page_url':a.original(page),
             'title':titles[0],'brand':brand,'release_name':'体験版','filename':filename,
@@ -496,7 +496,7 @@ def parse_alice_archives(html, page):
         label = " ".join(link.text().split())
         if not re.search("ディスクイメージ|CDイメージ|アーカイブ", label):
             continue
-        filename = unquote(Path(binary.path).name)
+        filename = a.filename_from_url(raw)
         exact = re.findall(r"([\d,]+)\s*バイト", label)
         platform = re.match(r"(.+?版)", label)
         ident = hashlib.sha256(("alice_archives\n"+original+"\n"+binary.path).encode()).hexdigest()
@@ -536,7 +536,7 @@ def parse_alicefree(html, page):
             raw = a.original(target);parts = urlsplit(raw)
             if parts.hostname != "d1.alicefree.fastlast.org" or not parts.path.startswith("/d/") or not a.EXT.search(parts.path):
                 continue
-            filename = unquote(Path(parts.path).name)
+            filename = a.filename_from_url(raw)
             label = " ".join(link.text().split())
             title = source_title
             # The final paragraph contains three different original distributions.
@@ -596,7 +596,7 @@ def parse_getchu(html, page):
         if binary.hostname!="trial.getchu.com" or not re.search(r"\.(mp4|wmv|mpg|mpeg|webm)$",binary.path,re.I):continue
         if not product_id.isdigit() or (product_id not in binary.path.split('/') and Path(binary.path).stem!=product_id):continue
         label=parent.attrs.get("getchutitle", "")
-        filename=unquote(Path(binary.path).name)
+        filename=a.filename_from_url(raw)
         ident=hashlib.sha256(("getchu\n"+a.original(page)+"\n"+binary.path).encode()).hexdigest()
         stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
         result[ident]={"id":ident,"site":"getchu","page_url":page,"original_page_url":a.original(page),
@@ -612,7 +612,7 @@ def parse_getchu(html, page):
         raw=a.original(target);binary=urlsplit(raw)
         if binary.hostname!='trial.getchu.com' or not a.EXT.search(binary.path):continue
         if not product_id.isdigit() or product_id not in binary.path.split('/'):continue
-        filename=unquote(Path(binary.path).name)
+        filename=a.filename_from_url(raw)
         # The separate checksum-linked importer handles the publisher's listed
         # compromised filenames; a labelled button alone cannot identify a build.
         if filename.casefold() in restricted:continue
@@ -691,7 +691,7 @@ def parse_xgame(html,page):
     brand=brands.pop();result=[]
     if not evidence:evidence={'method':'brand_navigation','published_name':brand}
     def append_record(title,release,filename,md5,byte_count,size_text,fields):
-        candidates=[target for target in links if unquote(Path(urlsplit(a.original(target)).path).name)==filename]
+        candidates=[target for target in links if a.filename_from_url(target)==filename]
         mirrors=[]
         for target in candidates:
             raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
@@ -807,7 +807,7 @@ def parse_magic_mirror(html,page):
     for link in block.all({'a'}) if block else []:
         target=a.resolve(page,link.attrs.get('href',''))
         if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
-        raw=a.original(target);filenames.add(unquote(Path(urlsplit(raw).path).name))
+        raw=a.original(target);filenames.add(a.filename_from_url(raw))
         stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
         if stamp:mirrors.append(a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme))
         mirrors.append(raw)
@@ -925,7 +925,7 @@ def parse_suezou(html,page):
         mirrors=[]
         for link in block.all({'a'}):
             target=a.resolve(page,link.attrs.get('href',''))
-            if not target or unquote(Path(urlsplit(a.original(target)).path).name)!=filename:continue
+            if not target or a.filename_from_url(target)!=filename:continue
             raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
             if stamp:mirrors.append(a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme))
             mirrors.append(raw)
