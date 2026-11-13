@@ -348,3 +348,27 @@ class PublishTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GenericChecksumScopeTests(unittest.TestCase):
+    def test_nested_row_cannot_apply_trial_md5_to_movie_links(self):
+        html='<table><tr><td><p><a href="trial.zip">Trial</a> MD5: '+('1'*32)+'</p><p><a href="movie.lzh">Other mirror</a></p><table><tr><td><p><a href="movie.lzh">Movie</a> MD5: '+('2'*32)+'</p></td></tr></table></td></tr></table>'
+        rows=a.parse_detail(html,'https://source.test/page','fuzzy2')
+        by_name={row['filename']:row for row in rows}
+        self.assertEqual(by_name['trial.zip']['expected_md5'],'1'*32)
+        self.assertEqual(by_name['movie.lzh']['expected_md5'],'2'*32)
+
+    def test_multiple_files_without_local_proof_do_not_share_page_hash(self):
+        html='<table><tr><td><a href="trial.zip">Trial</a><a href="movie.lzh">Movie</a> MD5: '+('1'*32)+' 100 bytes</td></tr></table>'
+        rows=a.parse_detail(html,'https://source.test/page','fuzzy2')
+        self.assertTrue(all(row['expected_md5'] is None and row['expected_size'] is None for row in rows))
+
+    def test_conflicting_mirror_builds_do_not_choose_first_digest(self):
+        html='<p><a href="https://one.test/demo.zip">Build one</a> MD5: '+('1'*32)+' 100 bytes</p><p><a href="https://two.test/demo.zip">Build two</a> MD5: '+('2'*32)+' 200 bytes</p>'
+        row=a.parse_detail(html,'https://source.test/page','fuzzy2')[0]
+        self.assertIsNone(row['expected_md5']);self.assertIsNone(row['expected_size'])
+
+    def test_agreeing_independent_mirrors_keep_local_digest(self):
+        html=''.join('<p><a href="https://'+host+'/demo.zip">Mirror</a> MD5: '+('1'*32)+' 100 bytes</p>' for host in ['one.test','two.test'])
+        row=a.parse_detail(html,'https://source.test/page','fuzzy2')[0]
+        self.assertEqual(row['expected_md5'],'1'*32);self.assertEqual(row['expected_size'],100)

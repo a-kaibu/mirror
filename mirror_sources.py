@@ -207,6 +207,7 @@ def known_files(store,site):
     for row in store.rows():
         if row["site"]==site:continue
         data=json.loads(row["data"])
+        if data.get('fields',{}).get('source_association_quarantined'):continue
         if data.get("expected_md5"):by_hash.setdefault(data["expected_md5"],[]).append(data)
         for url in data["mirrors"]:by_url.setdefault(clean(url),[]).append(data)
     return by_hash,by_url

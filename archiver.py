@@ -210,12 +210,12 @@ def metadata(root):
     fields = labels(root)
     def field(*names):
         return next((v for k, v in fields.items() if k.lower() in names), None)
-    md5 = re.search(r"(?i)\bMD5\b\s*[:：]?\s*([a-f0-9]{32})\b", root.text())
-    exact_size = re.search(r"([\d,]+)\s*(?:bytes?\b|バイト)", root.text(), re.I)
+    md5s = {value.lower() for value in re.findall(r"(?i)\bMD5\b\s*[:：]?\s*([a-f0-9]{32})\b", root.text())}
+    exact_sizes = {int(value.replace(',','')) for value in re.findall(r"([\d,]+)\s*(?:bytes?\b|バイト)", root.text(), re.I)}
     return {"brand": field("ブランド", "メーカー", "brand", "maker"),
             "published_at": field("掲載日", "登録日", "公開日", "date"),
-            "expected_md5": md5[1].lower() if md5 else None,
-            "expected_size": int(exact_size[1].replace(",", "")) if exact_size else None,
+            "expected_md5": next(iter(md5s)) if len(md5s)==1 else None,
+            "expected_size": next(iter(exact_sizes)) if len(exact_sizes)==1 else None,
             "size_text": field("サイズ", "ファイルサイズ", "size"), "fields": fields}
 
 
@@ -237,19 +237,19 @@ def parse_detail(html, url, site):
             links.append((a, target))
     # Group mirrors of the same filename. Never apply a page-wide checksum to
     # several different files: Holyseal product pages may contain many releases.
-    groups = {}
+    groups = {};link_names={}
     for a, target in links:
         name = unquote(Path(urlsplit(original(target)).path).name)
         if not EXT.search(name):
             name = next((v for k, v in labels(root).items() if k in {"ファイル名", "Filename", "filename"}), name or "download.bin")
-        groups.setdefault(name, []).append((a, target))
+        groups.setdefault(name, []).append((a, target));link_names[id(a)]=name
     if site == "lathercraft" and not groups:
         filename = labels(root).get("ファイル名")
         if filename:
             # Removed/preparing downloads can still have authoritative metadata.
             # Retain them for recovery from other mirrors rather than dropping them.
             groups[filename] = []
-    result = []
+    result = [];page_meta=metadata(root);scope_names={};scope_metadata={}
     for name, candidates in groups.items():
         context = root
         if len(groups) > 1:
@@ -260,7 +260,27 @@ def parse_detail(html, url, site):
             if context is root:
                 context = Node()
         meta = metadata(context)
-        page_meta = metadata(root)
+        if candidates:
+            # A malformed old table can nest several releases inside the same
+            # row. Only inherit hashes/sizes from a scope containing this one
+            # filename, and require agreement across its published mirrors.
+            proofs=[]
+            for link,target in candidates:
+                node=link.parent;proof={'expected_md5':None,'expected_size':None}
+                while node is not None:
+                    if node not in scope_names:scope_names[node]={link_names[id(child)] for child in node.all({'a'}) if id(child) in link_names}
+                    names=scope_names[node]
+                    if names!={name}:break
+                    if node not in scope_metadata:scope_metadata[node]=metadata(node)
+                    local=scope_metadata[node]
+                    for key in proof:
+                        if proof[key] is None and local[key] is not None:proof[key]=local[key]
+                    if all(value is not None for value in proof.values()):break
+                    node=node.parent
+                proofs.append(proof)
+            for key in ['expected_md5','expected_size']:
+                values={proof[key] for proof in proofs if proof[key] is not None}
+                meta[key]=next(iter(values)) if len(values)==1 else None
         for key in {"brand", "published_at"}:
             meta[key] = meta[key] or page_meta[key]
         mirrors = list(dict.fromkeys(target for _, target in candidates))

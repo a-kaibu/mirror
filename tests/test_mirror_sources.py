@@ -599,3 +599,33 @@ class ReparseFrontierStatusTests(unittest.TestCase):
                     if count:self.assertIsNone(row['error'])
                     else:self.assertIsNotNone(row['error'])
                 finally:store.db.close()
+
+
+class GenericAssociationSafetyTests(unittest.TestCase):
+    def test_each_mirror_filename_uses_its_own_source_checksum(self):
+        html='<table><tr><td><p><a href="trial.zip">Trial</a> MD5: '+('1'*32)+'</p><p><a href="movie.lzh">Wrongly nested link</a></p><table><tr><td><p><a href="movie.lzh">Movie</a> MD5: '+('2'*32)+'</p></td></tr></table></td></tr></table>'
+        with tempfile.TemporaryDirectory() as root:
+            store=a.Store(root);m.initialize(store)
+            try:
+                base=a.parse_detail(HTML,'https://donor.test/item','d_station')[0]
+                donors=[]
+                for ident,md5,release in [('trial','1'*32,'体験版'),('movie','2'*32,'ムービー')]:
+                    record={**base,'id':ident,'expected_md5':md5,'expected_size':None,'filename':None,'release_name':release}
+                    store.add(record);donors.append(record)
+                source=m.definitions()['fuzzy2']
+                self.assertEqual(m.match_records(store,source,html,'http://mirror.fuzzy2.com/game/index.html',m.known_files(store,'fuzzy2')),2)
+                rows={json.loads(row['data'])['filename']:json.loads(row['data']) for row in store.rows('fuzzy2')}
+                self.assertEqual(rows['movie.lzh']['expected_md5'],'2'*32)
+                self.assertEqual(rows['movie.lzh']['release_name'],'ムービー')
+            finally:store.db.close()
+
+    def test_quarantined_association_is_not_a_new_checksum_or_url_donor(self):
+        with tempfile.TemporaryDirectory() as root:
+            store=a.Store(root)
+            try:
+                record=a.parse_detail(HTML,'https://donor.test/item','d_station')[0]
+                record['fields']['source_association_quarantined']={'reason':'wrong source checksum'}
+                store.add(record)
+                hashes,urls=m.known_files(store,'fuzzy2')
+                self.assertEqual(hashes,{});self.assertEqual(urls,{})
+            finally:store.db.close()
