@@ -510,11 +510,18 @@ def parse_getchu(html, page):
     root=a.DOM(html).root
     titles=[re.sub(r"\s+\[同人\]$", "", n.text().strip()) for n in root.all({"h1"}) if n.attrs.get("id")=="soft-title"]
     og=[n.attrs.get("content","") for n in root.all({"meta"}) if n.attrs.get("property")=="og:title"]
-    if len(titles)!=1 or len(og)!=1:
-        return []
-    brand=re.fullmatch(re.escape(titles[0])+r"\s*[(（](.+)[)）]",og[0])
-    if not brand:
-        return []
+    if len(og)!=1:return []
+    brand=re.fullmatch(re.escape(titles[0])+r"\s*[(（](.+)[)）]",og[0]) if len(titles)==1 else None
+    brand_name=brand[1] if brand else None
+    if not brand_name:
+        modern=re.fullmatch(r"(.+?)\s+\|\s+(.+)",og[0])
+        document_titles=[n.text().strip() for n in root.all({'title'})]
+        if not modern or len(document_titles)!=1:return []
+        title,brand_name=(v.strip() for v in modern.groups())
+        if titles and titles!=[title]:return []
+        if not re.match(re.escape(title)+r"\s*[(（]"+re.escape(brand_name)+r"[)）]\s*\|",document_titles[0]):return []
+        titles=[title]
+    product_id=(parse_qs(parts.query).get('id') or [parts.path.strip('/').split('/')[-1]])[0]
     result={}
     for node in root.all({"video","source"}):
         parent=node
@@ -524,17 +531,17 @@ def parse_getchu(html, page):
         if not target:continue
         raw=a.original(target);binary=urlsplit(raw)
         if binary.hostname!="trial.getchu.com" or not re.search(r"\.(mp4|wmv|mpg|mpeg|webm)$",binary.path,re.I):continue
+        if not product_id.isdigit() or (product_id not in binary.path.split('/') and Path(binary.path).stem!=product_id):continue
         label=parent.attrs.get("getchutitle", "")
         if not label.startswith(titles[0]):continue
         filename=unquote(Path(binary.path).name)
         ident=hashlib.sha256(("getchu\n"+a.original(page)+"\n"+binary.path).encode()).hexdigest()
         stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
         result[ident]={"id":ident,"site":"getchu","page_url":page,"original_page_url":a.original(page),
-            "title":titles[0],"brand":brand[1],"release_name":"ムービー","filename":filename,
+            "title":titles[0],"brand":brand_name,"release_name":"ムービー","filename":filename,
             "mirrors":([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
             "expected_md5":None,"expected_size":None,"size_text":None,"published_at":None,
             "fields":{"published_media_label":label,"getchu_product_url":a.original(page)}}
-    product_id=(parse_qs(parts.query).get('id') or [parts.path.strip('/').split('/')[-1]])[0]
     from mirror_sources import definitions
     restricted={name.casefold() for name in definitions()['getchu'].get('checksum_required_filenames',[])}
     for node in root.all({'a'}):
@@ -556,7 +563,7 @@ def parse_getchu(html, page):
         ident=hashlib.sha256(('getchu\n'+a.original(page)+'\n'+binary.path).encode()).hexdigest()
         stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
         result[ident]={'id':ident,'site':'getchu','page_url':page,'original_page_url':a.original(page),
-            'title':titles[0],'brand':brand[1],'release_name':release,'filename':filename,
+            'title':titles[0],'brand':brand_name,'release_name':release,'filename':filename,
             'mirrors':([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
             'expected_md5':None,'expected_size':None,'size_text':None,'published_at':None,
             'fields':{'published_media_label':label,'published_button':'demo_t.gif' if trial_button else None,'getchu_product_url':a.original(page)}}

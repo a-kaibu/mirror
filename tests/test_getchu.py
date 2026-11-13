@@ -1,4 +1,5 @@
 import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 import archiver as a
@@ -7,6 +8,21 @@ from portals import parse_getchu
 from test_archiver import Fetch,Response
 
 class GetchuTests(unittest.TestCase):
+    def test_modern_product_metadata_and_video_agree(self):
+        html=Path("tests/fixtures/getchu-modern-product.html").read_text()
+        rows=parse_getchu(html,"https://www.getchu.com/item/1037604/?gc=gc")
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]["title"],"地球防衛隊スターガーディアンズ 第1話")
+        self.assertEqual(rows[0]["brand"],"夢かき屋")
+        self.assertEqual(rows[0]["filename"],"1037604.mp4")
+        self.assertEqual(rows[0]["mirrors"],["https://trial.getchu.com/D100/1037604/1037604.mp4"])
+        self.assertEqual(parse_getchu(html,"https://www.getchu.com/item/1037605/"),[])
+
+    def test_modern_brand_requires_agreement_with_document_title(self):
+        html=Path("tests/fixtures/getchu-modern-product.html").read_text()
+        html=html.replace("| 夢かき屋","| 別ブランド")
+        self.assertEqual(parse_getchu(html,"https://www.getchu.com/item/1037604/"),[])
+
     def test_embedded_movie_uses_actual_source_and_capture_date(self):
         html='''<meta property="og:title" content="Game (Brand)"><h1 id="soft-title">Game</h1>
         <video getchutitle="Game デモムービー"><source src="http://trial.getchu.com/D100/123/123.mp4"></video>
