@@ -327,6 +327,36 @@ class DlsiteTests(unittest.TestCase):
         self.assertEqual(parse_dlsite(html,'https://www.dlsite.com/index.html'),[])
 
 
+class DlsiteTouchIdentityTests(unittest.TestCase):
+    def test_observed_mobile_brand_label_recovers_product_patch(self):
+        from portals import parse_dlsite
+        # Mobile product pages use dt/dd with ブランド rather than ブランド名.
+        maker='Brand A / Brand B'
+        url='https://trial.dlsite.com/professional/files/VJ01002283/NARAKU_patch_ver_1_1_0.zip'
+        html=('<h1>Game</h1><dl><div class="c-productInfo__item c-productInfo__item--maker">'
+              '<dt class="c-productInfo__key">ブランド</dt><dd class="c-productInfo__value">'
+              '<a href="/pro-touch/circle/profile/=/maker_id/VG02563.html">'+maker+'</a></dd></div></dl>'
+              '<a href="'+url+'">'+url+'</a>')
+        rows=parse_dlsite(html,'https://www.dlsite.com/pro-touch/work/=/product_id/VJ01002283.html')
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['brand'],maker)
+        self.assertEqual(rows[0]['release_name'],'パッチ')
+        self.assertEqual(rows[0]['mirrors'],[url])
+        self.assertEqual(parse_dlsite(html,'https://www.dlsite.com/pro-touch/work/=/product_id/VJ99999999.html'),[])
+    def test_mobile_circle_label_recovers_trial(self):
+        from portals import parse_dlsite
+        html=('<h1>Game</h1><dl><div><dt>サークル</dt><dd>Circle</dd></div></dl>'
+              '<a href="//trial.dlsite.com/doujin/RJ123000/RJ123456_trial.zip">体験版ダウンロード</a>')
+        rows=parse_dlsite(html,'https://www.dlsite.com/maniax-touch/work/=/product_id/RJ123456.html')
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['brand'],'Circle')
+        self.assertEqual(rows[0]['release_name'],'体験版')
+    def test_mobile_product_still_requires_maker_identity(self):
+        from portals import parse_dlsite
+        html='<h1>Game</h1><a href="//trial.dlsite.com/doujin/RJ123000/RJ123456_trial.zip">体験版ダウンロード</a>'
+        self.assertEqual(parse_dlsite(html,'https://www.dlsite.com/maniax-touch/work/=/product_id/RJ123456.html'),[])
+
+
 class DStationTests(unittest.TestCase):
     def test_rounded_legacy_sizes_are_not_exact_constraints(self):
         from portals import parse_d_station

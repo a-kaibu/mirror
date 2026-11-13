@@ -409,7 +409,7 @@ def parse_dlsite(html,page):
     product=re.search(r'/product_id/([A-Z]{2}[0-9]+)\.html',parts.path)
     if parts.hostname!='www.dlsite.com' or not product:return []
     root=a.DOM(html).root;fields=a.labels(root);titles=[n.text() for n in root.all({'h1'}) if n.text()]
-    brand=fields.get('サークル名') or fields.get('ブランド名') or fields.get('メーカー名')
+    brand=fields.get('サークル名') or fields.get('ブランド名') or fields.get('メーカー名') or fields.get('サークル') or fields.get('ブランド')
     if not brand or not titles:return []
     results=[]
     for link in root.all({'a'}):
