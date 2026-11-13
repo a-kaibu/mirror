@@ -30,6 +30,17 @@ def binary_links(node, page):
     return result
 
 
+def labelled_product(node,page):
+    targets=[]
+    for link in node.all({'a'}):
+        siblings=link.parent.children;position=siblings.index(link)
+        prefix=''.join(n.text() if isinstance(n,a.Node) else n for n in siblings[max(0,position-3):position])
+        if not re.search(r'タイトル名\s*[:：]?\s*$',prefix):continue
+        target=a.resolve(page,link.attrs.get('href',''))
+        if target:targets.append(a.canonical(a.original(target)))
+    return next(iter(set(targets))) if len(set(targets))==1 else None
+
+
 def parse(html, page, game, brand, scoped=True, hint=None):
     root=a.DOM(html).root
     records={}
@@ -41,12 +52,12 @@ def parse(html, page, game, brand, scoped=True, hint=None):
             marker=" ".join([n.attrs.get("id",""),n.attrs.get("class","")])
             trial=" 体験版" if re.search(r"(?<![a-z])trial(?![a-z])",marker,re.I) else ""
             return " ".join([n.text(),n.attrs.get("title","")]+[img.attrs.get("alt","") for img in n.all({"img"})])+trial
-        context=describe(link);node=link.parent
+        context=describe(link);context_node=link;node=link.parent
         while node is not None and node.tag not in {"body","html","root"}:
             text=describe(node)
             names={unquote(urlsplit(u).path.rsplit("/",1)[-1]) for _,u in binary_links(node,page)}
             if len(text)>6000 or len(names)>1:break
-            context=text
+            context=text;context_node=node
             if re.search(r"体験|trial|taiken|パッチ|patch|修正|アップデート|update|ムービー|movie|動画|(?:^|\W)PV(?:$|\W)",text,re.I):break
             node=node.parent
         label=context+" "+filename
@@ -55,7 +66,9 @@ def parse(html, page, game, brand, scoped=True, hint=None):
             continue  # Publisher scan targets trials, patches and movies.
         if kind=="other" and hint in KINDS and hint!="other" and len(filenames)==1:
             kind=hint
-        if kind=="other" or (not scoped and normalized(game["gamename"]) not in normalized(context)):
+        product_link=labelled_product(context_node,page)
+        linked=bool(game.get('shoukai') and product_link==a.canonical(game['shoukai']))
+        if kind=="other" or (not scoped and normalized(game["gamename"]) not in normalized(context) and not linked):
             unsupported.append(target);continue
         key=hashlib.sha256(("official\n"+page+"\n"+filename).encode()).hexdigest()
         if key not in records:
@@ -67,6 +80,7 @@ def parse(html, page, game, brand, scoped=True, hint=None):
                 "filename":filename,"mirrors":[],"expected_md5":md5s[0].lower() if len(set(md5s))==1 else None,
                 "expected_size":int(exact[0].replace(",","")) if len(set(exact))==1 else None,
                 "size_text":None,"published_at":None,"fields":{"erogamescape_game_id":game["id"],"erogamescape_brand_id":brand["id"],"official_page":page}}
+        if linked:records[key]['fields']['publisher_product_link']=product_link
         records[key]["mirrors"].append(target)
     for record in records.values():record["mirrors"]=list(dict.fromkeys(record["mirrors"]))
     return list(records.values()),unsupported

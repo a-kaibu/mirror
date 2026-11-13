@@ -22,6 +22,21 @@ class OfficialTests(unittest.TestCase):
         self.assertIsNone(record["expected_md5"])
         self.assertIn("azureedge.net",record["mirrors"][0])
 
+    def test_support_patch_uses_explicit_product_url_despite_title_punctuation(self):
+        game={**GAME,'shoukai':'https://key.visualarts.co.jp/anemoi/product.html'}
+        html='<div class="support"><div><b>修正パッチ公開</b><b>タイトル名</b>：<a href="product.html">Different punctuation</a></div><div><a href="a_patch.zip"><img src="download.gif"></a></div></div><div class="support"><b>修正パッチ</b><b>タイトル名</b>：<a href="other.html">Other</a><a href="b_patch.zip">Download</a></div>'
+        rows,_=o.parse(html,PAGE,game,BRAND,scoped=False)
+        self.assertEqual([r['filename'] for r in rows],['a_patch.zip'])
+        self.assertEqual(rows[0]['fields']['publisher_product_link'],game['shoukai'])
+        self.assertEqual(rows[0]['release_name'],'パッチ')
+        self.assertIsNone(rows[0]['expected_md5'])
+
+    def test_unlabelled_or_ambiguous_product_links_do_not_attribute_patch(self):
+        game={**GAME,'shoukai':'https://key.visualarts.co.jp/anemoi/product.html'}
+        for links in ['<a href="product.html">Product</a>','<b>タイトル名</b>：<a href="product.html">Product</a><b>タイトル名</b>：<a href="other.html">Other</a>']:
+            rows,_=o.parse('<section>修正パッチ '+links+'<a href="a_patch.zip">Download</a></section>',PAGE,game,BRAND,scoped=False)
+            self.assertEqual(rows,[])
+
     def test_unscoped_download_catalog_requires_product_context(self):
         html='<section><h2>Other title 体験版</h2><a href="other_trial.zip">Download</a></section>'
         records,unknown=o.parse(html,PAGE,GAME,BRAND,scoped=False)
