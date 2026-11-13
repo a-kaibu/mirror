@@ -96,6 +96,34 @@ class RangeExportTests(unittest.TestCase):
         self.assertIsNone(proof[-1]["upper"])
         db.close();remote.db.close()
 
+    def test_single_leading_key_splits_secondary_key_and_count_proof(self):
+        rows=[(3,n) for n in [-4,-1,0,1,8,99]]
+        db,table,remote=self.setup_capture([column("game","integer"),column("part","integer")],["game","part"],rows)
+        remote.reject_full_count=True
+        f.capture(db,table,remote,delay=0)
+        self.assertEqual(tuple(db.execute("SELECT status,rows,source_count FROM _capture_state").fetchone()),("complete",6,6))
+        self.assertEqual([tuple(row) for row in db.execute("SELECT * FROM source ORDER BY game,part")],rows)
+        self.assertGreater(db.execute("SELECT count(*) FROM _range_dimensions WHERE dimension=1").fetchone()[0],0)
+        proof=json.loads(db.execute("SELECT value FROM _archive_info WHERE key='range_count:source'").fetchone()[0])
+        self.assertEqual(sum(p["count"] for p in proof),6)
+        self.assertTrue(any(p["prefix"]=={"game":3} for p in proof))
+        db.close();remote.db.close()
+
+    def test_secondary_key_capture_resumes_after_transport_failure(self):
+        rows=[(3,n) for n in range(7)]
+        db,table,remote=self.setup_capture([column("game","integer"),column("part","integer")],["game","part"],rows)
+        def interrupted(sql):
+            result=remote(sql)
+            if '"game" = 3' in sql and 'SELECT src.*' in sql and result!=COST:
+                remote.fail_next=True
+            return result
+        f.capture(db,table,interrupted,delay=0)
+        self.assertEqual(db.execute("SELECT status FROM _capture_state").fetchone()[0],"failed")
+        r.capture_ranges(db,table,remote,delay=0)
+        self.assertEqual(db.execute("SELECT status FROM _capture_state").fetchone()[0],"complete")
+        self.assertEqual([tuple(row) for row in db.execute("SELECT * FROM source ORDER BY game,part")],rows)
+        db.close();remote.db.close()
+
     def test_excluded_tables_are_rejected_before_any_request(self):
         db=sqlite3.connect(":memory:");f.initialize(db)
         table={"table_name":"users","columns":[column("id","integer")],"primary_key":["id"]}

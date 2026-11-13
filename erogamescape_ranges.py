@@ -57,24 +57,44 @@ def key_domain(table, request):
     return key,"text","",None
 
 
+def singleton(kind,lower,upper):
+    return upper is not None and upper==(lower+1 if kind=='integer' else lower+chr(1))
+
+
+def conditions(table,dimension,prefix,key,kind,lower,upper):
+    result=[f.quote(k)+' = '+f.literal(v) for k,v in zip(table['primary_key'][:dimension],prefix)]
+    if singleton(kind,lower,upper):result.append(f.quote(key)+' = '+f.literal(lower))
+    else:
+        result.append(f.quote(key)+' >= '+f.literal(lower))
+        if upper is not None:result.append(f.quote(key)+' < '+f.literal(upper))
+    public=f.public_filter(table)
+    if public:result.append(public)
+    return result
+
+
+def next_domain(table,dimension,request):
+    if dimension>=len(table['primary_key']):raise ValueError('primary key cannot be split further')
+    return key_domain({**table,'primary_key':table['primary_key'][dimension:]},request)
+
+
 def bounded_count(db,table,request,key,kind,lower,upper):
-    """Count the complete key domain if even the broad count is cost-limited."""
-    queue=[(lower,upper,0)];proof=[];total=0
+    """Count every key dimension, including hot single leading-key values."""
+    queue=[(0,[],key,kind,lower,upper,0)];proof=[];total=0
     while queue:
-        lo,hi,depth=queue.pop()
-        parts=[f.quote(key)+" >= "+f.literal(lo)]
-        if hi is not None:parts.append(f.quote(key)+" < "+f.literal(hi))
-        public=f.public_filter(table)
-        if public:parts.append(public)
+        dimension,prefix,current_key,current_kind,lo,hi,depth=queue.pop()
+        parts=conditions(table,dimension,prefix,current_key,current_kind,lo,hi)
         try:
-            value=f.count_source(table["table_name"],request," AND ".join(parts))
-            total+=value;proof.append({"lower":lo,"upper":hi,"count":value,"checked_at":a.now()})
+            value=f.count_source(table['table_name'],request,' AND '.join(parts))
+            total+=value;proof.append({'lower':lo,'upper':hi,'key':current_key,'prefix':dict(zip(table['primary_key'][:dimension],prefix)),'count':value,'checked_at':a.now()})
         except f.QueryCostExceeded:
-            if depth>=128:raise ValueError("range count split depth exceeded")
-            pivot=split_text(lo,hi) if kind=="text" else (lo+hi)//2
-            if pivot==lo or pivot==hi:raise ValueError("count range cannot be split further")
-            queue.extend([(pivot,hi,depth+1),(lo,pivot,depth+1)])
-    db.execute("INSERT OR REPLACE INTO _archive_info VALUES(?,?)",("range_count:"+table["table_name"],json.dumps(proof,ensure_ascii=False)))
+            if singleton(current_kind,lo,hi):
+                k,t,left,right=next_domain(table,dimension+1,request)
+                queue.append((dimension+1,prefix+[lo],k,t,left,right,0));continue
+            if depth>=128:raise ValueError('range count split depth exceeded')
+            pivot=split_text(lo,hi) if current_kind=='text' else (lo+hi)//2
+            if pivot==lo or pivot==hi:raise ValueError('count range cannot be split further')
+            queue.extend([(dimension,prefix,current_key,current_kind,pivot,hi,depth+1),(dimension,prefix,current_key,current_kind,lo,pivot,depth+1)])
+    db.execute('INSERT OR REPLACE INTO _archive_info VALUES(?,?)',('range_count:'+table['table_name'],json.dumps(proof,ensure_ascii=False)))
     return total
 
 
@@ -83,90 +103,101 @@ def initialize(db):
       CREATE TABLE IF NOT EXISTS _range_plans(name TEXT PRIMARY KEY,key_name TEXT,kind TEXT,base_cursor TEXT,created_at TEXT);
       CREATE TABLE IF NOT EXISTS _capture_ranges(name TEXT,path TEXT,lower_key TEXT,upper_key TEXT,status TEXT,
         updated_at TEXT,error TEXT,PRIMARY KEY(name,path));
+      CREATE TABLE IF NOT EXISTS _range_dimensions(name TEXT,path TEXT,dimension INTEGER,prefix TEXT,root_path TEXT,
+        PRIMARY KEY(name,path));
     """)
 
 
-def _capture_ranges(db, table, request=f.e.query, delay=3, max_pages=None):
-    name=table["table_name"]
-    if f.exclusion(table):raise ValueError("excluded table cannot be exported")
-    pk=table.get("primary_key") or []
-    if not pk:raise ValueError("cost-limited range export requires a primary key")
+def _capture_ranges(db,table,request=f.e.query,delay=3,max_pages=None):
+    name=table['table_name']
+    if f.exclusion(table):raise ValueError('excluded table cannot be exported')
+    pk=table.get('primary_key') or []
+    if not pk:raise ValueError('cost-limited range export requires a primary key')
     initialize(db)
-    state=db.execute("SELECT * FROM _capture_state WHERE name=?",(name,)).fetchone()
-    if state and state["status"]=="complete":return
-    if not state:raise ValueError("initialize the regular table capture before range export")
-    cursor=json.loads(state["cursor"]) if state["cursor"] else None
-    offset=state["rows"]
-    if db.execute("SELECT count(*) FROM "+f.quote(name)).fetchone()[0]!=offset:
-        raise ValueError("local row count differs from capture state")
+    state=db.execute('SELECT * FROM _capture_state WHERE name=?',(name,)).fetchone()
+    if state and state['status']=='complete':return
+    if not state:raise ValueError('initialize the regular table capture before range export')
+    cursor=json.loads(state['cursor']) if state['cursor'] else None;offset=state['rows']
+    if db.execute('SELECT count(*) FROM '+f.quote(name)).fetchone()[0]!=offset:raise ValueError('local row count differs from capture state')
     key,kind,domain_lower,domain_upper=key_domain(table,request)
-    plan=db.execute("SELECT * FROM _range_plans WHERE name=?",(name,)).fetchone()
+    domains={0:(key,kind,domain_lower,domain_upper)}
+    def domain(index):
+        if index not in domains:domains[index]=next_domain(table,index,request)
+        return domains[index]
+    plan=db.execute('SELECT * FROM _range_plans WHERE name=?',(name,)).fetchone()
     if plan:
-        if plan["key_name"]!=key or plan["kind"]!=kind:raise ValueError("range key schema changed")
+        if plan['key_name']!=key or plan['kind']!=kind:raise ValueError('range key schema changed')
     else:
-        lower,upper=domain_lower,domain_upper
-        if cursor:lower=cursor[0]
-        db.execute("INSERT INTO _range_plans VALUES(?,?,?,?,?)",(name,key,kind,json.dumps(cursor),a.now()))
-        db.execute("INSERT INTO _capture_ranges VALUES(?,?,?,?,?,?,?)",(name,"",json.dumps(lower),json.dumps(upper),"pending",a.now(),None))
+        lower=cursor[0] if cursor else domain_lower
+        db.execute('INSERT INTO _range_plans VALUES(?,?,?,?,?)',(name,key,kind,json.dumps(cursor),a.now()))
+        db.execute('INSERT INTO _capture_ranges VALUES(?,?,?,?,?,?,?)',(name,'',json.dumps(lower),json.dumps(domain_upper),'pending',a.now(),None))
     db.execute("UPDATE _capture_state SET status='running',error=NULL,source_count=NULL,updated_at=? WHERE name=?",(a.now(),name));db.commit()
-    columns=table["columns"]
-    insert="INSERT INTO "+f.quote(name)+"("+",".join(f.quote(c["name"]) for c in columns)+") VALUES("+",".join("?" for _ in columns)+")"
+    columns=table['columns'];insert='INSERT INTO '+f.quote(name)+'('+','.join(f.quote(c['name']) for c in columns)+') VALUES('+','.join('?' for _ in columns)+')'
     pages=0
     while max_pages is None or pages<max_pages:
         segment=db.execute("SELECT * FROM _capture_ranges WHERE name=? AND status='pending' ORDER BY path LIMIT 1",(name,)).fetchone()
         if segment is None:
             try:
-                actual=db.execute("SELECT count(*) FROM "+f.quote(name)).fetchone()[0]
+                actual=db.execute('SELECT count(*) FROM '+f.quote(name)).fetchone()[0]
                 try:source=f.count_source(name,request,f.public_filter(table))
-                except f.QueryCostExceeded:
-                    source=bounded_count(db,table,request,key,kind,domain_lower,domain_upper)
-                if actual!=source:raise ValueError(f"count drift: captured {actual}, current source {source}; reconciliation required")
+                except f.QueryCostExceeded:source=bounded_count(db,table,request,key,kind,domain_lower,domain_upper)
+                if actual!=source:raise ValueError(f'count drift: captured {actual}, current source {source}; reconciliation required')
                 db.execute("UPDATE _capture_state SET status='complete',rows=?,source_count=?,updated_at=?,error=NULL WHERE name=?",(actual,source,a.now(),name));db.commit()
-                print("full range metadata complete",name,actual,flush=True)
+                print('full range metadata complete',name,actual,flush=True)
             except Exception as error:
                 db.rollback();db.execute("UPDATE _capture_state SET status='failed',updated_at=?,error=? WHERE name=?",(a.now(),str(error),name));db.commit()
-                print("full range metadata verification failed",name,error,flush=True)
+                print('full range metadata verification failed',name,error,flush=True)
             return
-        lower,upper=json.loads(segment["lower_key"]),json.loads(segment["upper_key"])
-        conditions=[f.quote(key)+" >= "+f.literal(lower)]
-        if upper is not None:conditions.append(f.quote(key)+" < "+f.literal(upper))
-        public=f.public_filter(table)
-        if public:conditions.append(public)
-        if cursor:conditions.append("("+",".join(map(f.quote,pk))+") > ("+",".join(map(f.literal,cursor))+")")
-        sql=("SELECT json_build_object('id',1,'row',row_to_json(t))::text AS metadata FROM (SELECT src.* FROM "+f.quote(name)+" src WHERE "+" AND ".join(conditions)+" ORDER BY "+",".join(map(f.quote,pk))+" LIMIT "+str(f.capture_batch_size(table))+") t")
+        lower,upper=json.loads(segment['lower_key']),json.loads(segment['upper_key'])
+        context=db.execute('SELECT * FROM _range_dimensions WHERE name=? AND path=?',(name,segment['path'])).fetchone()
+        dimension=context['dimension'] if context else 0;prefix=json.loads(context['prefix']) if context else [];root_path=context['root_path'] if context else ''
+        if len(prefix)!=dimension or not segment['path'].startswith(root_path):raise ValueError('invalid range dimension checkpoint')
+        current_key,current_kind,_,_=domain(dimension)
+        parts=conditions(table,dimension,prefix,current_key,current_kind,lower,upper)
+        if cursor:
+            before=tuple(cursor[:dimension]);fixed=tuple(prefix)
+            if before>fixed or (before==fixed and upper is not None and cursor[dimension]>=upper):parts.append('FALSE')
+            elif before==fixed and cursor[dimension]>=lower:
+                parts.append('('+','.join(map(f.quote,pk[dimension:]))+') > ('+','.join(map(f.literal,cursor[dimension:]))+')')
+        sql="SELECT json_build_object('id',1,'row',row_to_json(t))::text AS metadata FROM (SELECT src.* FROM "+f.quote(name)+' src WHERE '+' AND '.join(parts)+' ORDER BY '+','.join(map(f.quote,pk[dimension:]))+' LIMIT '+str(f.capture_batch_size(table))+') t'
         try:
             rows,digest=f.transport(sql,request)
             if rows:
-                if any(set(row)!={c["name"] for c in columns} for row in rows):raise ValueError("source schema changed")
+                if any(set(row)!={c['name'] for c in columns} for row in rows):raise ValueError('source schema changed')
                 new_cursor=[rows[-1][k] for k in pk]
-                if cursor==new_cursor:raise ValueError("pagination failed to advance")
-                db.executemany(insert,([f.cell(row[c["name"]]) for c in columns] for row in rows))
+                if cursor==new_cursor:raise ValueError('pagination failed to advance')
+                db.executemany(insert,([f.cell(row[c['name']]) for c in columns] for row in rows))
                 cursor=new_cursor;offset+=len(rows)
-                db.execute("UPDATE _capture_state SET cursor=?,offset=?,rows=?,updated_at=? WHERE name=?",(json.dumps(cursor),offset,offset,a.now(),name))
-            else:
-                db.execute("UPDATE _capture_ranges SET status='complete',updated_at=?,error=NULL WHERE name=? AND path=?",(a.now(),name,segment["path"]))
-            db.execute("INSERT INTO _capture_requests(name,sql,response_sha256,row_count,fetched_at) VALUES(?,?,?,?,?)",(name,sql,digest,len(rows),a.now()));db.commit()
-            print("full range metadata",name,offset,"range",repr(lower),repr(upper),"exhausted",not rows,flush=True)
+                db.execute('UPDATE _capture_state SET cursor=?,offset=?,rows=?,updated_at=? WHERE name=?',(json.dumps(cursor),offset,offset,a.now(),name))
+            else:db.execute("UPDATE _capture_ranges SET status='complete',updated_at=?,error=NULL WHERE name=? AND path=?",(a.now(),name,segment['path']))
+            db.execute('INSERT INTO _capture_requests(name,sql,response_sha256,row_count,fetched_at) VALUES(?,?,?,?,?)',(name,sql,digest,len(rows),a.now()));db.commit()
+            print('full range metadata',name,offset,'key',current_key,'prefix',repr(prefix),'range',repr(lower),repr(upper),'exhausted',not rows,flush=True)
         except f.QueryCostExceeded as error:
             db.rollback()
             try:
-                if len(segment["path"])>=128:raise ValueError("range split depth exceeded")
-                pivot=split_text(lower,upper) if kind=="text" else (lower+upper)//2
-                if pivot==lower or pivot==upper:raise ValueError("leading key cannot be split further")
-                db.execute("UPDATE _capture_ranges SET status='split',updated_at=?,error=? WHERE name=? AND path=?",(a.now(),str(error),name,segment["path"]))
-                for suffix,lo,hi in [("0",lower,pivot),("1",pivot,upper)]:
-                    db.execute("INSERT INTO _capture_ranges VALUES(?,?,?,?,?,?,?)",(name,segment["path"]+suffix,json.dumps(lo),json.dumps(hi),"pending",a.now(),None))
-                db.execute("INSERT INTO _capture_requests(name,sql,fetched_at,error) VALUES(?,?,?,?)",(name,sql,a.now(),str(error)));db.commit()
-                print("full range split",name,repr(lower),repr(upper),"at",repr(pivot),flush=True)
+                db.execute("UPDATE _capture_ranges SET status='split',updated_at=?,error=? WHERE name=? AND path=?",(a.now(),str(error),name,segment['path']))
+                if singleton(current_kind,lower,upper):
+                    _,_,left,right=domain(dimension+1);child=segment['path']+'0'
+                    db.execute('INSERT INTO _capture_ranges VALUES(?,?,?,?,?,?,?)',(name,child,json.dumps(left),json.dumps(right),'pending',a.now(),None))
+                    db.execute('INSERT INTO _range_dimensions VALUES(?,?,?,?,?)',(name,child,dimension+1,json.dumps(prefix+[lower]),child))
+                    print('full range next key',name,'fixed',repr(prefix+[lower]),flush=True)
+                else:
+                    if len(segment['path'])-len(root_path)>=128:raise ValueError('range split depth exceeded')
+                    pivot=split_text(lower,upper) if current_kind=='text' else (lower+upper)//2
+                    if pivot==lower or pivot==upper:raise ValueError('leading key cannot be split further')
+                    for suffix,lo,hi in [('0',lower,pivot),('1',pivot,upper)]:
+                        child=segment['path']+suffix
+                        db.execute('INSERT INTO _capture_ranges VALUES(?,?,?,?,?,?,?)',(name,child,json.dumps(lo),json.dumps(hi),'pending',a.now(),None))
+                        if dimension:db.execute('INSERT INTO _range_dimensions VALUES(?,?,?,?,?)',(name,child,dimension,json.dumps(prefix),root_path))
+                    print('full range split',name,current_key,repr(lower),repr(upper),'at',repr(pivot),flush=True)
+                db.execute('INSERT INTO _capture_requests(name,sql,fetched_at,error) VALUES(?,?,?,?)',(name,sql,a.now(),str(error)));db.commit()
             except Exception as split_error:
                 db.rollback();db.execute("UPDATE _capture_state SET status='failed',updated_at=?,error=? WHERE name=?",(a.now(),str(split_error),name));db.commit();raise
         except Exception as error:
-            db.rollback()
-            db.execute("UPDATE _capture_state SET status='failed',updated_at=?,error=? WHERE name=?",(a.now(),str(error),name))
-            db.execute("INSERT INTO _capture_requests(name,sql,fetched_at,error) VALUES(?,?,?,?)",(name,sql,a.now(),str(error)));db.commit()
-            print("full range metadata failed",name,error,flush=True);return
-        pages+=1
-        time.sleep(delay)
+            db.rollback();db.execute("UPDATE _capture_state SET status='failed',updated_at=?,error=? WHERE name=?",(a.now(),str(error),name))
+            db.execute('INSERT INTO _capture_requests(name,sql,fetched_at,error) VALUES(?,?,?,?)',(name,sql,a.now(),str(error)));db.commit()
+            print('full range metadata failed',name,error,flush=True);return
+        pages+=1;time.sleep(delay)
 
 
 def capture_ranges(db, table, request=f.e.query, delay=3, max_pages=None):

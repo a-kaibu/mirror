@@ -246,12 +246,19 @@ def collect(path, request=e.query, max_tables=None, max_pages=None, delay=3):
             state=db.execute("SELECT status FROM _capture_state WHERE name=?",(table["table_name"],)).fetchone()
             if state and state[0]=="complete":continue
             if max_tables is not None and attempted>=max_tables:break
-            planned=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_range_plans'").fetchone()
-            if planned:planned=db.execute("SELECT 1 FROM _range_plans WHERE name=?",(table["table_name"],)).fetchone()
-            if planned:
-                from erogamescape_ranges import capture_ranges
-                capture_ranges(db,table,request,delay,max_pages)
-            else:capture(db,table,request,delay,max_pages)
+            from archive_lock import exclusive_file
+            claim=Path(path).parent/'.claims'/('erogamescape-table-'+hashlib.sha256(table["table_name"].encode()).hexdigest()+'.lock')
+            try:
+                with exclusive_file(claim,blocking=False):
+                    planned=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_range_plans'").fetchone()
+                    if planned:planned=db.execute("SELECT 1 FROM _range_plans WHERE name=?",(table["table_name"],)).fetchone()
+                    if planned:
+                        from erogamescape_ranges import capture_ranges
+                        capture_ranges(db,table,request,delay,max_pages)
+                    else:capture(db,table,request,delay,max_pages)
+            except BlockingIOError:
+                print("full metadata deferred busy table",table["table_name"],flush=True)
+                continue
             attempted+=1
         print("full metadata states",[tuple(r) for r in db.execute("SELECT status,count(*) FROM _capture_state GROUP BY status")],flush=True)
         return len(targets),db.execute("SELECT count(*) FROM _capture_state WHERE status='complete'").fetchone()[0]
