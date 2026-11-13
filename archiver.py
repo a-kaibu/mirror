@@ -33,7 +33,7 @@ from urllib.request import Request, build_opener, HTTPCookieProcessor, HTTPSHand
 import http.cookiejar
 
 HOLY = "https://web.archive.org/web/20181025223313/http://holyseal.net/cgi-bin/newinfo.cgi?mode=file&flt=try"
-EXT = re.compile(r"\.(?:zip|exe|rar|7z|lzh|lha|cab|mpg|mpeg|wmv|avi|mp4|mov|webm|mp3|ogg|wav|xp3)(?:$|[?#])", re.I)
+EXT = re.compile(r"\.(?:zip|exe|rar|7z|lzh|lha|cab|mpg|mpeg|wmv|avi|mp4|mov|webm|mp3|wma|ogg|wav|xp3)(?:$|[?#])", re.I)
 WAYBACK = re.compile(r"^https?://web\.archive\.org/web/(\d{4,14})(?:[a-z_]+)?/(https?://.*)$")
 
 

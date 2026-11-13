@@ -691,3 +691,46 @@ def parse_magic_mirror(html,page):
         'fields':{'published_distribution_fields':fields,'published_filename_missing':filename is None,
             'copyright':fields.get('著作権'),'official_site_urls':list(dict.fromkeys(official_urls)),
             'holyseal_reference':fields.get('Holyseal情報')}}]
+
+
+def parse_fuzzy2(html,page):
+    parts=urlsplit(a.original(page))
+    if parts.hostname!='mirror.fuzzy2.com' or parts.path!='/distributes_jp/main.html':return []
+    root=a.DOM(html).root;title=brand=date=None;results=[]
+    for block in root.all({'p'}):
+        text=" ".join(block.text().split())
+        headings=[n for n in block.all({'font'}) if n.attrs.get('size')=='5']
+        if headings:
+            title=brand=date=None
+            stamp=re.search(r'\b(\d{4})\.(\d{2})\.(\d{2})\b',text)
+            credit=re.search(r'©\s*(.+?)\s+https?://',text)
+            if stamp and credit and len(headings)==1:
+                title=' '.join(headings[0].text().split());brand=credit[1].strip();date='-'.join(stamp.groups())
+            continue
+        if not title or not brand:continue
+        hashes=re.findall(r'MD5\s*[:：]\s*([a-fA-F0-9]{32})',text)
+        if len(hashes)!=1:continue
+        links=[]
+        for link in block.all({'a'}):
+            target=a.resolve(page,link.attrs.get('href',''))
+            if target and a.EXT.search(urlsplit(a.original(target)).path):links.append(target)
+        names={unquote(Path(urlsplit(a.original(u)).path).name) for u in links}
+        if len(names)!=1:continue
+        filename=next(iter(names))
+        if not any(n.text().strip()==filename for n in block.all({'b'})):continue
+        detail=text.split(filename,1)[1].strip()
+        size=re.search(r'([\d.]+\s*[KMGT]B)',detail,re.I)
+        release=detail.split('(',1)[0].strip()
+        if not release:continue
+        mirrors=[]
+        for target in links:
+            raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+            if stamp:mirrors.append(a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme))
+            mirrors.append(raw)
+        ident=hashlib.sha256(('fuzzy2\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
+        results.append({'id':ident,'site':'fuzzy2','page_url':page,'original_page_url':a.original(page),
+            'title':title,'brand':brand,'release_name':release,'filename':filename,
+            'expected_md5':hashes[0].lower(),'expected_size':None,'size_text':size[1] if size else None,
+            'published_at':date,'mirrors':list(dict.fromkeys(mirrors)),
+            'fields':{'parser':'fuzzy2-distributes','published_heading':title,'size_is_rounded':True}})
+    return list({r['id']:r for r in results}.values())

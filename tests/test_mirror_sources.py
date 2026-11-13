@@ -329,3 +329,31 @@ class DmmTests(unittest.TestCase):
         self.assertEqual(rows[0]['brand'],'ブランドA')
         self.assertEqual(rows[0]['filename'],'brand_0001t.zip')
         self.assertEqual(parse_dmm(html,'https://dlsoft.dmm.co.jp/'),[])
+
+
+class Fuzzy2CatalogueTests(unittest.TestCase):
+    page='http://web.archive.org/web/20030101224448/http://mirror.fuzzy2.com/distributes_jp/main.html'
+
+    def test_actual_catalogue_keeps_each_file_hash_and_publisher(self):
+        from portals import parse_fuzzy2
+        html=Path('tests/fixtures/fuzzy2-distributes-2003.html').read_text()
+        rows=parse_fuzzy2(html,self.page)
+        self.assertEqual(len(rows),10)
+        files={r['filename']:r for r in rows}
+        self.assertEqual(files['toon_op.exe']['brand'],'TEATIME')
+        self.assertEqual(files['toon_op.exe']['expected_md5'],'db5f5b48443b5c20f3156bfcfc97fe4b')
+        self.assertEqual(files['maw3_demo.avi']['brand'],'Studio e.go!')
+        self.assertEqual(files['maw3_demo.avi']['expected_md5'],'9ee7fa5c071445fe146a6cfcab3a9085')
+        self.assertEqual(files['solfeggio.wma']['expected_md5'],'b65cf84ab013182a1579d3dcd51b53e1')
+        self.assertEqual(files['sirotume_ch.lzh']['brand'],'LittleWitch')
+        self.assertEqual(files['sirotume_ch.lzh']['release_name'],'体験版')
+        self.assertEqual(files['sirotume_ch.lzh']['published_at'],'2002-12-17')
+        self.assertEqual(len(files['toon_op.exe']['mirrors']),4)
+        self.assertTrue(all(r['expected_size'] is None for r in rows))
+
+    def test_no_page_wide_hash_or_publisher_fallback(self):
+        from portals import parse_fuzzy2
+        html=Path('tests/fixtures/fuzzy2-distributes-2003.html').read_text()
+        without=html.replace('db5f5b48443b5c20f3156bfcfc97fe4b','unavailable')
+        self.assertNotIn('toon_op.exe',{r['filename'] for r in parse_fuzzy2(without,self.page)})
+        self.assertEqual(parse_fuzzy2(html,self.page.replace('mirror.fuzzy2.com/','example.com/')),[])
