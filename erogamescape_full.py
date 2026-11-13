@@ -142,6 +142,10 @@ def capture(db, table, request=e.query, delay=3, max_pages=None):
     else:
         cursor=None;offset=0;expected=None
         db.execute("INSERT INTO _capture_state(name,status,expected_count,started_at,updated_at) VALUES(?,?,?,?,?)",(name,"running",expected,a.now(),a.now()));db.commit()
+    timestamp_plan=db.execute("SELECT 1 FROM sqlite_master WHERE name='_timestamp_plans'").fetchone()
+    if timestamp_plan and db.execute("SELECT 1 FROM _timestamp_plans WHERE name=?",(name,)).fetchone():
+        from erogamescape_timestamp import capture as capture_timestamps
+        return capture_timestamps(db,table,request,delay,max_pages)
     if expected is None:
         try:
             expected=count_source(name,request,predicate)
@@ -149,6 +153,9 @@ def capture(db, table, request=e.query, delay=3, max_pages=None):
         except QueryCostExceeded:
             db.rollback()
             from erogamescape_ranges import capture_ranges
+            if not pk:
+                from erogamescape_timestamp import capture as capture_timestamps
+                return capture_timestamps(db,table,request,delay,max_pages)
             return capture_ranges(db,table,request,delay,max_pages)
         except Exception as error:
             db.rollback()
@@ -183,6 +190,9 @@ def capture(db, table, request=e.query, delay=3, max_pages=None):
             db.rollback()
             db.execute("INSERT INTO _capture_requests(name,sql,fetched_at,error) VALUES(?,?,?,?)",(name,sql,a.now(),str(error)));db.commit()
             from erogamescape_ranges import capture_ranges
+            if not pk:
+                from erogamescape_timestamp import capture as capture_timestamps
+                return capture_timestamps(db,table,request,delay,max_pages=None if max_pages is None else max(0,max_pages-pages))
             return capture_ranges(db,table,request,delay,max_pages=None if max_pages is None else max(0,max_pages-pages))
         except Exception as error:
             db.rollback()

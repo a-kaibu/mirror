@@ -522,6 +522,15 @@ ranges without changing the server's limits. Ranges and composite-key cursors
 are committed with each batch. Text ranges require a verified binary collation;
 unsupported key types fail explicitly. Source row counts and the existing full
 SQLite publication gate still have to pass before replacing the public snapshot.
+For keyless history tables with one non-null timestamp, the exporter also
+uses `erogamescape_timestamp.py`. It verifies that the finite timestamp domain
+covers the source, recursively splits costly or large indexed ranges, and
+stages pages before committing each complete partition. Equal timestamps and
+identical rows retain their multiplicity. Saved partitions resume through the
+normal full-export command. A final recount proves gap-free range coverage;
+out-of-domain timestamps, count drift and unsupported schemas fail explicitly.
+Visibility-filtered tables cannot use this unfiltered history path.
+
 A failed public table can be resumed independently while the main exporter
 continues later tables:
 
