@@ -860,3 +860,48 @@ def parse_fuzzy2(html,page):
                     'publisher_credits':credits,'published_checksum_missing':not bool(hashes),
                     'mismatched_file_links':mismatched}})
     return list({r['id']:r for r in results}.values())
+
+
+def parse_suezou(html,page):
+    """Read a publisher/product/download block without borrowing page-wide hashes."""
+    if urlsplit(a.original(page)).hostname not in {'suezou.dyndns.org','www.suezou-net.com'}:return []
+    root=a.DOM(html).root;result=[]
+    normalize=lambda text:re.sub(r'\s+',' ',unicodedata.normalize('NFKC',text)).strip()
+    for block in root.all({'td'}):
+        text=block.text()
+        digests=re.findall(r'MD5\s*\(\s*([^()]+?)\s*\)\s*=\s*([a-fA-F0-9]{32})(?![a-fA-F0-9])',text)
+        if len(set(digests))!=1:continue
+        filename,digest=digests[0];filename=filename.strip()
+        if not a.EXT.search(filename) or Path(filename).name!=filename:continue
+        first=next((node for node in block.children if isinstance(node,a.Node)),None)
+        if first is None or first.tag!='font':continue
+        brand=normalize(first.text())
+        if not brand:continue
+        credit=re.search(r'【\s*著作権\s+Copyright\s+(.+?)\s+All\s+Rights?\s+Reserved\.?\s*】',normalize(text),re.I)
+        if not credit or normalize(credit[1]).casefold()!=brand.casefold():continue
+        table=block.parent
+        while table is not None and table.tag!='table':table=table.parent
+        if table is None:continue
+        titles={node.text().strip() for node in table.all({'a'}) if node.attrs.get('name') and node.text().strip()}
+        if len(titles)!=1:continue
+        title=titles.pop()
+        prefix=normalize(text).split('【',1)[0].strip()
+        description=re.fullmatch(re.escape(brand)+r'\s+'+re.escape(normalize(title))+r'\s+(.+?)\s*([0-9]+(?:\.[0-9]+)?\s*[KMGT]i?B)',prefix,re.I)
+        if not description:continue
+        mirrors=[]
+        for link in block.all({'a'}):
+            target=a.resolve(page,link.attrs.get('href',''))
+            if not target or unquote(Path(urlsplit(a.original(target)).path).name)!=filename:continue
+            raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+            if stamp:mirrors.append(a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme))
+            mirrors.append(raw)
+        fields={normalize(key):value for key,value in a.labels(table).items()}
+        ident=hashlib.sha256(('suezou\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
+        result.append({'id':ident,'site':'suezou','page_url':page,'original_page_url':a.original(page),
+            'title':title,'brand':brand,'release_name':description[1].strip(),'filename':filename,
+            'expected_md5':digest.lower(),'expected_size':None,'size_text':description[2],
+            'published_at':None,'mirrors':list(dict.fromkeys(mirrors)),
+            'fields':{'brand_evidence':{'method':'download_block_publisher','published_name':first.text()},
+                'game_release_date':fields.get('発売日'),'OS':fields.get('OS'),
+                'source_link_missing':not bool(mirrors)}})
+    return result
