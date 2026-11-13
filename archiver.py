@@ -854,6 +854,20 @@ def transfer(fetcher, url, destination, record):
     return result
 
 
+def resumable_interruption(error,url,destination,record):
+    """Only transient stream failures with URL-bound partial bytes merit retry."""
+    reason=error.reason if isinstance(error,URLError) else error
+    if not isinstance(reason,(TimeoutError,ConnectionResetError,http.client.IncompleteRead)):return False
+    suffix=hashlib.sha256(url.encode()).hexdigest()[:16]
+    part=destination.with_name(destination.name+'.'+suffix+'.part')
+    try:
+        if part.is_symlink() or not part.is_file() or part.stat().st_size==0:return False
+        state=json.loads(part.with_suffix('.json').read_text())
+        return (isinstance(state,dict) and state.get('url')==url
+            and bool(state.get('validator') or record.get('expected_md5') or record.get('expected_sha256')))
+    except (OSError,ValueError,TypeError):return False
+
+
 def matching_mirrors(store, row, record):
     """Recover observed URLs from any same-maker published MD5 association.
 
@@ -976,7 +990,17 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
         for url in mirrors:
             error = None
             try:
-                result = transfer(source_fetcher, url, path, record)
+                try:
+                    result = transfer(source_fetcher, url, path, record)
+                except (OSError,http.client.HTTPException) as interrupted:
+                    if not resumable_interruption(interrupted,url,path,record):raise
+                    # Record the interrupted stream before one same-URL resume.
+                    # The second failure follows normal mirror failover below.
+                    store.db.execute("INSERT INTO attempts(item_id,url,attempted_at,error,tls_pin) VALUES(?,?,?,?,?)",
+                        (row['id'],url,now(),str(interrupted),getattr(source_fetcher,'last_tls_pin',None)))
+                    store.db.commit()
+                    print(f"resuming interrupted download {rel}",flush=True)
+                    result = transfer(source_fetcher, url, path, record)
                 acknowledged=store.update_if_current(row["id"], row["data"], status="verified", path=rel, source_url=url, fetched_at=now(), error=None, remote_sha256=None, **result)
                 if not acknowledged:
                     current=store.db.execute('SELECT data FROM items WHERE id=?',(row['id'],)).fetchone()

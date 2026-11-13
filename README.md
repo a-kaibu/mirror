@@ -72,6 +72,13 @@ WAL. Transfers use a metadata comparison before recording success so changed sou
 expectations are never silently overwritten. Do not run overlapping download batches. `download --id <source-record-id>` selects a
 specific source record; IDs appear in the manifest and SQLite.
 
+An interrupted source stream retries once on the same observed URL before
+mirror failover, using its nonempty URL-bound partial file. Resumption requires
+an HTTP validator or a published checksum, and every range and final checksum
+check still applies. Timeouts, connection resets and incomplete reads qualify;
+other failures keep their usual handling. The interrupted attempt is recorded
+in SQLite even when the resumed transfer succeeds.
+
 Large public read-backs use two bounded byte ranges when the server advertises
 range support and a strong ETag. Each response must match its requested offsets,
 total length and validator; bytes feed the complete SHA-256 in their original
