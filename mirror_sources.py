@@ -160,6 +160,16 @@ def add_record(store,record):
         old_size=selected['size'] if selected['size'] is not None else previous.get('expected_size')
         consistent_size=old_size is None or record.get('expected_size') is None or old_size==record['expected_size']
         if same_digest and consistent and consistent_size and same_identity:
+            # Recovery evidence belongs to this checksum-bound build, not the
+            # latest HTML parser. Keep it when refreshing descriptive fields.
+            fields=record.setdefault('fields',{})
+            for key in ('redirect_evidence','recovery_urls'):
+                merged=fields.get(key,[])+previous.get('fields',{}).get(key,[])
+                if merged:
+                    fields[key]=list({json.dumps(value,sort_keys=True):value for value in merged}.values())
+            proof=previous.get('fields',{}).get('filename_recovered_from')
+            if proof and proof.get('sha256')==hashes['expected_sha256'] and 'filename_recovered_from' not in fields:
+                fields['filename_recovered_from']=proof
             extras=[url for url in previous.get('mirrors',[]) if url not in record['mirrors']]
             observations=list(record.get('fields',{}).get('historical_mirror_links',[]))
             observations+=previous.get('fields',{}).get('historical_mirror_links',[])

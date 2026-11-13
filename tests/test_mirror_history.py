@@ -57,6 +57,30 @@ class MirrorHistoryTests(unittest.TestCase):
 
 
 class HistoricalLinkRetentionTests(unittest.TestCase):
+    def test_reparse_keeps_build_bound_recovery_evidence_and_filename_proof(self):
+        import copy
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                first=a.parse_detail(HTML,'http://source.test/item','d_station')[0]
+                first['expected_sha256']='a'*64
+                first['fields'].update(redirect_evidence=[{'request_url':'http://archive.test/cgi','location':'demo.zip'}],recovery_urls=['http://files.test/demo.zip'],filename_recovered_from={'sha256':'a'*64,'filename':first['filename'],'item_id':'donor'})
+                m.add_record(store,first)
+                fresh=copy.deepcopy(first);fresh['fields']={'parser':'current'};fresh['filename']=None
+                m.add_record(store,fresh)
+                self.assertEqual(fresh['filename'],first['filename'])
+                for key in ['redirect_evidence','recovery_urls','filename_recovered_from']:
+                    self.assertEqual(fresh['fields'][key],first['fields'][key])
+                m.add_record(store,fresh)
+                self.assertEqual(len(fresh['fields']['redirect_evidence']),1)
+                self.assertEqual(fresh['fields']['parser'],'current')
+                other=copy.deepcopy(first);other['expected_md5']='f'*32;other['expected_sha256']='b'*64;other['fields']={}
+                m.add_record(store,other)
+                self.assertNotEqual(other['id'],first['id'])
+                self.assertNotIn('redirect_evidence',other['fields'])
+                self.assertNotIn('filename_recovered_from',other['fields'])
+            finally:store.db.close()
+
     def test_removed_link_keeps_checksum_bound_capture_and_its_evidence(self):
         import copy
         with tempfile.TemporaryDirectory() as tmp:
