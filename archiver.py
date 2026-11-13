@@ -1104,7 +1104,23 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
             store.update(row["id"], remote_sha256=None, remote_verified_at=None)
             raise ValueError(f"public read-back mismatch: {key}")
         checked[key] = remote_sha, remote_size
-        if not store.update_if_current(row["id"], row["data"], remote_key=f"{namespace}/{bucket}/{key}", remote_sha256=remote_sha, remote_verified_at=now()):
+        proof={"remote_key":f"{namespace}/{bucket}/{key}","remote_sha256":remote_sha,"remote_verified_at":now()}
+        acknowledged=store.update_if_current(row["id"],row["data"],**proof)
+        if not acknowledged:
+            current=store.db.execute('SELECT * FROM items WHERE id=?',(row['id'],)).fetchone()
+            fresh=json.loads(current['data']) if current else {}
+            # A descriptive update can retain this fully read-back-verified
+            # object only when the current publisher checksum still binds it.
+            # Recheck every current constraint and CAS the fresh metadata too.
+            bound=(current is not None and current['status'] in {'verified','archived'}
+                and current['sha256']==remote_sha and current['size']==remote_size
+                and not fresh.get('fields',{}).get('source_association_quarantined')
+                and (fresh.get('expected_md5') or fresh.get('expected_sha256'))
+                and (not fresh.get('expected_md5') or fresh['expected_md5']==result.get('md5',row['md5']))
+                and (not fresh.get('expected_sha256') or fresh['expected_sha256']==remote_sha)
+                and (fresh.get('expected_size') is None or fresh['expected_size']==remote_size))
+            if bound:acknowledged=store.update_if_current(row['id'],current['data'],**proof)
+        if not acknowledged:
             raise ValueError("source metadata changed during publication; verified remote object retained")
         print(f"public read-back verified: {namespace}/{bucket}/{key}")
     if metadata:
