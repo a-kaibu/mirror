@@ -747,11 +747,17 @@ def transfer(fetcher, url, destination, record):
             offset = 0  # Server ignored Range, or If-Range forced a full response.
         else:
             raise ValueError(f"unexpected download status {response.status}")
+        expected_body = response.headers.get("Content-Length")
+        advertised_total = total if total is not None else int(expected_body) if expected_body is not None else None
+        if (record.get("expected_size") is not None and advertised_total is not None
+                and advertised_total != record["expected_size"]):
+            # Reject a known different build before consuming its body. Keep
+            # existing URL-bound partial bytes and their validator untouched.
+            raise ValueError("published file size mismatch (HTTP metadata)")
         validator = response.headers.get("ETag")
         if not validator or validator.startswith("W/"):
             validator = response.headers.get("Last-Modified")
         state_path.write_text(json.dumps({"url": url, "validator": validator}))
-        expected_body = response.headers.get("Content-Length")
         count = 0
         with part.open("ab" if offset else "wb") as f:
             while chunk := response.read(1024 * 1024):

@@ -146,6 +146,32 @@ class DiskTests(unittest.TestCase):
         part.with_suffix(".json").write_text(json.dumps({"validator": validator, "url": url}))
         return part
 
+    def test_wrong_full_length_is_rejected_before_reading_or_replacing_partial(self):
+        url='https://mirror.test/a';part=self.part(url,PAYLOAD[:5]);state=part.with_suffix('.json').read_bytes()
+        response=Response(b'not read',headers={'Content-Length':len(PAYLOAD)+1})
+        response.read=Mock(side_effect=AssertionError('body must not be read'))
+        with self.assertRaisesRegex(ValueError,'published file size mismatch'):
+            a.transfer(Fetch([response]),url,self.path,self.record)
+        response.read.assert_not_called()
+        self.assertEqual(part.read_bytes(),PAYLOAD[:5])
+        self.assertEqual(part.with_suffix('.json').read_bytes(),state)
+        self.assertFalse(self.path.exists())
+
+    def test_wrong_resumed_total_is_rejected_without_modifying_partial(self):
+        url='https://mirror.test/a';part=self.part(url,PAYLOAD[:5]);state=part.with_suffix('.json').read_bytes()
+        response=Response(b'not read',206,{'Content-Range':f'bytes 5-{len(PAYLOAD)}/{len(PAYLOAD)+1}','ETag':'"v1"'})
+        response.read=Mock(side_effect=AssertionError('body must not be read'))
+        with self.assertRaisesRegex(ValueError,'published file size mismatch'):
+            a.transfer(Fetch([response]),url,self.path,self.record)
+        response.read.assert_not_called()
+        self.assertEqual(part.read_bytes(),PAYLOAD[:5])
+        self.assertEqual(part.with_suffix('.json').read_bytes(),state)
+
+    def test_absent_publisher_size_does_not_invent_an_exact_size_constraint(self):
+        result=a.transfer(Fetch([Response(PAYLOAD,headers={'Content-Length':len(PAYLOAD)})]),'https://mirror.test/a',self.path,{**self.record,'expected_size':None})
+        self.assertEqual(result['size'],len(PAYLOAD))
+        self.assertEqual(result['md5'],MD5)
+
     def test_full_transfer(self):
         result = a.transfer(Fetch([Response(PAYLOAD, headers={"Content-Length": len(PAYLOAD)})]), "https://mirror.test/a", self.path, self.record)
         self.assertEqual(self.path.read_bytes(), PAYLOAD)
