@@ -13,7 +13,7 @@ def parse_moepedia(html,page):
     root=a.DOM(html).root;fields=a.labels(root)
     headings=[n.text() for n in root.all({"h2"}) if n.text()]
     brand=fields.get("ブランド")
-    if not headings or not brand:raise ValueError("Moepedia game identity missing")
+    if not headings:raise ValueError("Moepedia game title missing")
     title=headings[0];result={}
     for block in root.all({"div","section"}):
         if "trial" not in block.attrs.get("class","").split():continue

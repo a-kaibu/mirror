@@ -66,6 +66,29 @@ class MirrorSourcesTests(unittest.TestCase):
                 self.assertEqual(json.loads(store.rows("getchu")[0]["data"])["expected_md5"],"a"*32)
             finally:store.db.close()
 
+    def test_moepedia_missing_brand_still_preserves_explicit_trial(self):
+        html='<h2>作品A</h2><div class="body-shop trial"><h3>体験版</h3><a href="https://sample9.dmm.co.jp/digital/pcgame/a/a.zip">FANZA</a></div>'
+        rows=parse_moepedia(html,'https://moepedia.net/game/95566/')
+        self.assertEqual(len(rows),1)
+        self.assertIsNone(rows[0]['brand'])
+        self.assertEqual(rows[0]['title'],'作品A')
+        self.assertEqual(rows[0]['filename'],'a.zip')
+        self.assertEqual(rows[0]['release_name'],'体験版')
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                store.add(rows[0])
+                from catalog import manifest
+                data=manifest(store)
+                self.assertEqual(data['manufacturers'][0]['name'],'ブランド未確認')
+            finally:store.db.close()
+
+    def test_moepedia_without_title_or_explicit_trial_is_not_registered(self):
+        page='https://moepedia.net/game/95566/'
+        with self.assertRaisesRegex(ValueError,'title missing'):
+            parse_moepedia('<div class="trial"><h3>体験版</h3><a href="https://source.test/a.zip">DL</a></div>',page)
+        self.assertEqual(parse_moepedia('<h2>作品A</h2><a href="https://source.test/a.zip">購入</a>',page),[])
+
     def test_actual_moepedia_trial_block_excludes_purchase_links(self):
         html=a.decode_html((Path(__file__).parent/"fixtures/moepedia-98727.html").read_bytes())
         result=parse_moepedia(html,"https://moepedia.net/game/98727/")
