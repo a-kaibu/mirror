@@ -211,13 +211,21 @@ def build_site(store, output):
     for old in (output / "makers").glob("*.html"):
         if re.fullmatch(r"[a-f0-9]{64}", old.stem):
             old.unlink()
+    # Group once: rescanning every file for every product makes a full
+    # archive build quadratic as additional mirror records are discovered.
+    products_by_maker = {}
+    files_by_product = {}
+    for product in data["products"]:
+        products_by_maker.setdefault(product["manufacturer_id"], []).append(product)
+    for file in data["files"]:
+        files_by_product.setdefault(file["product_id"], []).append(file)
     for maker in data["manufacturers"]:
-        products = [p for p in data["products"] if p["manufacturer_id"] == maker["id"]]
+        products = products_by_maker.get(maker["id"], [])
         index += f'<li data-brand="{e(maker["name"])}"><a href="makers/{maker["id"]}.html">{e(maker["name"])}</a><small>{len(products)}作品</small></li>'
         body = controls
         for product in products:
             body += f'<section class="product" id="p-{product["id"]}"><h2>{e(product["title"])}</h2>'
-            for file in [f for f in data["files"] if f["product_id"] == product["id"]]:
+            for file in files_by_product.get(product["id"], []):
                 query = " ".join([maker["name"], product["title"], file["name"], *[(s["filename"] or "") for s in file["sources"]]])
                 label = file["name"]
                 if label.startswith(product["title"]):
