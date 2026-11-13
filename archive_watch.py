@@ -18,7 +18,7 @@ def queue_refused_replays(store,site):
           AND (t.error LIKE '<urlopen error [Errno 111] Connection refused%'
             OR t.error LIKE '[Errno 111] Connection refused%')""",(site,)).fetchall()
     for row in rows:
-        if not a.WAYBACK.match(row['url']):continue
+        if not a.binary_archive_capture(row['url']):continue
         alternate=('https://'+row['url'][7:]) if row['url'].startswith('http://') else ('http://'+row['url'][8:])
         store.db.execute('INSERT OR IGNORE INTO wayback_candidates VALUES(?,?,?,?,?)',
             (row['item_id'],alternate,row['original_url'],row['captured_at'],row['index_digest']))

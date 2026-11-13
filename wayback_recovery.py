@@ -2,8 +2,17 @@
 import argparse
 import json
 import re
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode, urlsplit, parse_qs
 import archiver as a
+
+
+def index_identity(url):
+    parts=urlsplit(url)
+    if parts.scheme=='ftp':
+        if not parts.hostname or parts.username is not None or parts.password is not None:
+            raise ValueError('not an anonymous public FTP source')
+        return 'ftp',parts.hostname,21 if parts.port is None else parts.port,parts.path,parts.query
+    return ('web',)+a.archive_url_identity(url)
 
 
 def captures(payload, target, scheme="https"):
@@ -14,7 +23,7 @@ def captures(payload, target, scheme="https"):
     required = {"timestamp", "original", "statuscode", "digest"}
     if not isinstance(payload[0], list) or not required <= set(payload[0]):
         raise ValueError("CDX columns missing")
-    base = a.archive_url_identity(target)
+    base = index_identity(target)
     result = []
     for values in payload[1:]:
         if len(values) != len(payload[0]):
@@ -22,10 +31,11 @@ def captures(payload, target, scheme="https"):
         row = dict(zip(payload[0], values))
         # CDX may canonicalize HTTP(S) and explicit default ports. Preserve
         # nondefault ports, path and query so another service cannot match.
-        try:identity=a.archive_url_identity(row["original"])
+        try:identity=index_identity(row["original"])
         except ValueError:continue
         if identity!=base:continue
-        if str(row["statuscode"]) != "200" or not re.fullmatch(r"\d{14}", row["timestamp"]):
+        success="226" if base[0]=="ftp" else "200"
+        if str(row["statuscode"]) != success or not re.fullmatch(r"\d{14}", row["timestamp"]):
             continue
         if row.get("mimetype", "").lower() in {"text/html", "application/xhtml+xml"}:
             continue
@@ -40,7 +50,19 @@ def discover(store, fetcher, limit=None, refresh=False, site="both"):
     for item in store.rows(site):
         if item['status']!='failed':continue
         record=json.loads(item['data'])
-        originals=dict.fromkeys(a.original(u) for u in record['mirrors']+record.get('fields',{}).get('recovery_urls',[]))
+        urls=record['mirrors']+record.get('fields',{}).get('recovery_urls',[])
+        # Legacy parsers retain the exact FTP href as provenance. Query its
+        # own archived resource, never invent an HTTP service or change ports.
+        for link in record.get('fields',{}).get('published_ftp_links',[]):
+            target=link.get('url') if isinstance(link,dict) else None
+            if not isinstance(target,str):continue
+            try:
+                parts=urlsplit(target)
+                if parts.scheme!='ftp':continue
+                index_identity(target)
+            except ValueError:continue
+            if a.EXT.search(parts.path):urls=urls+[target]
+        originals=dict.fromkeys(a.original(u) for u in urls)
         for target in originals:targets.setdefault(target,[]).append((item['id'],record['filename']))
     lookups={row['url']:row for row in store.db.execute('SELECT url,status,queried_at FROM wayback_lookups')}
     def priority(target):
@@ -52,6 +74,12 @@ def discover(store, fetcher, limit=None, refresh=False, site="both"):
     for target in sorted(targets,key=priority):
         scheme=a.archive_index_scheme(store,target)
         saved = store.db.execute("SELECT * FROM wayback_lookups WHERE url=?", (target,)).fetchone()
+        ftp_target=urlsplit(target).scheme=='ftp'
+        if ftp_target and saved and saved['status']=='ok':
+            transport=store.db.execute('SELECT index_url FROM archive_index_transports WHERE target_url=?',(target,)).fetchone()
+            # A legacy HTTP-200 filter cannot prove an FTP-226 result is absent.
+            if not transport or 'statuscode:226' not in parse_qs(urlsplit(transport[0]).query).get('filter',[]):
+                saved=None
         if saved and saved["status"] == "ok" and not refresh:
             payload = json.loads(saved["data"])
         else:
@@ -59,7 +87,7 @@ def discover(store, fetcher, limit=None, refresh=False, site="both"):
                 return attempted, found
             attempted += 1
             endpoint = "https://web.archive.org/cdx/search/cdx?" + urlencode({"url": target,
-                "output": "json", "filter": "statuscode:200", "fl": "timestamp,original,mimetype,statuscode,digest,length", "limit": "10000"})
+                "output": "json", "filter": "statuscode:226" if ftp_target else "statuscode:200", "fl": "timestamp,original,mimetype,statuscode,digest,length", "limit": "10000"})
             try:
                 with a.open_archive_index(fetcher,endpoint) as response:
                     raw = response.read(16 * 1024 * 1024 + 1)

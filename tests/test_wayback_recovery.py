@@ -121,3 +121,95 @@ class WaybackRecoveryTests(unittest.TestCase):
             never=Mock();self.assertEqual(discover(store,never),(0,2));never.open.assert_not_called()
             self.assertEqual(store.db.execute('SELECT index_url FROM archive_index_transports WHERE target_url=?',(TARGET,)).fetchone()[0],index)
             store.db.close()
+
+
+class FtpArchiveRecoveryTests(unittest.TestCase):
+    def payload(self,original):
+        return [ROWS[0],['20030414005709',original,'application/zip','226','ftp-index-digest','99']]
+    def test_ftp_default_port_matches_but_other_services_credentials_and_paths_do_not(self):
+        target='ftp://mirror.test/demo.zip'
+        self.assertEqual(len(captures(self.payload('ftp://mirror.test:21/demo.zip'),target)),1)
+        for other in ['ftp://mirror.test:0/demo.zip','ftp://mirror.test:22/demo.zip','http://mirror.test/demo.zip','ftp://user@mirror.test/demo.zip','ftp://mirror.test/other.zip','ftp://mirror.test/demo.zip?other=1']:
+            self.assertEqual(captures(self.payload(other),target),[])
+        with self.assertRaises(ValueError):captures(self.payload(target),'ftp://user:secret@mirror.test/demo.zip')
+    def test_published_ftp_evidence_enters_cdx_and_uses_actual_capture_date(self):
+        from urllib.parse import parse_qs,urlsplit
+        from test_archiver import PAYLOAD
+        target='ftp://mirror.test/demo.zip'
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                record=a.parse_detail(HTML,'https://source.test/item','multi_inside')[0]
+                record.update(mirrors=[],fields={'published_ftp_links':[{'url':target,'observed_href':'http://web.archive.org/web/20020101010101/'+target}]})
+                store.add(record);store.update(record['id'],status='failed')
+                response=Response(json.dumps(self.payload(target)).encode())
+                response.geturl=lambda:'http://web.archive.org/cdx/search/cdx?output=json&filter=statuscode%3A226'
+                fetch=Fetch([response])
+                self.assertEqual(discover(store,fetch),(1,1))
+                self.assertEqual(parse_qs(urlsplit(fetch.requests[0][0]).query)['url'],[target])
+                self.assertEqual(parse_qs(urlsplit(fetch.requests[0][0]).query)['filter'],['statuscode:226'])
+                row=store.db.execute('SELECT * FROM wayback_candidates').fetchone()
+                self.assertEqual(row['captured_at'],'20030414005709')
+                self.assertEqual(row['original_url'],target)
+                self.assertEqual(row['url'],'http://web.archive.org/web/20030414005709id_/'+target)
+                transfer=Fetch([Response(PAYLOAD)])
+                self.assertEqual(a.download(store,transfer),0)
+                self.assertEqual(transfer.requests[0][0],row['url'])
+                self.assertEqual(store.db.execute('SELECT status FROM items').fetchone()[0],'verified')
+            finally:store.db.close()
+    def test_credentials_and_unobserved_ftp_urls_are_not_queried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                record=a.parse_detail(HTML,'https://source.test/item','multi_inside')[0]
+                record.update(mirrors=[],fields={'published_ftp_links':[{'url':'ftp://user:secret@mirror.test/demo.zip'},{'url':'ftp://[invalid/demo.zip'},{'url':'http://mirror.test/demo.zip'},'ftp://mirror.test/unobserved.zip']})
+                store.add(record);store.update(record['id'],status='failed')
+                never=Mock();self.assertEqual(discover(store,never),(0,0));never.open.assert_not_called()
+            finally:store.db.close()
+    def test_ftp_binary_capture_uses_existing_refused_port_digest_rule(self):
+        from urllib.error import URLError
+        from test_archiver import PAYLOAD
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                url='https://web.archive.org/web/20030414005709id_/ftp://mirror.test/demo.zip'
+                record=a.parse_detail(HTML,'https://source.test/item','multi_inside')[0]
+                record['mirrors']=[url];store.add(record)
+                fetch=Fetch([URLError(ConnectionRefusedError(111,'refused')),Response(PAYLOAD)])
+                self.assertEqual(a.download(store,fetch),0)
+                self.assertEqual(fetch.requests[1][0],'http://'+url[8:])
+            finally:store.db.close()
+    def test_ftp_https_denial_without_publisher_digest_does_not_downgrade(self):
+        from urllib.error import URLError
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                record=a.parse_detail(HTML,'https://source.test/item','multi_inside')[0]
+                record.update(mirrors=['https://web.archive.org/web/20030414005709id_/ftp://mirror.test/demo.zip'],expected_md5=None,expected_sha256=None)
+                store.add(record);fetch=Fetch([URLError(ConnectionRefusedError(111,'refused'))])
+                self.assertEqual(a.download(store,fetch),1)
+                self.assertEqual(len(fetch.requests),1)
+            finally:store.db.close()
+
+    def test_legacy_http_filtered_empty_ftp_lookup_is_refreshed_and_then_cached(self):
+        target='ftp://mirror.test/demo.zip'
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                record=a.parse_detail(HTML,'https://source.test/item','multi_inside')[0]
+                record.update(mirrors=[],fields={'published_ftp_links':[{'url':target}]})
+                store.add(record);store.update(record['id'],status='failed')
+                store.db.execute('INSERT INTO wayback_lookups VALUES(?,?,?,?,?)',(target,a.now(),'ok','[]',None))
+                a.archive_index_scheme(store,target,'http://web.archive.org/cdx/search/cdx?filter=statuscode%3A200');store.db.commit()
+                response=Response(json.dumps(self.payload(target)).encode())
+                response.geturl=lambda:'http://web.archive.org/cdx/search/cdx?filter=statuscode%3A226'
+                self.assertEqual(discover(store,Fetch([response])),(1,1))
+                store.update(record['id'],status='failed')
+                never=Mock();self.assertEqual(discover(store,never),(0,1));never.open.assert_not_called()
+            finally:store.db.close()
+    def test_http_status_226_and_ftp_status_200_are_not_successful_file_records(self):
+        ftp='ftp://mirror.test/demo.zip'
+        wrong=self.payload(ftp);wrong[1][3]='200'
+        self.assertEqual(captures(wrong,ftp),[])
+        http=self.payload(TARGET)
+        self.assertEqual(captures(http,TARGET),[])

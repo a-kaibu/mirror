@@ -68,6 +68,20 @@ def archive_url_identity(url):
     return parts.hostname,port,parts.path,parts.query
 
 
+def binary_archive_capture(url):
+    match=WAYBACK.match(url)
+    if match:return match
+    match=re.fullmatch(r'https?://web\.archive\.org/web/(\d{14})(?:[a-z_]+)?/(ftp://.+)',url)
+    if match:
+        parts=urlsplit(match[2])
+        try:
+            if parts.hostname and parts.username is None and parts.password is None:
+                parts.port  # Reject invalid ports before a transport retry.
+                return match
+        except ValueError:pass
+    return None
+
+
 def replay(url, timestamp="20181025223313", raw=False, scheme="https"):
     if scheme not in {"http", "https"}:raise ValueError("unsupported archive transport")
     return f"{scheme}://web.archive.org/web/{timestamp}{'id_' if raw else ''}/{original(url)}"
@@ -980,7 +994,7 @@ def download(store, fetcher, site="both", limit=None, ident=None, export=True):
                 # HTTP downgrade additionally requires a publisher checksum.
                 # HTTP denials and certificate errors never trigger this retry.
                 reason = e.reason if isinstance(e, URLError) else e
-                if (isinstance(reason, ConnectionRefusedError) and WAYBACK.match(url)
+                if (isinstance(reason, ConnectionRefusedError) and binary_archive_capture(url)
                         and (urlsplit(url).scheme == "http" or record.get("expected_md5") or record.get("expected_sha256"))):
                     alternate = ("https://" if urlsplit(url).scheme == "http" else "http://") + urlsplit(url).netloc + urlsplit(url).path
                     if urlsplit(url).query:alternate += "?" + urlsplit(url).query

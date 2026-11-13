@@ -550,6 +550,15 @@ continues later tables:
 python erogamescape_ranges.py --table fanza_doujin_sales
 ```
 
+Legacy `published_ftp_links` also enter CDX discovery using their exact
+anonymous FTP URL and FTP-success status 226 (HTTP uses status 200). Cached
+FTP lookups made with the HTTP filter are refreshed. FTP default port 21 is
+normalized within FTP only; an HTTP
+service or another port cannot stand in for that source. Actual indexed binary
+capture dates enter the normal checksum-validated download queue. Missing
+captures and lookup errors remain recorded separately. The success-code
+convention follows Internet Archive's [FTP CDX handler](https://github.com/internetarchive/CDX-Writer/blob/master/cdx_writer.py).
+
 Wayback transport retains the protocol of published replay pages and their
 relative links. If a replay's HTTPS TCP port is explicitly refused, a binary
 transfer may try the identical HTTP capture only when an expected MD5 or
