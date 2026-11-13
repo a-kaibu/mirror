@@ -443,6 +443,21 @@ After a publication interruption, `--import-only` resumes from that receipt with
 re-downloading the folder. Transfer quotas are respected; interrupted downloads
 remain available for the native client's normal resume.
 
+A creator-supplied note in the native staging directory may also link a public
+Google Drive mirror. Inspect and archive that inventory with:
+
+```sh
+uv run python hanny_drive.py --source daisengoku --list-only
+uv run python hanny_drive.py --source daisengoku
+```
+
+The note must match its native file receipt. Drive listing uses anonymous access
+and preserves distinct relative paths for package and download variants. SQLite
+tracks the complete listed inventory and marks the folder complete after every
+file has passed public read-back verification. Interrupted publication resumes
+from verified local files; Drive acquisitions retain their own source URLs and
+verification records.
+
 The VNDB snapshot is available at
 https://huggingface.co/buckets/vn-archive/mirrors/resolve/vndb.sqlite3?download=true.
 
