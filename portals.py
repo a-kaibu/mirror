@@ -414,7 +414,7 @@ def parse_d_station(html,page):
 
 
 def parse_lapistan(html,page):
-    parts=urlsplit(a.original(page));section=re.fullmatch(r'/(?:allage/)?list/([^/]+)/index\.htm[l]?',parts.path)
+    parts=urlsplit(a.original(page));section=re.fullmatch(r'/(?:allage/)?list/([^/]+)/(?:index|mod)\.htm[l]?',parts.path)
     if parts.hostname not in {'lapistan.jp','www.lapistan.jp'} or not section:return []
     root=a.DOM(html).root;folder=unquote(section[1]);brand=None
     for image in root.all({'img'}):
@@ -423,6 +423,13 @@ def parse_lapistan(html,page):
         for heading in root.all({'title'}):
             match=re.fullmatch(r'WindFriction\s+(.+)',heading.text())
             if match:brand=match[1].strip();break
+    if not brand:
+        permissions=re.findall(r'当サイトは\s+(.+?)\s+の許可を得て掲載しています',root.text())
+        permitted={name.strip().casefold() for credit in permissions for name in credit.split('/')}
+        for heading in root.all({'title'}):
+            match=re.fullmatch(r'ラピスたん\s+(.+?)(?:\s+修正ファイル)?',heading.text())
+            if match and match[1].strip().casefold() in permitted:
+                brand=match[1].strip();break
     if not brand:return []
     results=[]
     for link in root.all({'a'}):
@@ -442,7 +449,7 @@ def parse_lapistan(html,page):
         digest=re.search(r'MD5[：:]\s*([a-fA-F0-9]{32})',text)
         size=re.search(r'\[([\d.]+\s*[KMG]B)\]',text,re.I)
         if not digest:continue
-        date=re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日',date_text)
+        dates=list(re.finditer(r'(\d{4})年(\d{1,2})月(\d{1,2})日',date_text));date=dates[-1] if dates else None
         raw=a.original(target);filename=a.filename_from_url(raw);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
         ident=hashlib.sha256(('lapistan\n'+a.original(page)+'\n'+filename+'\n'+digest[1].lower()).encode()).hexdigest()
         results.append({'id':ident,'site':'lapistan','page_url':page,'original_page_url':a.original(page),

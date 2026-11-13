@@ -710,3 +710,30 @@ class MimimaidLegacyTests(unittest.TestCase):
         html=self.document('<p>■ 作品A　体験版 （2007/02/18公開）</p>'+self.file_table('a.zip','a'*32,100))
         self.assertEqual(parse_mimimaid(html.replace('ミラー＞18禁（商業）＞light','別のページ'),self.page),[])
         self.assertEqual(parse_mimimaid(html,self.page.replace('mimimaid.moe.hm','other.test')),[])
+
+
+class LapistanPatchListTests(unittest.TestCase):
+    def test_mod_page_keeps_each_checksum_and_most_recent_preceding_date(self):
+        from portals import parse_lapistan
+        html=('<title>ラピスたん　PULLTOP　修正ファイル</title><img alt="PULLTOP">'
+              '<td>更新日：2007年2月2日<br><a href="http://mirror1.lapistan.jp:8000/mirror/PULLTOP/mod/haruka.exe">遥かに仰ぎ、麗しの　修正プログラムVer1.01</a> [418KB] MD5：'+('a'*32)
+              +'<br>更新日：2005年6月14日<br><a href="http://mirror1.lapistan.jp:8000/mirror/PULLTOP/mod/yunohana101.exe">ゆのはな　修正プログラムVer1.01</a> [7.8MB] MD5：'+('b'*32)+'</td>')
+        page='https://web.archive.org/web/20131103175825/http://lapistan.jp/list/PULLTOP/mod.htm'
+        rows=parse_lapistan(html,page)
+        self.assertEqual([(r['title'],r['expected_md5'],r['published_at']) for r in rows],
+                         [('遥かに仰ぎ、麗しの','a'*32,'2007-02-02'),('ゆのはな','b'*32,'2005-06-14')])
+        self.assertTrue(all(r['brand']=='PULLTOP' and r['release_name']=='修正プログラムVer1.01' for r in rows))
+        self.assertEqual(rows[0]['mirrors'][0],'https://web.archive.org/web/20131103175825id_/http://mirror1.lapistan.jp:8000/mirror/PULLTOP/mod/haruka.exe')
+
+    def test_localized_brand_requires_title_and_explicit_permission_agreement(self):
+        from portals import parse_lapistan
+        html=('<title>ラピスたん　株式会社エクスペリエンス</title>'
+              '<p>当サイトは 株式会社エクスペリエンス の許可を得て掲載しています。</p>'
+              '<td>2009年5月21日<br><a href="http://mirror1.lapistan.jp:8000/mirror01/2009/05/experiense/G-XTH3_TRIAL_Install.exe">GENERATION XTH CODE-REALIZE　体験版</a> [177.5MB] MD5：'+('c'*32)+'</td>')
+        page='http://lapistan.jp/allage/list/experiense/index.htm'
+        row=parse_lapistan(html,page)[0]
+        self.assertEqual(row['brand'],'株式会社エクスペリエンス')
+        self.assertEqual(row['title'],'GENERATION XTH CODE-REALIZE')
+        self.assertEqual(row['release_name'],'体験版')
+        self.assertEqual(parse_lapistan(html.replace('当サイトは 株式会社エクスペリエンス','当サイトは 他社'),page),[])
+        self.assertEqual(parse_lapistan(html,page.replace('lapistan.jp','other.test')),[])
