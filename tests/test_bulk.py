@@ -127,6 +127,19 @@ class BulkTests(unittest.TestCase):
         row=self.store.db.execute("SELECT * FROM items WHERE id='b'").fetchone()
         self.assertFalse(bulk.reuse_verified(self.store,row,"vn-archive","mirrors"))
 
+    def test_quarantined_source_associations_cannot_donate_or_receive_reuse(self):
+        for side in ['donor','target']:
+            with self.subTest(side=side):
+                donor=self.add(side+'-donor',brand=side)
+                self.mark_public(donor['id'])
+                target=self.add(side+'-target',brand=side)
+                flagged=donor if side=='donor' else target
+                flagged.setdefault('fields',{})['source_association_quarantined']=True
+                self.store.add(flagged)
+                row=self.store.db.execute('SELECT * FROM items WHERE id=?',(target['id'],)).fetchone()
+                self.assertFalse(bulk.reuse_verified(self.store,row,'vn-archive','mirrors'))
+                self.assertIsNone(self.store.db.execute('SELECT remote_verified_at FROM items WHERE id=?',(target['id'],)).fetchone()[0])
+
     def test_repeat_publish_does_not_redownload_verified_binary(self):
         self.add("a")
         self.mark_public("a")

@@ -18,6 +18,8 @@ def publicly_archived(row, namespace, bucket):
 
 def reuse_verified(store, row, namespace, bucket):
     record = json.loads(row["data"])
+    if (record.get("fields") or {}).get("source_association_quarantined"):
+        return False
     if not record.get("expected_md5") or not record.get("brand"):
         return False
     maker = store.db.execute("SELECT p.manufacturer_id FROM item_catalog c JOIN products p ON p.id=c.product_id WHERE c.item_id=?", (row["id"],)).fetchone()
@@ -30,6 +32,7 @@ def reuse_verified(store, row, namespace, bucket):
         and (not record.get('expected_sha256') or record['expected_sha256']==row['sha256'])
         and (record.get('expected_size') is None or record['expected_size']==row['size'])) else None
     candidates = [r for r in candidates if publicly_archived(r, namespace, bucket)
+        and not (json.loads(r["data"]).get("fields") or {}).get("source_association_quarantined")
         and (not bound_sha or bound_sha==r['sha256'])
         and (not record.get("expected_sha256") or record["expected_sha256"] == r["sha256"])
         and (record.get("expected_size") is None or record["expected_size"] == r["size"])]
