@@ -385,6 +385,11 @@ state within the process. Live platform sessions have separate cookie jars.
 from CDX, including captures before closure. Explicit dated frontier URLs preserve
 their replay date when following navigation.
 
+`python holy_watch.py --watch` continues Holyseal's saved dated product pages
+with its native parser, then checks untried product IDs from ErogameScape. Each
+phase is bounded to 50 entries; subsequent batches run fresh parser code and keep
+source claims separate from the file-transfer workers.
+
 `python metadata_watch.py` continues saved archive and platform frontiers in
 100-page batches per source with fresh parser code. Existing discovery claims are deferred;
 archive sources share one paced fetcher. Native and curated adapters keep their

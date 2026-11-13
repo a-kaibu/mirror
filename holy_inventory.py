@@ -8,6 +8,8 @@ import archiver as a
 
 
 def initialize(store):
+    from erogamescape import initialize as initialize_metadata
+    initialize_metadata(store)
     store.db.execute("""CREATE TABLE IF NOT EXISTS holy_inventory(product_code INTEGER PRIMARY KEY,
         status TEXT NOT NULL,requested_url TEXT,chosen_url TEXT,checked_at TEXT NOT NULL,error TEXT)""")
     store.db.commit()
