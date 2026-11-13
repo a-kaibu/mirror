@@ -247,6 +247,12 @@ Completed scan receipts let subsequent limited batches advance to other CGI URLs
 Busy download claims are deferred without marking the scan complete; cached
 redirect observations remain available for a later pass.
 
+`python filename_recovery.py` fills missing filenames on publicly verified files
+from same-manufacturer observations bound to the identical SHA-256. Publisher
+hashes and exact sizes must agree when present; ambiguous names are left unresolved.
+The evidence and an atomic recovery receipt remain in SQLite. `--watch` checks
+again every five minutes without blocking active downloads.
+
 ## ErogameScape metadata
 
 `python erogamescape.py --export --upload` reads the public SQL form with bounded
