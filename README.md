@@ -59,6 +59,13 @@ total length and validator; bytes feed the complete SHA-256 in their original
 order. Ignored ranges fall back to a complete streaming read, and verification
 failures retain the local file for retry.
 
+`uv run python publication_watch.py --watch` drains verified local files that
+remain unpublished after a batch interruption. It shares per-file claims with
+the download workers, skips busy or quarantined observations, and never starts a
+source download. Publication and full read-back failures retain local files for
+the next pass. A fresh process runs each pass with a five-minute cooldown; add
+`--keep-local` to retain working copies after successful publication.
+
 ## Large collections
 
 After crawling, `uv run python archiver.py archive-batch --site lathercraft`
