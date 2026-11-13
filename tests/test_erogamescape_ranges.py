@@ -124,6 +124,28 @@ class RangeExportTests(unittest.TestCase):
         self.assertEqual([tuple(row) for row in db.execute("SELECT * FROM source ORDER BY game,part")],rows)
         db.close();remote.db.close()
 
+    def test_hot_text_prefix_promotes_through_three_primary_key_columns(self):
+        rows=[("a",3,n) for n in [-2,0,1,4,9]]
+        db,table,remote=self.setup_capture([column("brand"),column("game","integer"),column("part","integer")],["brand","game","part"],rows)
+        remote.reject_full_count=True
+        f.capture(db,table,remote,delay=0)
+        self.assertEqual(tuple(db.execute("SELECT status,rows,source_count FROM _capture_state").fetchone()),("complete",5,5))
+        self.assertEqual([tuple(row) for row in db.execute("SELECT * FROM source ORDER BY brand,game,part")],rows)
+        self.assertTrue(db.execute("SELECT 1 FROM _range_dimensions WHERE dimension=2").fetchone())
+        proof=json.loads(db.execute("SELECT value FROM _archive_info WHERE key='range_count:source'").fetchone()[0])
+        self.assertTrue(any(p["prefix"]=={"brand":"a","game":3} for p in proof))
+        self.assertEqual(sum(p["count"] for p in proof),5)
+        db.close();remote.db.close()
+
+    def test_unsplittable_full_primary_key_stays_failed(self):
+        db,table,remote=self.setup_capture([column("game","integer"),column("part","integer")],["game","part"],[(3,1)],limit=0)
+        f.capture(db,table,remote,delay=0)
+        state=db.execute("SELECT status,rows,error FROM _capture_state").fetchone()
+        self.assertEqual(tuple(state)[:2],("failed",0))
+        self.assertIn("primary key cannot be split further",state[2])
+        self.assertIsNone(db.execute("SELECT source_count FROM _capture_state").fetchone()[0])
+        db.close();remote.db.close()
+
     def test_excluded_tables_are_rejected_before_any_request(self):
         db=sqlite3.connect(":memory:");f.initialize(db)
         table={"table_name":"users","columns":[column("id","integer")],"primary_key":["id"]}

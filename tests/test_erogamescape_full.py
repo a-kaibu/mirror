@@ -153,6 +153,21 @@ class FixedCharacterBatchTests(unittest.TestCase):
 
 
 class FullCollectionResumeTests(unittest.TestCase):
+    def test_busy_table_claim_defers_only_that_table(self):
+        import hashlib
+        from archive_lock import exclusive_file
+        schema=[{'table_name':name,'columns':[column('id','integer')],'primary_key':['id']} for name in ['busy','free']]
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'full.sqlite3'
+            claim=path.parent/'.claims'/('erogamescape-table-'+hashlib.sha256(b'busy').hexdigest()+'.lock')
+            def request(sql):
+                self.assertEqual(sql,f.SCHEMA_SQL)
+                return html([{'id':1,'tables':schema}])
+            with exclusive_file(claim,blocking=False),patch.object(f,'capture') as capture:
+                self.assertEqual(f.collect(path,request=request,delay=0,max_tables=1),(2,0))
+            self.assertEqual(capture.call_count,1)
+            self.assertEqual(capture.call_args.args[1]['table_name'],'free')
+
     def test_saved_ranges_are_resumed_and_one_failed_table_does_not_hide_others(self):
         import erogamescape_ranges as ranges
         schema=[{'table_name':name,'columns':[column('id','integer')],'primary_key':['id']} for name in ['ranged','regular','done','users']]
