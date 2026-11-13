@@ -355,5 +355,47 @@ class Fuzzy2CatalogueTests(unittest.TestCase):
         from portals import parse_fuzzy2
         html=Path('tests/fixtures/fuzzy2-distributes-2003.html').read_text()
         without=html.replace('db5f5b48443b5c20f3156bfcfc97fe4b','unavailable')
-        self.assertNotIn('toon_op.exe',{r['filename'] for r in parse_fuzzy2(without,self.page)})
+        self.assertIsNone(next(r for r in parse_fuzzy2(without,self.page) if r['filename']=='toon_op.exe')['expected_md5'])
         self.assertEqual(parse_fuzzy2(html,self.page.replace('mirror.fuzzy2.com/','example.com/')),[])
+
+
+class Fuzzy2JdmTests(unittest.TestCase):
+    page='http://web.archive.org/web/20021228012854/http://mirror.fuzzy2.com:80/jdm/main.html'
+
+    def test_trial_and_hashless_patch_share_paragraph_without_sharing_hash(self):
+        from portals import parse_fuzzy2
+        from catalog import release_info
+        rows=parse_fuzzy2(Path('tests/fixtures/fuzzy2-jdm-2002.html').read_text(),self.page)
+        self.assertEqual(len(rows),28)
+        files={r['filename']:r for r in rows}
+        self.assertEqual(files['imoiko1206.exe']['expected_md5'],'70584e74f2870c32a0c4aed14167d18e')
+        patch=files['imoiko_syusei.zip']
+        self.assertIsNone(patch['expected_md5'])
+        self.assertEqual(patch['brand'],'Overflow')
+        self.assertEqual(patch['published_at'],'2002-12-06')
+        self.assertEqual(patch['size_text'],'70KB')
+        self.assertEqual(patch['release_name'],'旧バージョンからの修正ファイル')
+        self.assertEqual(release_info(patch)[0],'patch')
+        self.assertTrue(patch['fields']['published_checksum_missing'])
+        self.assertNotIn('imoiko.exe',files)
+        self.assertTrue(all('imoiko_syusei.zip' in u for u in patch['mirrors']))
+        self.assertEqual(files['dcop1.lzh']['expected_md5'],'6f3a21c193de5fb94b3546964a473e2d')
+        self.assertEqual(files['dcop2.lzh']['expected_md5'],'ed9afa9fdfb63b992f8a9fa0aea7978a')
+        self.assertEqual(files['mitugetu.lzh']['published_at'],'2002-11-06')
+
+    def test_ambiguous_hashes_do_not_inherit_from_other_file(self):
+        from portals import parse_fuzzy2
+        html=Path('tests/fixtures/fuzzy2-jdm-2002.html').read_text()
+        html=html.replace('70584e74f2870c32a0c4aed14167d18e','70584e74f2870c32a0c4aed14167d18e MD5: 11111111111111111111111111111111')
+        files={r['filename']:r for r in parse_fuzzy2(html,self.page)}
+        self.assertNotIn('imoiko1206.exe',files)
+        self.assertIsNone(files['imoiko_syusei.zip']['expected_md5'])
+
+    def test_publisher_copy_paste_links_do_not_receive_another_files_hash(self):
+        from portals import parse_fuzzy2
+        files={r['filename']:r for r in parse_fuzzy2(Path('tests/fixtures/fuzzy2-jdm-2002.html').read_text(),self.page)}
+        row=files['daia_demo.lzh']
+        self.assertEqual(row['expected_md5'],'a5a360b7d4bbb698148be43eea2879dd')
+        self.assertTrue(all('daia_demo.lzh' in u for u in row['mirrors']))
+        self.assertTrue(any('girilove_demo.exe' in u for u in row['fields']['mismatched_file_links']))
+        self.assertEqual(files['girilove_demo.exe']['expected_md5'],'69bcdbd0f2eaa019b51b7e5b92643446')

@@ -693,44 +693,70 @@ def parse_magic_mirror(html,page):
             'holyseal_reference':fields.get('Holyseal情報')}}]
 
 
+def _fuzzy2_file_sections(block,page):
+    # A paragraph can contain a trial followed by its separately linked patch.
+    # A bold, literal filename starts a new scope for text, hashes and links.
+    sections=[]
+    def visit(node):
+        if isinstance(node,str):
+            if sections:sections[-1]['text'].append(node)
+            return
+        name=node.text().strip() if node.tag=='b' else ''
+        extension=a.EXT.search(name)
+        if name and '/' not in name and extension and extension.end()==len(name):
+            sections.append({'filename':name,'text':[],'links':[]})
+            return
+        if node.tag=='a' and sections:
+            target=a.resolve(page,node.attrs.get('href',''))
+            if target and a.EXT.search(urlsplit(a.original(target)).path):sections[-1]['links'].append(target)
+        if node.tag=='br' and sections:sections[-1]['text'].append(' ')
+        for child in node.children:visit(child)
+    visit(block)
+    return sections
+
+
 def parse_fuzzy2(html,page):
     parts=urlsplit(a.original(page))
-    if parts.hostname!='mirror.fuzzy2.com' or parts.path!='/distributes_jp/main.html':return []
-    root=a.DOM(html).root;title=brand=date=None;results=[]
+    if parts.hostname!='mirror.fuzzy2.com' or parts.path not in {'/distributes_jp/main.html','/jdm/main.html'}:return []
+    root=a.DOM(html).root;title=brand=date=None;credits=[];results=[]
     for block in root.all({'p'}):
         text=" ".join(block.text().split())
-        headings=[n for n in block.all({'font'}) if n.attrs.get('size')=='5']
-        if headings:
-            title=brand=date=None
-            stamp=re.search(r'\b(\d{4})\.(\d{2})\.(\d{2})\b',text)
-            credit=re.search(r'©\s*(.+?)\s+https?://',text)
-            if stamp and credit and len(headings)==1:
-                title=' '.join(headings[0].text().split());brand=credit[1].strip();date='-'.join(stamp.groups())
+        headings=[n for n in block.children if isinstance(n,a.Node) and n.tag=='font'
+            and n.attrs.get('size') in {'4','5'} and any(b.text().strip() for b in n.all({'b'}))]
+        stamp=re.match(r'(\d{4})\.(\d{1,2})\.(\d{1,2})\b',text)
+        if headings or stamp:
+            title=brand=date=None;credits=[]
+            credits=re.findall(r'©\s*([^©]+?)\s+https?://',text)
+            if stamp and credits and len(headings)==1:
+                title=' '.join(headings[0].text().split());brand=credits[0].strip()
+                date=f'{stamp[1]}-{int(stamp[2]):02}-{int(stamp[3]):02}'
             continue
         if not title or not brand:continue
-        hashes=re.findall(r'MD5\s*[:：]\s*([a-fA-F0-9]{32})',text)
-        if len(hashes)!=1:continue
-        links=[]
-        for link in block.all({'a'}):
-            target=a.resolve(page,link.attrs.get('href',''))
-            if target and a.EXT.search(urlsplit(a.original(target)).path):links.append(target)
-        names={unquote(Path(urlsplit(a.original(u)).path).name) for u in links}
-        if len(names)!=1:continue
-        filename=next(iter(names))
-        if not any(n.text().strip()==filename for n in block.all({'b'})):continue
-        detail=text.split(filename,1)[1].strip()
-        size=re.search(r'([\d.]+\s*[KMGT]B)',detail,re.I)
-        release=detail.split('(',1)[0].strip()
-        if not release:continue
-        mirrors=[]
-        for target in links:
-            raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
-            if stamp:mirrors.append(a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme))
-            mirrors.append(raw)
-        ident=hashlib.sha256(('fuzzy2\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
-        results.append({'id':ident,'site':'fuzzy2','page_url':page,'original_page_url':a.original(page),
-            'title':title,'brand':brand,'release_name':release,'filename':filename,
-            'expected_md5':hashes[0].lower(),'expected_size':None,'size_text':size[1] if size else None,
-            'published_at':date,'mirrors':list(dict.fromkeys(mirrors)),
-            'fields':{'parser':'fuzzy2-distributes','published_heading':title,'size_is_rounded':True}})
+        for section in _fuzzy2_file_sections(block,page):
+            filename=section['filename']
+            links=[u for u in section['links'] if unquote(Path(urlsplit(a.original(u)).path).name)==filename]
+            mismatched=[u for u in section['links'] if u not in links]
+            if not links:continue
+            detail=' '.join(''.join(section['text']).split())
+            hashes=set(v.lower() for v in re.findall(r'MD5\s*[:：]\s*([a-fA-F0-9]{32})',detail))
+            if len(hashes)>1:continue
+            size=re.search(r'([\d.]+\s*[KMGT]B)',detail,re.I)
+            release=detail.split('(',1)[0].strip()
+            if not release:release=re.split(r'[,，]',detail.lstrip('('),maxsplit=1)[0].strip()
+            if not release:continue
+            mirrors=[]
+            for target in links:
+                raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+                if stamp:mirrors.append(a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme))
+                mirrors.append(raw)
+            # Keep hashless releases on different published dates distinct.
+            identity='fuzzy2\n'+a.original(page)+'\n'+filename+('\n'+date if not hashes else '')
+            ident=hashlib.sha256(identity.encode()).hexdigest()
+            results.append({'id':ident,'site':'fuzzy2','page_url':page,'original_page_url':a.original(page),
+                'title':title,'brand':brand,'release_name':release,'filename':filename,
+                'expected_md5':next(iter(hashes),None),'expected_size':None,'size_text':size[1] if size else None,
+                'published_at':date,'mirrors':list(dict.fromkeys(mirrors)),
+                'fields':{'parser':'fuzzy2-catalogue','published_heading':title,'size_is_rounded':True,
+                    'publisher_credits':credits,'published_checksum_missing':not bool(hashes),
+                    'mismatched_file_links':mismatched}})
     return list({r['id']:r for r in results}.values())
