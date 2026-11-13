@@ -452,7 +452,14 @@ class Fetcher:
                 e.close()
                 if attempt + 1 == self.retries:
                     raise
-            except (URLError, TimeoutError, ConnectionError):
+            except (URLError, TimeoutError, ConnectionError) as error:
+                reason=error.reason if isinstance(error,URLError) else error
+                # A negative DNS answer cannot benefit from an immediate
+                # retry. Leave temporary resolution errors and timeouts on
+                # the normal retry path, and let download try other mirrors.
+                no_address={socket.EAI_NONAME,getattr(socket,'EAI_NODATA',socket.EAI_NONAME)}
+                if isinstance(reason,socket.gaierror) and reason.errno in no_address:
+                    raise
                 if attempt + 1 == self.retries:
                     raise
                 time.sleep(2 ** attempt)
