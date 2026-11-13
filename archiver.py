@@ -597,6 +597,8 @@ class Store:
         CREATE INDEX IF NOT EXISTS items_expected_sha256 ON items(json_extract(data,'$.expected_sha256'));
         CREATE INDEX IF NOT EXISTS items_md5 ON items(md5) WHERE md5 IS NOT NULL;
         CREATE INDEX IF NOT EXISTS items_sha256 ON items(sha256) WHERE sha256 IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS items_site_status ON items(site,status,id);
+        CREATE INDEX IF NOT EXISTS items_status ON items(status,id);
         CREATE TABLE IF NOT EXISTS archive_index_transports(target_url TEXT PRIMARY KEY,index_url TEXT NOT NULL,checked_at TEXT NOT NULL);
         """)
         from catalog import initialize
@@ -665,7 +667,11 @@ class Store:
         return export_manifest(self)
 
     def rows(self, site="both"):
-        return self.db.execute("SELECT i.* FROM items i JOIN item_catalog c ON c.item_id=i.id WHERE (?='both' OR site=?) ORDER BY CASE c.kind WHEN 'trial' THEN 0 WHEN 'patch' THEN 1 WHEN 'full' THEN 2 WHEN 'movie' THEN 3 ELSE 4 END,i.id", (site, site)).fetchall()
+        # A parameterized OR prevents the source equality from using its index.
+        where="" if site=="both" else " WHERE i.site=?"
+        query="SELECT i.* FROM items i JOIN item_catalog c ON c.item_id=i.id"+where
+        query+=" ORDER BY CASE c.kind WHEN 'trial' THEN 0 WHEN 'patch' THEN 1 WHEN 'full' THEN 2 WHEN 'movie' THEN 3 ELSE 4 END,i.id"
+        return self.db.execute(query,() if site=="both" else (site,)).fetchall()
 
 
 def is_detail(url, site):
