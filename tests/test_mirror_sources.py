@@ -629,3 +629,37 @@ class GenericAssociationSafetyTests(unittest.TestCase):
                 hashes,urls=m.known_files(store,'fuzzy2')
                 self.assertEqual(hashes,{});self.assertEqual(urls,{})
             finally:store.db.close()
+
+
+class DLsiteDescriptionPatchTests(unittest.TestCase):
+    def test_product_bound_url_labels_preserve_each_patch_version(self):
+        from portals import parse_dlsite
+        html='<h1>Game</h1><table><tr><th>ブランド名</th><td>Brand</td></tr></table>'
+        urls=['https://trial.dlsite.com/professional/files/VJ01005081/VBRI_JPR_Patch_'+v+'.zip' for v in ['1.02','1.03','1.04','1.04b']]
+        html+=''.join('<a href="'+u+'">'+u+'</a>' for u in urls)
+        rows=parse_dlsite(html,'https://www.dlsite.com/pro/work/=/product_id/VJ01005081.html')
+        self.assertEqual(len(rows),4)
+        self.assertEqual({r['release_name'] for r in rows},{'パッチ'})
+        self.assertEqual({r['mirrors'][0] for r in rows},set(urls))
+        self.assertTrue(all(r['title']=='Game' and r['brand']=='Brand' and r['expected_md5'] is None for r in rows))
+
+    def test_patch_rejects_other_products_hosts_and_unclassified_bonus_files(self):
+        from portals import parse_dlsite
+        prefix='<h1>Game</h1><table><tr><th>ブランド名</th><td>Brand</td></tr></table>'
+        urls=['https://trial.dlsite.com/professional/files/VJ99999999/game_patch.zip',
+              'https://other.test/professional/files/VJ01005081/game_patch.zip',
+              'https://trial.dlsite.com/professional/files/VJ01005081/bonus.zip',
+              'https://trial.dlsite.com/professional/files/VJ01005081/patchnotes.html',
+              'https://trial.dlsite.com/professional/files/VJ01005081/sub/patch.zip']
+        html=prefix+'<p>アップデートパッチ</p>'+''.join('<a href="'+u+'">'+u+'</a>' for u in urls)
+        self.assertEqual(parse_dlsite(html,'https://www.dlsite.com/pro/work/=/product_id/VJ01005081.html'),[])
+
+    def test_named_patch_and_archived_download_keep_original_filename_and_capture(self):
+        from portals import parse_dlsite
+        html='<h1>Game</h1><table><tr><th>サークル名</th><td>Brand</td></tr></table><a href="http://trial.dlsite.com/doujin/files/RJ123456/fix.zip">修正ファイル</a>'
+        page='http://web.archive.org/web/20150102030405/http://www.dlsite.com/home/work/=/product_id/RJ123456.html'
+        rows=parse_dlsite(html,page)
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['filename'],'fix.zip')
+        self.assertEqual(rows[0]['release_name'],'パッチ')
+        self.assertEqual(rows[0]['mirrors'][0],'http://web.archive.org/web/20150102030405id_/http://trial.dlsite.com/doujin/files/RJ123456/fix.zip')

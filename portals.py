@@ -296,12 +296,18 @@ def parse_dlsite(html,page):
     for link in root.all({'a'}):
         label=link.text()
         release='体験版' if '体験版' in label else ('ムービー' if re.search(r'ムービー\s*ダウンロード',label) else None)
-        if release is None:continue
         target=a.resolve(page,link.attrs.get('href',''))
         if not target:continue
-        raw=a.original(target)
-        if urlsplit(raw).hostname!='trial.dlsite.com' or not a.EXT.search(urlsplit(raw).path):continue
+        raw=a.original(target);download=urlsplit(raw)
+        if download.hostname!='trial.dlsite.com' or not a.EXT.search(download.path):continue
         filename=a.filename_from_url(raw);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        # Description links often display only the URL. Bind these patches to
+        # the exact product directory rather than borrowing surrounding text.
+        product_file=re.fullmatch(r'/(?:professional|doujin)/files/([A-Z]{2}[0-9]+)/[^/]+',download.path,re.I)
+        if release is None and product_file and product_file[1].upper()==product[1].upper():
+            if re.search(r'パッチ|修正|アップデート|(?<![a-z])(?:patch|update|syusei)(?![a-z])',label+' '+filename,re.I):
+                release='パッチ'
+        if release is None:continue
         if release=='ムービー' and not filename.upper().startswith(product[1].upper()+'_'):continue
         size=re.search(r'\(([0-9.,]+\s*(?:[KMGT]i?B))\)',label,re.I)
         ident=hashlib.sha256(('dlsite\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
