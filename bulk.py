@@ -140,6 +140,6 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
                     stats["evicted_bytes"] += evict_verified(store, row["id"], namespace, bucket)
             print("batch", now(), json.dumps(stats), flush=True)
             if (stats["published"] + stats["reused"]) % checkpoint_every == 0:
-                publish_metadata(store, namespace, bucket, profile, include_html=False)
-    publish_metadata(store, namespace, bucket, profile, include_html=False)
+                publish_metadata(store, namespace, bucket, profile, include_html=False, blocking=False)
+    publish_metadata(store, namespace, bucket, profile, include_html=False, blocking=False)
     return stats

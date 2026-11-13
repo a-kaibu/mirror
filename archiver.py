@@ -1102,7 +1102,7 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
     return count
 
 
-def publish_metadata(store, namespace, bucket, profile="hf", include_html=True):
+def publish_metadata(store, namespace, bucket, profile="hf", include_html=True, blocking=True):
     from archive_lock import exclusive_file
     # Slow provenance uploads must not hold the mutable catalogue checkpoint
     # lock. Acquisition batches only checkpoint SQLite; a separate worker drains
@@ -1110,8 +1110,17 @@ def publish_metadata(store, namespace, bucket, profile="hf", include_html=True):
     if include_html:
         with exclusive_file(store.root / ".provenance.lock"):
             _publish_html(store, namespace, bucket, profile)
-    with exclusive_file(store.root / ".publish.lock"):
+    from contextlib import ExitStack
+    with ExitStack() as locks:
+        try:
+            locks.enter_context(exclusive_file(store.root / ".publish.lock", blocking=blocking))
+        except BlockingIOError:
+            if blocking:raise
+            # Another publisher is already refreshing the shared checkpoint.
+            # Body transfers must keep draining their durable SQLite queue.
+            return False
         _publish_snapshot(store, namespace, bucket, profile)
+    return True
 
 
 def _publish_html(store, namespace, bucket, profile="hf"):

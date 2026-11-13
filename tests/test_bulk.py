@@ -62,6 +62,27 @@ class BulkTests(unittest.TestCase):
             self.assertIsNone(json.loads(row['data'])['expected_size'])
             self.assertEqual(row['size'],len(PAYLOAD))
 
+    def test_busy_catalog_publication_does_not_stop_body_transfer_and_eviction(self):
+        from archive_lock import exclusive_file
+        self.add("a");self.add("b",brand="Other Brand")
+        client,objects=Mock(),{}
+        client.upload_file.side_effect=lambda path,bucket,key,**kw:objects.update({key:Path(path).read_bytes()})
+        with exclusive_file(self.store.root/".publish.lock"),patch.object(a,"_publish_snapshot") as snapshot,patch.object(a,"s3_client",return_value=client),patch.object(a,"public_digest",side_effect=lambda ns,bucket,key:(hashlib.sha256(objects[key]).hexdigest(),len(objects[key]))):
+            stats=bulk.archive_batch(self.store,Fetch([Response(PAYLOAD),Response(PAYLOAD)]),reserve_bytes=0,checkpoint_every=1)
+            snapshot.assert_not_called()
+        self.assertEqual(stats["processed"],2)
+        self.assertEqual(stats["published"],2)
+        self.assertTrue(all(row["status"]=="archived" for row in self.store.rows()))
+        self.assertFalse(list((self.store.root/"files").rglob("*.zip")))
+        with patch.object(a,"_publish_snapshot") as snapshot:
+            self.assertTrue(a.publish_metadata(self.store,"vn-archive","mirrors",include_html=False,blocking=False))
+            snapshot.assert_called_once()
+
+    def test_nonblocking_checkpoint_still_propagates_upload_errors(self):
+        with patch.object(a,"_publish_snapshot",side_effect=BlockingIOError("upload failed")):
+            with self.assertRaisesRegex(BlockingIOError,"upload failed"):
+                a.publish_metadata(self.store,"vn-archive","mirrors",include_html=False,blocking=False)
+
     def test_failed_public_readback_keeps_local_file(self):
         self.add("a")
         client = Mock()
