@@ -26,6 +26,12 @@ entries retain each product association and all source filenames and URLs.
 Different revisions remain separate. Unretrieved files stay in the catalog with
 no download link and a recorded failure or pending state.
 
+Split distributions retain each published `.r00`–`.r99` or three-digit volume as
+a separate file. MultiInside catalogues also retain explicitly typed DAT parts
+and BAT joiners when their companion volumes or installer appear in the same
+product block and directory. Parts keep their own published checksums; missing
+checksums are left absent. Files are preserved without running the joiners.
+
 `manifest.json` is the **single JSON export**. It contains manufacturers, products,
 files, nested sources/attempts, and saved-page records. It is generated atomically
 from SQLite, ignored by Git, and never edited or imported as the source of truth.

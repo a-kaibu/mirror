@@ -151,6 +151,36 @@ def _parse_multi_inside_jnode(root,page):
     return list(results.values())
 
 
+def _multi_inside_companion(link,page,block):
+    """Recognize explicitly typed restoration companions in this product only."""
+    target=a.resolve(page,link.attrs.get('href',''))
+    if not target:return None
+    raw=a.original(target);parts=urlsplit(raw);filename=a.filename_from_url(raw)
+    match=re.fullmatch(r'(.+)\.(bat|dat)',filename,re.I)
+    if not match or link.text().strip()!=filename:return None
+    siblings=link.parent.children;tail=[]
+    for node in siblings[siblings.index(link)+1:]:
+        if isinstance(node,a.Node) and node.tag in {'a','hr','div','br'}:break
+        tail.append(node.text() if isinstance(node,a.Node) else node)
+    if not re.match(r'\s*\['+match[2]+r',\s*[0-9]+(?:\.[0-9]+)?\s*[KMGT]B\]', ''.join(tail),re.I):return None
+    if match[2].lower()=='bat':
+        required=re.compile(re.escape(match[1])+r'\.(?:[0-9]{3}|r[0-9]{2})$',re.I)
+        role='join_script'
+    else:
+        stem=re.fullmatch(r'(.+)_([0-9]+)',match[1])
+        if not stem:return None
+        required=re.compile(re.escape(stem[1])+r'\.exe$',re.I)
+        role='data_part'
+    for other in block.all({'a'}):
+        candidate=a.resolve(page,other.attrs.get('href',''))
+        if not candidate:continue
+        peer=urlsplit(a.original(candidate))
+        if ((peer.scheme,peer.netloc,peer.path.rsplit('/',1)[0])==(parts.scheme,parts.netloc,parts.path.rsplit('/',1)[0])
+                and required.fullmatch(a.filename_from_url(candidate))):
+            return {'role':role,'published_type':match[2].upper(),'related_filename':a.filename_from_url(candidate)}
+    return None
+
+
 def _parse_multi_inside_catalogue(root,page):
     result={}
     for block in root.all({'div'}):
@@ -165,7 +195,9 @@ def _parse_multi_inside_catalogue(root,page):
         published='-'.join(date.groups())
         for link in block.all({'a'}):
             target=a.resolve(page,link.attrs.get('href',''))
-            if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
+            if not target:continue
+            companion=_multi_inside_companion(link,page,block)
+            if not a.EXT.search(urlsplit(a.original(target)).path) and not companion:continue
             raw=a.original(target)
             try:a.archive_url_identity(raw)
             except ValueError:continue
@@ -186,7 +218,7 @@ def _parse_multi_inside_catalogue(root,page):
                 'title':titles[0],'brand':brands[0],'release_name':release,'filename':filename,
                 'expected_md5':None,'expected_size':None,'size_text':size[1] if size else None,
                 'published_at':published,'mirrors':mirrors,
-                'fields':{'parser':'multi_inside_catalogue','published_category':categories,'published_link':link.attrs.get('href'),'size_is_rounded':True}}
+                'fields':{'parser':'multi_inside_catalogue','published_category':categories,'published_link':link.attrs.get('href'),'size_is_rounded':True,**({'distribution_companion':companion} if companion else {})}}
     return list(result.values())
 
 
