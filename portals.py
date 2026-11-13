@@ -174,11 +174,72 @@ def parse_multi_inside(html,page):
     return result
 
 
+
+def _parse_mimimaid_legacy(root,page):
+    heads=list(root.all({'title'}))
+    if not heads:return []
+    brand=heads[0].text().split('|')[0].strip()
+    # Old pages identify the mirror and brand in their breadcrumb, not title.
+    if not brand or not re.search(r'ミラー[＞>][^\n]*[＞>]\s*'+re.escape(brand)+r'(?=\s|$)',root.text()):return []
+    result=[];release_pattern=r'(?:広報用|体験版|デモ|[ＯO][ＰP]|主題歌|修正|アップデート|パッチ|ドラマ)'
+    for body in root.all({'body'}):
+        title=release=published=None
+        for node in body.children:
+            if not isinstance(node,a.Node):continue
+            if node.tag in {'hr','h1','h2','h3','h4','h5','h6'}:
+                title=release=published=None;continue
+            if node.tag=='p':
+                text=node.text().strip()
+                if text.startswith('■'):
+                    title=release=published=None
+                    date=re.search(r"[（(]\s*['’]?(\d{2,4}/\d{1,2}/\d{1,2})公開\s*[）)]",text)
+                    if not date:continue
+                    from datetime import datetime
+                    try:published=datetime.strptime(date[1],'%Y/%m/%d' if len(date[1].split('/')[0])==4 else '%y/%m/%d').date().isoformat()
+                    except ValueError:continue
+                    heading=text[1:date.start()].strip()
+                    parts=re.split(r'\s+(?='+release_pattern+')',heading,maxsplit=1)
+                    if len(parts)!=2:continue
+                    title,release=parts
+                    trailing=text[date.end():].strip()
+                    if re.match(release_pattern,trailing):release=trailing.split('※',1)[0].strip()
+                elif re.match(release_pattern,text):
+                    release=text.split('※',1)[0].strip()
+                else:
+                    # Unrelated paragraphs cannot lend a title to later files.
+                    title=release=published=None
+                continue
+            if node.tag!='table' or node.attrs.get('width')!='400' or not title or not release:continue
+            fields=a.labels(node)
+            if not fields.get('ファイル情報') or not fields.get('ファイルサイズ'):continue
+            links=[]
+            for link in node.all({'a'}):
+                target=a.resolve(page,link.attrs.get('href',''))
+                if target and a.EXT.search(urlsplit(a.original(target)).path):links.append(target)
+            filenames={a.filename_from_url(target) for target in links}
+            if len(filenames)!=1:continue
+            filename=next(iter(filenames));mirrors=[]
+            for target in links:
+                raw=a.original(target);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+                mirrors+=([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw]
+            normalized=unicodedata.normalize('NFKC',node.text())
+            digests=set(re.findall(r'(?i)MD5\s*[：:]?\s*([a-f0-9]{32})(?![a-f0-9])',normalized))
+            sizes=set(int(v.replace(',','')) for v in re.findall(r'\(([0-9,]+)\s*バイト\)',normalized))
+            if len(digests)>1 or len(sizes)>1:continue
+            ident=hashlib.sha256(('mimimaid\n'+a.original(page)+'\n'+filename).encode()).hexdigest()
+            result.append({'id':ident,'site':'mimimaid','page_url':page,'original_page_url':a.original(page),
+                'title':title,'brand':brand,'release_name':release,'filename':filename,'mirrors':list(dict.fromkeys(mirrors)),
+                'expected_md5':next(iter(digests)).lower() if digests else None,'expected_size':next(iter(sizes)) if sizes else None,
+                'size_text':fields['ファイルサイズ'],'published_at':published,'fields':{**fields,'parser':'mimimaid_legacy'}})
+    return result
+
+
 def parse_mimimaid(html,page):
     if urlsplit(a.original(page)).hostname!="mimimaid.moe.hm":return []
     root=a.DOM(html).root
     heads=list(root.all({"title"}))
-    if not heads or "みみめいど" not in heads[0].text():return []
+    legacy=_parse_mimimaid_legacy(root,page)
+    if not heads or "みみめいど" not in heads[0].text():return legacy
     brand=heads[0].text().split("|")[0].strip().lstrip("■").strip()
     results=[]
     for heading in root.all({"span"}):
@@ -214,7 +275,7 @@ def parse_mimimaid(html,page):
                     "title":title,"brand":brand,"release_name":fields["素材名"],"filename":filename,"mirrors":mirrors,
                     "expected_md5":digest[1].lower() if digest else None,"expected_size":int(size[1].replace(",", "")) if size else None,
                     "size_text":fields.get("ファイルサイズ"),"published_at":date[0].replace("/","-") if date else None,"fields":fields})
-    return list({r["id"]:r for r in results}.values())
+    return list({r["id"]:r for r in legacy+results}.values())
 
 
 def parse_nekoneko(html,page):

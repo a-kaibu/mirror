@@ -663,3 +663,50 @@ class DLsiteDescriptionPatchTests(unittest.TestCase):
         self.assertEqual(rows[0]['filename'],'fix.zip')
         self.assertEqual(rows[0]['release_name'],'パッチ')
         self.assertEqual(rows[0]['mirrors'][0],'http://web.archive.org/web/20150102030405id_/http://trial.dlsite.com/doujin/files/RJ123456/fix.zip')
+
+
+class MimimaidLegacyTests(unittest.TestCase):
+    page='http://web.archive.org/web/20071014191233/http://mimimaid.moe.hm/html/x18/light/index_old.htm'
+
+    def file_table(self,filename,digest,size):
+        return ('<table width="400"><tr><td>ファイル情報</td><td>解凍前：ＺＩＰアーカイブ</td></tr>'
+                '<tr><td>ファイルサイズ</td><td>1 MB ('+str(size)+' バイト)</td></tr>'
+                '<tr><td>ＭＤ５</td><td>'+digest+'</td></tr>'
+                '<tr><td>ファイル</td><td><a href="src/'+filename+'">Download</a></td></tr></table>')
+
+    def document(self,content):
+        return '<html><head><title>light</title></head><body><p>ミラー＞18禁（商業）＞light</p>'+content+'</body></html>'
+
+    def test_submaterials_and_adjacent_products_keep_their_own_hash_and_size(self):
+        from portals import parse_mimimaid
+        html=self.document('<p>■ 作品A　体験版・主題歌 （\'07/02/18公開）<br>体験版</p>'
+            +self.file_table('trial.zip','a'*32,100)+'<p>OP主題歌 ※差し替え</p>'
+            +self.file_table('song.zip','b'*32,200)+'<p>■ 作品B　デモムービー （\'06/08/24公開）</p>'
+            +self.file_table('movie.zip','c'*32,300))
+        rows=parse_mimimaid(html,self.page)
+        self.assertEqual([(r['title'],r['release_name'],r['expected_md5'],r['expected_size']) for r in rows],
+            [('作品A','体験版','a'*32,100),('作品A','OP主題歌','b'*32,200),('作品B','デモムービー','c'*32,300)])
+        self.assertEqual([r['published_at'] for r in rows],['2007-02-18','2007-02-18','2006-08-24'])
+        self.assertTrue(all(r['brand']=='light' for r in rows))
+        self.assertEqual(rows[0]['mirrors'][0],'http://web.archive.org/web/20071014191233id_/http://mimimaid.moe.hm/html/x18/light/src/trial.zip')
+
+    def test_unknown_heading_does_not_reuse_previous_product(self):
+        from portals import parse_mimimaid
+        first='<p>■ 作品A　体験版 （2007/02/18公開）</p>'+self.file_table('a.zip','a'*32,100)
+        for separator in ['<h2>別作品</h2>','<hr>','<p>関連作品</p>','<p>■ タイトルだけ</p>']:
+            rows=parse_mimimaid(self.document(first+separator+self.file_table('other.zip','b'*32,200)),self.page)
+            self.assertEqual([r['filename'] for r in rows],['a.zip'])
+
+    def test_ambiguous_file_table_and_invalid_dates_are_not_associated(self):
+        from portals import parse_mimimaid
+        table=self.file_table('a.zip','a'*32,100).replace('</table>','<tr><td><a href="src/b.zip">Download</a></td></tr></table>')
+        html=self.document('<p>■ 作品A　体験版 （2007/02/18公開）</p>'+table)
+        self.assertEqual(parse_mimimaid(html,self.page),[])
+        html=self.document('<p>■ 作品A　体験版 （2007/02/30公開）</p>'+self.file_table('a.zip','a'*32,100))
+        self.assertEqual(parse_mimimaid(html,self.page),[])
+
+    def test_brand_breadcrumb_and_source_host_are_required(self):
+        from portals import parse_mimimaid
+        html=self.document('<p>■ 作品A　体験版 （2007/02/18公開）</p>'+self.file_table('a.zip','a'*32,100))
+        self.assertEqual(parse_mimimaid(html.replace('ミラー＞18禁（商業）＞light','別のページ'),self.page),[])
+        self.assertEqual(parse_mimimaid(html,self.page.replace('mimimaid.moe.hm','other.test')),[])
