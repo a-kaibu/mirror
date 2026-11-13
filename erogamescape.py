@@ -134,33 +134,43 @@ def match(store):
     by_name = {}
     for ident, brand in data["brand"].items():
         by_name.setdefault(normalized(brand["brandname"]),set()).add(ident)
-    store.db.execute("DELETE FROM metadata_links WHERE method IN ('normalized_name','brand_and_title','holyseal_id')")
+    # Materialize the catalogue joins once before taking the write transaction.
+    # Per-product item scans held the SQLite writer while crawling thousands of
+    # products, preventing transfer workers from recording completed downloads.
+    aliases_by_maker = {}
+    for row in store.db.execute("SELECT manufacturer_id,alias FROM manufacturer_aliases"):
+        aliases_by_maker.setdefault(row[0],[]).append(row[1])
+    links = []
     brand_links = {}
     for maker in store.db.execute("SELECT * FROM manufacturers").fetchall():
-        names = [r[0] for r in store.db.execute("SELECT alias FROM manufacturer_aliases WHERE manufacturer_id=?",(maker["id"],))]
+        names = aliases_by_maker.get(maker["id"],[])
         candidates = set().union(*(by_name.get(name,set()) for name in names))
         if len(candidates) == 1:
             external_id = next(iter(candidates));brand_links[maker["id"]]=external_id
-            store.db.execute("INSERT OR IGNORE INTO metadata_links VALUES(?,?,?,?)",("brand",maker["id"],external_id,"normalized_name"))
+            links.append(("brand",maker["id"],external_id,"normalized_name"))
     holy_games = {}
     for row in data["holyseal"].values():
         holy_games.setdefault(row["holyseal_id"],set()).add(row["game"])
     games_by_title = {}
     for ident, game in data["game"].items():
         games_by_title.setdefault((game["brandname"],normalized(game["gamename"])),set()).add(ident)
+    holy_products = {}
+    for row in store.db.execute("SELECT c.product_id,i.data FROM items i JOIN item_catalog c ON c.item_id=i.id WHERE i.site='holyseal'"):
+        url = json.loads(row[1]).get("original_page_url","")
+        code = parse_qs(urlsplit(url).query).get("prdcode",[""])[0]
+        if code.isdigit():holy_products.setdefault(row[0],set()).update(holy_games.get(int(code),set()))
     for product in store.db.execute("SELECT * FROM products").fetchall():
-        candidates = set()
-        for row in store.db.execute("SELECT i.data FROM items i JOIN item_catalog c ON c.item_id=i.id WHERE c.product_id=? AND i.site='holyseal'",(product["id"],)):
-            url = json.loads(row[0]).get("original_page_url","")
-            code = parse_qs(urlsplit(url).query).get("prdcode",[""])[0]
-            if code.isdigit():candidates.update(holy_games.get(int(code),set()))
+        candidates = holy_products.get(product["id"],set())
         method = "holyseal_id"
         if not candidates:
             candidates = games_by_title.get((brand_links.get(product["manufacturer_id"]),normalized(product["title"])),set())
             method = "brand_and_title"
         if len(candidates)==1 and next(iter(candidates)) in data["game"]:
-            store.db.execute("INSERT OR IGNORE INTO metadata_links VALUES(?,?,?,?)",("game",product["id"],next(iter(candidates)),method))
-    store.db.commit()
+            links.append(("game",product["id"],next(iter(candidates)),method))
+    # Keep user/curator links; replace only the automatic methods atomically.
+    with store.db:
+        store.db.execute("DELETE FROM metadata_links WHERE method IN ('normalized_name','brand_and_title','holyseal_id')")
+        store.db.executemany("INSERT OR IGNORE INTO metadata_links VALUES(?,?,?,?)",links)
     return [tuple(row) for row in store.db.execute("SELECT entity,count(*) FROM metadata_links GROUP BY entity")]
 
 

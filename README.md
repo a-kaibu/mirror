@@ -295,6 +295,11 @@ genres, official homepages and trial URLs. Export requires each scan to reach an
 empty result and the imported row counts to match the live source counts.
 The HF copy is fully read back and checked by SHA-256 and byte count.
 
+Local metadata matching reads manufacturer aliases and Holyseal product mappings
+once, computes candidate links before taking the SQLite writer, and atomically
+refreshes only automatic links. Curator links remain intact and conflicting
+product IDs stay unmatched.
+
 `manifest.json` is generated locally and deployed with GitHub Pages. It is never
 uploaded to HF. The archive catalog backup on HF is `index.sqlite3`.
 

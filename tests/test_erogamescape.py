@@ -77,3 +77,46 @@ class ErogameScapeTests(unittest.TestCase):
                 self.assertEqual(snapshot.execute("SELECT gamename FROM gamelist WHERE id=2").fetchone()[0],"作品")
                 self.assertEqual(snapshot.execute("SELECT count(*) FROM provenance").fetchone()[0],3)
             store.db.close()
+
+
+class BulkMetadataMatchTests(unittest.TestCase):
+    def populate(self,store,count):
+        e.initialize(store)
+        store.db.execute('INSERT INTO external_metadata VALUES(?,?,?,?,?)',('erogamescape','brand',1,json.dumps({'id':1,'brandname':'Brand'}),a.now()))
+        for i in range(count):
+            record=a.parse_detail(HTML,'https://example.test/items/'+str(i),'lathercraft')[0]
+            record.update(id='source-'+str(i),site='holyseal',brand='Brand',title='Local '+str(i),original_page_url='http://holyseal.net/cgi-bin/mlistview.cgi?prdcode='+str(50+i))
+            store.add(record)
+            for entity,ident,data in [('game',1000+i,{'id':1000+i,'brandname':1,'gamename':'Remote '+str(i)}),('holyseal',i+1,{'id':i+1,'holyseal_id':50+i,'game':1000+i})]:
+                store.db.execute('INSERT INTO external_metadata VALUES(?,?,?,?,?)',('erogamescape',entity,ident,json.dumps(data),a.now()))
+        store.db.commit()
+    def test_one_item_scan_before_write_transaction_preserves_manual_links(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                self.populate(store,20)
+                first=store.db.execute("SELECT product_id FROM item_catalog WHERE item_id='source-0'").fetchone()[0]
+                store.db.execute('INSERT INTO metadata_links VALUES(?,?,?,?)',('game',first,1000,'curator_review'));store.db.commit()
+                scans=[]
+                def trace(sql):
+                    if 'FROM items i JOIN item_catalog' in sql:scans.append(store.db.in_transaction)
+                store.db.set_trace_callback(trace)
+                result=e.match(store);store.db.set_trace_callback(None)
+                self.assertEqual(result,[('brand',1),('game',20)])
+                self.assertEqual(scans,[False],'one catalogue scan must happen before taking the SQLite writer')
+                self.assertEqual(store.db.execute("SELECT method FROM metadata_links WHERE entity='game' AND local_id=?",(first,)).fetchone()[0],'curator_review')
+                self.assertEqual(store.db.execute("SELECT count(*) FROM metadata_links WHERE method='holyseal_id'").fetchone()[0],19)
+            finally:store.db.close()
+    def test_conflicting_holyseal_observations_remain_unmatched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                self.populate(store,2)
+                record=json.loads(store.db.execute("SELECT data FROM items WHERE id='source-0'").fetchone()[0])
+                record.update(id='conflicting-source',original_page_url='http://holyseal.net/cgi-bin/mlistview.cgi?prdcode=51')
+                store.add(record)
+                e.match(store)
+                first=store.db.execute("SELECT product_id FROM item_catalog WHERE item_id='source-0'").fetchone()[0]
+                self.assertEqual(store.db.execute("SELECT count(*) FROM metadata_links WHERE entity='game' AND local_id=?",(first,)).fetchone()[0],0)
+                self.assertEqual(store.db.execute("SELECT external_id FROM metadata_links WHERE entity='game'").fetchone()[0],1001)
+            finally:store.db.close()
