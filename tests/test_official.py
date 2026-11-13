@@ -324,3 +324,15 @@ class OfficialImageNavigationTests(unittest.TestCase):
                 self.assertEqual(o.scan(store,fetch,game,BRAND,game['shoukai']),1)
                 self.assertEqual(json.loads(store.rows('official')[0]['data'])['release_name'],'体験版')
             finally:store.db.close()
+
+class ImageDistributionClassTests(unittest.TestCase):
+    def test_own_image_classes_classify_adjacent_downloads_independently(self):
+        html='<div><a href="one.zip"><img class="movie_download" alt title></a></div><div><a href="two.zip"><img class="trial_download"></a></div><div><a href="three.zip"><img id="patch_button"></a></div><div><a href="four.zip"><img class="removie"></a></div>'
+        rows,unknown=o.parse(html,PAGE,GAME,BRAND)
+        self.assertEqual({r['filename']:r['release_name'] for r in rows},{'one.zip':'ムービー','two.zip':'体験版','three.zip':'パッチ'})
+        self.assertEqual(unknown,['https://key.visualarts.co.jp/anemoi/four.zip'])
+        self.assertTrue(all(r['expected_md5'] is None for r in rows))
+
+    def test_shared_publisher_page_still_requires_product_identity(self):
+        html='<div><a href="one.zip"><img class="movie_download"></a></div>'
+        self.assertEqual(o.parse(html,PAGE,GAME,BRAND,scoped=False)[0],[])

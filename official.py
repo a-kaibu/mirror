@@ -104,9 +104,11 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
     for link,target in binary_links(root,page):
         filename=a.filename_from_url(target)
         def describe(n):
-            marker=" ".join([n.attrs.get("id",""),n.attrs.get("class","")])
-            trial=" 体験版" if re.search(r"(?<![a-z])trial(?![a-z])",marker,re.I) else ""
-            return " ".join([n.text(),n.attrs.get("title","")]+[img.attrs.get("alt","") for img in n.all({"img"})])+trial
+            images=list(n.all({"img"}))
+            marker=" ".join((element.attrs.get(key) or "") for element in [n,*images] for key in ["id","class"])
+            categories={"trial":"体験版","movie":"ムービー","patch":"パッチ"}
+            labels=" ".join(label for token,label in categories.items() if re.search(r"(?<![a-z])"+token+r"(?![a-z])",marker,re.I))
+            return " ".join([n.text(),n.attrs.get("title") or "",*[img.attrs.get("alt") or "" for img in images],labels])
         context=describe(link);context_node=link;node=link.parent
         group=None;metadata_context=None
         while node is not None and node.tag not in {"body","html","root"}:
