@@ -24,8 +24,8 @@ def initialize(store):
 
 def binary_links(node, page):
     result=[]
-    for link in node.all({"a"}):
-        target=a.resolve(page,link.attrs.get("href",""))
+    for link in node.all({"a","video","source"}):
+        target=a.resolve(page,link.attrs.get("href") or link.attrs.get("src",""))
         if target and BINARY.search(urlsplit(target).path):result.append((link,target))
     return result
 
@@ -39,6 +39,19 @@ def labelled_product(node,page):
         target=a.resolve(page,link.attrs.get('href',''))
         if target:targets.append(a.canonical(a.original(target)))
     return next(iter(set(targets))) if len(set(targets))==1 else None
+
+
+def appetite_kind(html,page,game,target):
+    parts=urlsplit(page);binary=urlsplit(target)
+    if parts.hostname not in {'www.appetite-game.com','appetite-game.com'} or binary.hostname!=parts.hostname:return None
+    if not game.get('shoukai') or a.canonical(page)!=a.canonical(game['shoukai']):return None
+    product=re.fullmatch(r'/apt_(\d+)\.html',parts.path)
+    asset=re.fullmatch(r'/apt_(\d+)/apt(\d+)_(tr|pv)\.(zip|mp4)',binary.path,re.I)
+    if not product or not asset or product[1]!=asset[1] or product[1]!=asset[2]:return None
+    label='体験版' if asset[3].lower()=='tr' else 'PV'
+    if label=='体験版' and asset[4].lower()!='zip':return None
+    if not re.search(r'<!--\s*'+re.escape(label)+r'\s*-->',html,re.I):return None
+    return 'trial' if label=='体験版' else 'movie'
 
 
 def parse(html, page, game, brand, scoped=True, hint=None):
@@ -66,7 +79,9 @@ def parse(html, page, game, brand, scoped=True, hint=None):
             continue  # Publisher scan targets trials, patches and movies.
         if kind=="other" and hint in KINDS and hint!="other" and len(filenames)==1:
             kind=hint
-        product_link=labelled_product(context_node,page)
+        published_kind=appetite_kind(html,page,game,target)
+        if kind=='other' and published_kind:kind=published_kind
+        product_link=a.canonical(page) if published_kind else labelled_product(context_node,page)
         linked=bool(game.get('shoukai') and product_link==a.canonical(game['shoukai']))
         if kind=="other" or (not scoped and normalized(game["gamename"]) not in normalized(context) and not linked):
             unsupported.append(target);continue
@@ -81,6 +96,7 @@ def parse(html, page, game, brand, scoped=True, hint=None):
                 "expected_size":int(exact[0].replace(",","")) if len(set(exact))==1 else None,
                 "size_text":None,"published_at":None,"fields":{"erogamescape_game_id":game["id"],"erogamescape_brand_id":brand["id"],"official_page":page}}
         if linked:records[key]['fields']['publisher_product_link']=product_link
+        if published_kind:records[key]['fields']['published_section_label']='体験版' if published_kind=='trial' else 'PV'
         records[key]["mirrors"].append(target)
     for record in records.values():record["mirrors"]=list(dict.fromkeys(record["mirrors"]))
     return list(records.values()),unsupported

@@ -10,6 +10,21 @@ BRAND={"id":83,"brandname":"Key"}
 PAGE="https://key.visualarts.co.jp/anemoi/download.html"
 
 class OfficialTests(unittest.TestCase):
+    def test_appetite_image_only_trial_and_pv_match_product_number(self):
+        page='https://www.appetite-game.com/apt_232.html';game={**GAME,'shoukai':page}
+        html='<!-- 体験版 --><div><a href="apt_232/apt232_tr.zip"><img src="apt_232/apt_232_tr_samune.jpg"></a></div><!-- PV --><div><a href="apt_232/apt232_pv.zip"><img src="apt_232/apt_232_pv_bannar.jpg"></a><video src="apt_232/apt232_pv.mp4" controls></video></div>'
+        rows,_=o.parse(html,page,game,BRAND,scoped=False)
+        self.assertEqual({r['filename']:r['release_name'] for r in rows},{'apt232_tr.zip':'体験版','apt232_pv.zip':'ムービー','apt232_pv.mp4':'ムービー'})
+        self.assertTrue(all(r['fields']['publisher_product_link']==page for r in rows))
+        self.assertTrue(all(r['expected_md5'] is None for r in rows))
+        self.assertEqual(o.parse(html.replace('apt232_','apt233_'),page,game,BRAND,scoped=False)[0],[])
+        self.assertEqual(o.parse(html,page,{**game,'shoukai':page.replace('232','233')},BRAND,scoped=False)[0],[])
+
+    def test_appetite_abbreviated_filename_without_published_label_is_not_guessed(self):
+        page='https://www.appetite-game.com/apt_232.html';game={**GAME,'shoukai':page}
+        html='<a href="apt_232/apt232_tr.zip"><img src="button.jpg"></a>'
+        self.assertEqual(o.parse(html,page,game,BRAND,scoped=False)[0],[])
+
     def test_actual_anemoi_html(self):
         raw=(Path(__file__).parent/"fixtures/official-anemoi.html").read_bytes()
         records,unknown=o.parse(a.decode_html(raw),PAGE,GAME,BRAND)
