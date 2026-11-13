@@ -47,6 +47,21 @@ class BulkTests(unittest.TestCase):
         self.assertTrue(manifest["files"][0]["download_url"])
         self.assertEqual(a.download(self.store, Fetch([])), 0)
 
+    def test_rounded_size_only_schedules_and_does_not_become_validation_size(self):
+        for ident,caption in [('a','2GB'),('z','500KB')]:
+            record=self.add(ident)
+            record.update(expected_size=None,size_text=caption)
+            self.store.add(record)
+        client,objects=Mock(),{}
+        client.upload_file.side_effect=lambda path,bucket,key,**kw:objects.update({key:Path(path).read_bytes()})
+        with patch.object(a,'s3_client',return_value=client),patch.object(a,'public_digest',side_effect=lambda ns,bucket,key:(hashlib.sha256(objects[key]).hexdigest(),len(objects[key]))):
+            stats=bulk.archive_batch(self.store,Fetch([Response(PAYLOAD)]),reserve_bytes=0)
+        self.assertEqual(stats['published'],1)
+        self.assertEqual(self.store.db.execute("SELECT reused_from FROM items WHERE id='a'").fetchone()[0],'z')
+        for row in self.store.rows():
+            self.assertIsNone(json.loads(row['data'])['expected_size'])
+            self.assertEqual(row['size'],len(PAYLOAD))
+
     def test_failed_public_readback_keeps_local_file(self):
         self.add("a")
         client = Mock()
@@ -178,3 +193,19 @@ class BulkTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SchedulingSizeTests(unittest.TestCase):
+    def test_units_unicode_and_exact_size_precedence(self):
+        for caption,value in [('500KB',500*1024),('500KiB',500*1024),('２．５ＧＢ',int(2.5*1024**3)),('1,024 bytes',1024),('900バイト',900)]:
+            record={'size_text':caption,'expected_size':None}
+            self.assertEqual(bulk.scheduling_size(record,{}),value)
+            self.assertIsNone(record['expected_size'])
+        record={'expected_size':123,'expected_md5':'hash','size_text':'500KB'}
+        self.assertEqual(bulk.scheduling_size(record,{'hash':456}),123)
+        record['expected_size']=None
+        self.assertEqual(bulk.scheduling_size(record,{'hash':456}),456)
+
+    def test_ambiguous_missing_or_invalid_sizes_stay_unknown(self):
+        for caption in [None,{},'不明','1MB + 2MB','0B','-5MB','1.2.3MB','NaN MB','1,2,3MB','9'*400+'GB']:
+            self.assertEqual(bulk.scheduling_size({'size_text':caption},{}),2**63)

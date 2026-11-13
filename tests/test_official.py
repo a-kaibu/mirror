@@ -296,3 +296,31 @@ class OfficialProductHomeTests(unittest.TestCase):
                 store.db.execute('INSERT INTO official_page_visits VALUES(?,?,?,?,NULL)',(self.game['id'],self.home,'later','ok'));store.db.commit()
                 self.assertEqual(c.queue_product_homes(store,seeds),0)
             finally:store.db.close()
+
+
+class OfficialImageNavigationTests(unittest.TestCase):
+    def test_image_alt_or_link_title_reaches_compact_download_filename(self):
+        game={**GAME,'shoukai':'https://publisher.test/game/index.htm'}
+        for link in ['<a href="mDl.htm"><img alt="だうんろーど" src="mDlF.gif"></a>',
+                     '<a href="mDl.htm" title="Support"><img src="button.gif"></a>',
+                     '<a href="mDl.htm"><img alt="ＤＯＷＮＬＯＡＤ" src="button.gif"></a>',
+                     '<a href="mDl.htm" title><img alt="だうんろーど" src="button.gif"></a>',
+                     '<a href="mDl.htm" title="Support"><img alt src="button.gif"></a>']:
+            with self.subTest(link=link),tempfile.TemporaryDirectory() as tmp:
+                store=a.Store(tmp)
+                fetch=Fetch([Response(link.encode(),url=game['shoukai']),Response('<a href="GamePatch111.exe">修正プログラム</a>'.encode(),url='https://publisher.test/game/mDl.htm')])
+                try:
+                    self.assertEqual(o.scan(store,fetch,game,BRAND,game['shoukai']),1)
+                    self.assertEqual(store.rows('official')[0]['status'],'pending')
+                finally:store.db.close()
+
+    def test_explicit_trial_image_label_survives_as_single_file_page_hint(self):
+        import json
+        game={**GAME,'shoukai':'https://publisher.test/game/index.htm'}
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            fetch=Fetch([Response('<a href="mT.htm"><img alt="体験版" src="button.gif"></a>'.encode(),url=game['shoukai']),Response(b'<a href="program.zip">Download</a>',url='https://publisher.test/game/mT.htm')])
+            try:
+                self.assertEqual(o.scan(store,fetch,game,BRAND,game['shoukai']),1)
+                self.assertEqual(json.loads(store.rows('official')[0]['data'])['release_name'],'体験版')
+            finally:store.db.close()

@@ -1,6 +1,8 @@
 """Bounded-disk archival batches; only verified public copies permit eviction."""
 import json
 import hashlib
+import re
+import unicodedata
 from pathlib import Path
 import shutil
 from urllib.parse import urlsplit
@@ -59,6 +61,22 @@ def evict_verified(store, ident, namespace, bucket):
     return size
 
 
+
+def scheduling_size(record,live_sizes):
+    """Size hints order work only; they never become integrity constraints."""
+    for value in [record.get('expected_size'),live_sizes.get(record.get('expected_md5'))]:
+        if type(value) is int and value>0:return value
+    text=record.get('size_text')
+    if not isinstance(text,str):return 2**63
+    text=unicodedata.normalize('NFKC',text)
+    values=re.findall(r'(?<![0-9A-Za-z.,+\-])((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?)\s*(KiB|MiB|GiB|TiB|PiB|KB|MB|GB|TB|PB|bytes?|バイト|B)(?![A-Za-z])',text,re.I)
+    if len(values)!=1:return 2**63
+    number,unit=values[0];unit=unit.upper()
+    power=0 if unit in {'B','BYTE','BYTES','バイト'} else 'KMGTP'.index(unit[0])+1
+    value=float(number.replace(',',''))*1024**power
+    return max(1,int(value)) if 0<value<2**63 else 2**63
+
+
 def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", profile="hf", site="both",
                   limit=None, keep_local=False, reserve_bytes=16 * 1024**3, checkpoint_every=10, retry_failed=False, shards=1, shard_index=0):
     if shards < 1 or not 0 <= shard_index < shards:
@@ -78,7 +96,7 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
         kind = release_info(record)[0]
         return (0 if kind in {"trial", "patch"} else (1 if kind == "movie" else 2),
             0 if record.get("expected_md5") in live_sizes else 1,
-            record.get("expected_size") or live_sizes.get(record.get("expected_md5")) or 2**63, row["id"])
+            scheduling_size(record,live_sizes), row["id"])
     visited = set()
     while True:
         candidates = [r for r in store.rows(site) if r["id"] not in visited and int.from_bytes(hashlib.sha256(r["id"].encode()).digest(), "big") % shards == shard_index and (retry_failed or r["status"] != "failed")]
