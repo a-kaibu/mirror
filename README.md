@@ -547,3 +547,8 @@ Holysealの製品ページは、取得済みURLを起点に別日時のHTMLも�
 閉鎖ミラーの作品別・メーカー別ページも、`uv run python mirror_history.py --site both --observed --watch`
 で別日時の保存版を調査できます。登録済みサイトで実際に観測したURLに限り、内容の異なるHTMLを追加します。
 複数サイトを交互に調査し、失敗した索引照会は未照会URLの後で古い順に再試行します。
+
+一時的な取得失敗は `uv run python transient_recovery.py --watch` で再試行できます。
+各ミラーURLの最新試行を確認し、HTTP 429・サーバー障害・タイムアウト等を対象にします。
+初回は3時間、以降は最大24時間まで待機時間を延ばし、SQLiteの `transient_retries` に再投入理由を残します。
+404・チェックサム不一致・HTML応答・恒久的な名前解決エラーだけの配布物は、この処理では再投入しません。
