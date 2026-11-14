@@ -70,6 +70,22 @@ def _saved_proof(state,expected):
     return proof
 
 
+def _compatible_public_proof(store,key,expected):
+    """Reuse the same immutable-object proof contract as checksum recovery."""
+    cursor=store.db.execute("""SELECT id,remote_verified_at,
+        json_extract(data,'$.fields.source_association_quarantined') AS quarantined
+        FROM items WHERE sha256=? AND remote_sha256=? AND md5=? AND size=?
+        AND remote_key=? AND remote_verified_at IS NOT NULL
+        AND status IN ('verified','archived') ORDER BY remote_verified_at DESC,id""",
+        (expected['sha256'],expected['sha256'],expected['md5'],expected['size'],NAMESPACE+'/'+BUCKET+'/'+key))
+    try:
+        for row in cursor:
+            if row['quarantined'] or not row['remote_verified_at']:continue
+            return dict(expected,verified_at=row['remote_verified_at'],reused_from=row['id'])
+    finally:cursor.close()
+    return None
+
+
 def _cleanup(store,client,state):
     try:client.delete_object(Bucket=BUCKET,Key=state['staging_key'])
     except Exception as error:
@@ -87,7 +103,7 @@ def promote(store,client,source,state,result,*,readback=None):
     if state['phase'] in {'accepted','cleaned'}:
         _saved_proof(state,expected)
         if state['phase']=='accepted':_cleanup(store,client,state)
-        return dict(accepted_id=state.get('accepted_id'),proof=state['proof'],cleanup_pending=state['phase']!='cleaned')
+        return dict(accepted_id=state.get('accepted_id'),proof=state['proof'],cleanup_pending=state['phase']!='cleaned',reused=bool(state['proof'].get('reused_from')))
     key='files/'+expected['sha256']
     claim=hashlib.sha256(('s3-upload\n'+NAMESPACE+'\n'+BUCKET+'\n'+key).encode()).hexdigest()
     if state['phase']=='parts':
@@ -106,20 +122,26 @@ def promote(store,client,source,state,result,*,readback=None):
     with exclusive_file(store.root/'.claims'/('upload-'+claim+'.lock'),blocking=False):
         if state['phase']=='staged':
             existing=_head(client,key)
+            # A recreated object requires a new independent read-back even if
+            # an older SQLite row still remembers a proof for this key.
+            can_reuse=existing is not None
             if existing is None:
                 client.copy_object(Bucket=BUCKET,Key=key,CopySource={'Bucket':BUCKET,'Key':state['staging_key']},CopySourceIfMatch=state['staging_etag'])
                 existing=client.head_object(Bucket=BUCKET,Key=key)
             if existing.get('ContentLength')!=expected['size']:raise ValueError('canonical public size mismatch')
-            if readback is None:
-                fetcher=a.Fetcher(delay=0,timeout=60)
-                proof=digest_hashes(a.public_url(NAMESPACE,BUCKET,key),fetcher.open)
-            else:proof=readback(key)
-            if proof!=expected:raise ValueError('canonical public hash or size mismatch')
-            state.update(phase='verified',proof=dict(proof,verified_at=a.now()));_save(store,state)
+            proof=_compatible_public_proof(store,key,expected) if can_reuse else None
+            if proof is None:
+                if readback is None:
+                    fetcher=a.Fetcher(delay=0,timeout=60)
+                    observed=digest_hashes(a.public_url(NAMESPACE,BUCKET,key),fetcher.open)
+                else:observed=readback(key)
+                if observed!=expected:raise ValueError('canonical public hash or size mismatch')
+                proof=dict(observed,verified_at=a.now())
+            state.update(phase='verified',proof=proof);_save(store,state)
         proof=_saved_proof(state,expected)
         columns=dict(status='archived',path=None,md5=proof['md5'],sha256=proof['sha256'],size=proof['size'],
             source_url=state['source_url'],fetched_at=state.get('fetched_at') or proof['verified_at'],error=None,
-            remote_key=NAMESPACE+'/'+BUCKET+'/'+key,remote_sha256=proof['sha256'],remote_verified_at=proof['verified_at'])
+            remote_key=NAMESPACE+'/'+BUCKET+'/'+key,remote_sha256=proof['sha256'],remote_verified_at=proof['verified_at'],reused_from=proof.get('reused_from'))
         with store.db:
             changed=store.db.execute('UPDATE items SET '+','.join(k+'=?' for k in columns)+' WHERE id=? AND data=?',
                 (*columns.values(),source['id'],source['data'])).rowcount
@@ -134,4 +156,4 @@ def promote(store,client,source,state,result,*,readback=None):
                     accepted=store.preserve_public_version(saved)
         state.update(phase='accepted',accepted_id=accepted,source_changed=not bool(changed));_save(store,state)
         _cleanup(store,client,state)
-        return dict(accepted_id=accepted,proof=proof,source_changed=not bool(changed),cleanup_pending=state['phase']!='cleaned')
+        return dict(accepted_id=accepted,proof=proof,source_changed=not bool(changed),cleanup_pending=state['phase']!='cleaned',reused=bool(proof.get('reused_from')))

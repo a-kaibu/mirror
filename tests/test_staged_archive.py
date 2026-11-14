@@ -153,3 +153,46 @@ class StagedPromotionTests(unittest.TestCase):
         result=self.promote(readback=deleted)
         self.assertIsNone(result['accepted_id']);self.assertIsNone(self.row())
         self.assertIn(self.key,self.client.objects)
+
+    def donor(self,**changes):
+        self.store.add({**self.record,'id':'donor','brand':'Another manufacturer'})
+        values=dict(status='archived',path=None,sha256=self.sha,md5=self.receipt['md5'],size=len(PAYLOAD),remote_sha256=self.sha,
+            remote_key='vn-archive/mirrors/'+self.key,remote_verified_at='2026-11-14T10:00:00+00:00')
+        values.update(changes);self.store.update('donor',**values)
+
+    def test_existing_immutable_object_reuses_compatible_public_proof_across_manufacturers(self):
+        self.donor();self.client.objects[self.key]=PAYLOAD
+        result=self.promote(readback=Mock(side_effect=AssertionError('duplicate public body read')))
+        self.assertTrue(result['reused']);self.assertEqual(self.reads,[]);self.assertEqual(self.client.copies,[])
+        self.assertEqual(self.row()['reused_from'],'donor')
+        self.assertEqual(self.row()['remote_verified_at'],'2026-11-14T10:00:00+00:00')
+        self.assertEqual(self.row()['remote_sha256'],self.sha);self.assertEqual(self.state['phase'],'cleaned')
+        self.assertNotIn(self.stage,self.client.objects)
+
+    def test_recreated_canonical_object_cannot_reuse_an_older_proof(self):
+        self.donor()
+        result=self.promote()
+        self.assertFalse(result['reused']);self.assertEqual(self.reads,[self.key]);self.assertEqual(len(self.client.copies),1)
+        self.assertIsNone(self.row()['reused_from'])
+
+    def test_inconsistent_proofs_do_not_qualify_for_reuse(self):
+        expected={key:self.receipt[key] for key in ['sha256','md5','size']}
+        for change in [dict(md5='0'*32),dict(size=len(PAYLOAD)+1),dict(remote_sha256='0'*64),dict(remote_key='other/bucket/'+self.key),dict(remote_verified_at=None),dict(status='pending')]:
+            with self.subTest(change=change):
+                self.donor(**change)
+                self.assertIsNone(staged._compatible_public_proof(self.store,self.key,expected))
+
+    def test_quarantined_donor_requires_independent_public_verification(self):
+        self.donor();self.client.objects[self.key]=PAYLOAD
+        source=self.store.db.execute("SELECT data FROM items WHERE id='donor'").fetchone()
+        record=json.loads(source['data']);record['fields']={**record.get('fields',{}),'source_association_quarantined':True}
+        with self.store.db:self.store.db.execute("UPDATE items SET data=? WHERE id='donor'",(json.dumps(record),))
+        result=self.promote()
+        self.assertFalse(result['reused']);self.assertEqual(self.reads,[self.key])
+
+    def test_reused_proof_cleanup_resume_preserves_original_verified_time(self):
+        self.donor();self.client.objects[self.key]=PAYLOAD;self.client.delete_failure=True
+        no_read=Mock(side_effect=AssertionError('public read repeated'))
+        result=self.promote(readback=no_read);self.assertTrue(result['cleanup_pending'])
+        result=self.promote(readback=no_read);self.assertFalse(result['cleanup_pending']);self.assertTrue(result['reused'])
+        self.assertEqual(self.row()['remote_verified_at'],'2026-11-14T10:00:00+00:00');no_read.assert_not_called()

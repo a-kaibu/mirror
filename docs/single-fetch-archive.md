@@ -171,3 +171,21 @@ worker branch is deliberately updated only for a tested worker release after
 its pending/running delegated jobs have drained. It is not automatically moved
 by main pushes. Runner-source updates must retain this release gate and inspect
 actual workflow run head identities during rollout.
+
+## Reuse after the runner discovers full content identity
+
+The promotion step now implements the selected compatible-proof reuse rule:
+a canonical object that already exists with the expected size can reuse an
+accepted SQLite proof matching full SHA-256, MD5, exact size and canonical key.
+Quarantined, unaccepted or inconsistent donor records cannot supply the proof.
+A newly copied/recreated canonical object always receives a new independent
+public read-back, even if an old database row remembers that key.
+
+This applies after validating the current source's frozen metadata and terminal
+runner receipt, not by guessing that matching manufacturer/filename means equal
+bytes. Donor manufacturer does not constrain cryptographically equal content.
+The existing immutable-key contract is the same one used by bulk checksum
+recovery. Preserve the donor's actual remote_verified_at and reused_from; do not
+claim a fresh network verification occurred. Completion, source CAS and exact
+staging cleanup still run. This avoids repeating full body reads when concurrent
+source observations converge on an already accepted byte object.
