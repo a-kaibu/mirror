@@ -14,6 +14,7 @@ import erogamescape as e
 BINARY = re.compile(r"\.(?:zip|exe|7z|rar|lzh|cab|msi|xp3|mp4|wmv|mpg|mpeg)(?:$|[?#])",re.I)
 NAVIGATION = re.compile(r"download|trial|taiken|special|support|patch|体験|ダウンロード|だうんろーど|修正|アップデート|アップデータ|サポート",re.I)
 SUPPORT_NAVIGATION = re.compile(r"support|patch|修正|アップデート|アップデータ|サポート",re.I)
+ASSET_LABEL = re.compile(r"フライヤー|チラシ|バナー|壁紙|アイコン|ポスター|説明書|マニュアル|楽譜|歌詞|セーブ|banner|wallpaper|flyer|manual",re.I)
 
 
 def initialize(store):
@@ -184,9 +185,14 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
     filenames={a.filename_from_url(u) for _,u in binary_links(root,page)}
     for link,target in binary_links(root,page):
         filename=a.filename_from_url(target)
+        own_label=' '.join([link.text(),link.attrs.get('title') or '',*[image.attrs.get('alt') or '' for image in link.all({'img'})]])
+        # A shared trial layout or trial-page hint cannot turn an explicitly
+        # labelled score/manual/wallpaper archive into a game distribution.
+        if ASSET_LABEL.search(own_label) and release_info({'title':own_label,'filename':''})[0]=='other':continue
         def describe(n):
             images=list(n.all({"img"}))
             marker=" ".join((element.attrs.get(key) or "") for element in [n,*images] for key in ["id","class"])
+            marker=re.sub(r'(?<![a-z])trial[_-]table[_-]style[0-9]*(?![a-z0-9])','',marker,flags=re.I)
             # Container classes are often reused for unrelated layouts (for
             # example op_movie_t around a patch). New image hints belong only
             # to this link; retain the existing trial-container interpretation.
@@ -221,7 +227,7 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
             node=node.parent
         label=context+" "+filename
         kind=release_info({"title":label,"filename":filename})[0] if group is None else group[0]
-        if kind=="other" and re.search(r"フライヤー|チラシ|バナー|壁紙|アイコン|ポスター|説明書|セーブ|banner|wallpaper|flyer|manual",label,re.I):
+        if kind=="other" and ASSET_LABEL.search(label):
             continue  # Publisher scan targets trials, patches and movies.
         if kind=="other" and hint in KINDS and hint!="other" and len(filenames)==1:
             kind=hint

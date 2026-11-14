@@ -214,3 +214,50 @@ finished retained operations, not newly published unique files.
 The watch supervisor uses a fresh child per bounded pass, with separate watch
 and pass claims. Capability URLs and upload IDs remain in private journals;
 recovery output contains counters and exception types only.
+
+
+## Files above 2 GiB: measured need and proposed rollout
+
+The 2026-11-15 HEAD audit found a 2,577,562,464-byte official LOOPERS PLUS
+trial. `runner_file_upload.MAX_BYTES` is currently 2 GiB, so that file retains
+the ordinary host path. Two separate official trials, 908,505,423 and
+1,226,234,475 bytes, have been dispatched as bounded pilots; their complete
+source/upload/public-read-back timings are not yet available. HEAD establishes
+only transport size and availability, never content integrity.
+
+The proposed next worker limit is 4 GiB, retaining the 8 MiB part size, one
+part payload in worker memory, 1 GiB runner disk reserve, 20-minute workflow and
+30-minute capability limits. The host still requires full independent canonical
+read-back before accepting SQLite proof. This is a bounded rollout proposal,
+not a statement that larger transfers already work.
+
+Alternatives considered:
+
+* Retain the host path for all larger files. It works with existing resumable
+  disk files and avoids a worker rollout, but keeps the measured slow host S3
+  route for the larger trials.
+* Advance the existing `archive-runner` branch. Already running jobs keep their
+  commit identity, but a prepared, undispatched journal can freeze the old head
+  and dispatch the new one. Avoid introducing that mismatch during collection.
+* Select a new immutable worker branch for new operations, while accepting the
+  exact saved legacy refs for retained jobs. This preserves their frozen commit
+  checks and requires no interruption of active sources. This is the selected
+  rollout approach if the larger-file pilot proceeds.
+
+Before dispatching a larger pilot, validate a 512-part specification with
+realistic synthetic SigV4 capabilities against both the 1 MiB decoded and
+60,000-character encoded bounds, then test that oversized bodies and invalid
+part sizes still fail before publication. Keep tests and worker packaging green.
+Create the new pinned worker ref only at the tested commit. Do not move the old
+ref or rewrite any saved job head, nonce, upload ID or dispatch intent.
+
+Remaining concerns are source speed within the existing job deadline, the
+encoded input size and full-public-read-back latency. Observe the current
+908 MB / 1.23 GB pilots first; they do not block metadata discovery or other
+body collection. The implementing agent will choose and dispatch the actual
+above-2-GiB pilot after the specification bounds and tested-ref rollout are
+verified. Acceptance additionally requires source hash/size checks, server part
+acknowledgements, canonical read-back, SQLite CAS and staging cleanup. Pages
+visibility remains a separate publication gate. Limits above 4 GiB and longer
+job/capability lifetimes remain undecided until that evidence exists; they are
+not prerequisites for implementing the bounded 4 GiB path.

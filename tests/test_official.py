@@ -487,3 +487,28 @@ class AliceAmbiguousSupportTests(unittest.TestCase):
         game={'id':1,'gamename':'イブニクル'}
         rows,unknown=o.parse(html,'https://www.alicesoft.com/support/evenicle.html',game,{'id':30,'brandname':'ALICESOFT'},scoped=False)
         self.assertEqual(rows,[]);self.assertEqual(len(unknown),1)
+
+
+class ExplicitResourceLabelTests(unittest.TestCase):
+    def test_score_archive_on_a_trial_page_is_not_a_trial(self):
+        html='<div class="twitter_box"><h2>ピアノアレンジアルバムの楽譜を公開</h2><table><tr><td class="trial_table_style4"><a href="common/score/score.zip">すべての楽譜PDFデータをダウンロードする (ZIPファイル)</a></td></tr></table></div>'
+        rows,unknown=o.parse(html,PAGE,GAME,BRAND,hint='trial')
+        self.assertEqual(rows,[]);self.assertEqual(unknown,[])
+
+    def test_trial_layout_style_alone_is_not_semantic_trial_evidence(self):
+        html='<table><tr><td class="trial_table_style4"><a href="score.zip">Download</a></td></tr></table>'
+        self.assertEqual(o.parse(html,PAGE,GAME,BRAND)[0],[])
+        html='<table><tr><td class="trial_table_style4">体験版 <a href="trial.zip">Download</a></td></tr></table>'
+        self.assertEqual(o.parse(html,PAGE,GAME,BRAND)[0][0]['release_name'],'体験版')
+
+    def test_explicit_resource_image_label_cannot_borrow_trial_container(self):
+        for label in ('楽譜','壁紙','取扱説明書'):
+            with self.subTest(label=label):
+                html='<div class="trial"><a href="asset.zip"><img alt="'+label+'"></a></div>'
+                self.assertEqual(o.parse(html,PAGE,GAME,BRAND,hint='trial')[0],[])
+
+
+class ExplicitManualPatchTests(unittest.TestCase):
+    def test_manual_application_patch_is_kept_as_a_patch(self):
+        html='<a href="manual_update.zip">Manual patch</a>'
+        self.assertEqual(o.parse(html,PAGE,GAME,BRAND)[0][0]['release_name'],'パッチ')
