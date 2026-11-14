@@ -1,0 +1,29 @@
+# Resumable binary publication
+
+Status: implementation for an explicit single-file pilot; ordinary publication keeps its current transport.
+
+## Evidence and decision
+
+Repeated 256 MiB multipart requests have failed with connection closures. A finite, sequential 8 MiB upload has received successful part responses. Read-only HF API probes confirmed `ListMultipartUploads` and `ListParts` and found seven accepted parts (56 MiB). This proves API support, not completed publication or the cause of packet loss. The installed s3transfer `CreateMultipartUploadTask` registers `abort_multipart_upload` as failure cleanup, so simply reducing its part size does not preserve progress after a failed process.
+
+Use a sequential uploader with SQLite checkpoints. The initial draft put operational tables in the metadata DB and removed them from new snapshots; inspection showed that old live workers can still snapshot the whole DB. Separating this recreatable transfer cache guarantees the publication boundary without restarting productive workers. Canonical metadata remains in `archive/index.sqlite3`. A private operational SQLite cache at `archive/.work/multipart.sqlite3` contains two tables that bind a remote upload to namespace, bucket, immutable `files/<sha256>` key, actual size, part size and upload ID. Per-part checkpoints contain local SHA-256, size and the server's opaque ETag. The private file is outside the provenance allowlist and SQLite metadata backup, including backups made by old long-lived workers. The public snapshot also drops empty operational tables left by early initialization code.
+
+One process owns a nonblocking per-object claim, including the upload and anonymous read-back. It commits each accepted part before continuing, without a SQLite transaction across network calls. A retry lists server parts, supports pagination, and skips a part only when both its local digest and the server's number, size and ETag match its checkpoint. Unrecorded server parts are resent; one lost acknowledgement must not invent proof. The concatenated local payload SHA-256 is also checked before completion so mutation after the initial file hash cannot commit mixed bytes. Ordinary network failures retain the remote upload and local body.
+
+A missing or expired upload starts a new one. If completion may already have succeeded, a matching object length only permits an anonymous full read-back; it does not prove identity. Successful completion stays checkpointed until the source metadata CAS accepts the full public SHA-256 and size. A read-back mismatch invalidates the upload checkpoint, leaves the local body intact and never creates a download link. A temporary read-back failure retains completion to avoid re-uploading the whole object.
+
+Default parts are 8 MiB, one request at a time. The pilot accepts explicit part sizes from 5 to 64 MiB and at most 10,000 parts. Objects outside those limits continue to use the ordinary uploader. All body hashing, source MD5/size validation, metadata CAS, quarantine rules and public verification remain mandatory. The CLI pilot requires one source ID and its existing file claim.
+
+## Alternatives
+
+Keeping the 256 MiB SDK uploader has less code and follows the current [HF recommendation](https://huggingface.co/docs/hub/storage-buckets-s3), but repeatedly loses work on long requests in the observed connection conditions. An 8 MiB SDK configuration has bounded memory and has accepted real parts, but its failure cleanup still prevents process resume. The selected uploader trades more requests and checkpoint bookkeeping for retained acknowledged progress. Native HF upload is a possible later alternative; this session has S3 credentials but no configured HF token.
+
+## Risks and verification
+
+HF expires unfinished uploads after seven days, so resume must tolerate `NoSuchUpload`. A process can die between upload creation and checkpointing; that may leave an empty upload to expire, and unrelated uploads must never be deleted. An uncheckpointed successful part may be resent once. Both cases affect efficiency, not publication proof. Concurrent legacy uploaders do not honor the new object claim, so the pilot also takes the source file claim and does not replace a live transfer.
+
+Tests must cover restart after a network failure, changed local content, opaque/mismatched ETags, missing server parts, paginated listings, expired uploads, completion-response loss, read-back failure/mismatch, busy claims, source metadata CAS, bounded buffers and exclusion of operational tables from public snapshots. Live promotion requires a complete real binary with matching posted constraints and anonymous full read-back, not merely accepted parts.
+
+## Remaining decisions
+
+Global rollout waits for that live proof; the project maintainer/agent can then select a default from observed throughput and memory. This does not block the opt-in implementation. Mutable SQLite/provenance snapshot resume requires a durable immutable staging policy and a disk budget; it is deferred and continues using the existing uploader. No new daemon or host-wide network setting is introduced. The implementation has no blocker for the single immutable-file pilot. Expiry and the small acknowledgement crash windows above are accepted residual risks.

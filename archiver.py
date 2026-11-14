@@ -1122,7 +1122,7 @@ def init_bucket(namespace, bucket, profile="hf"):
     print(f"bucket ready: https://huggingface.co/buckets/{namespace}/{bucket}")
 
 
-def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ident=None, metadata=True, recheck=False):
+def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ident=None, metadata=True, recheck=False, resumable=False):
     from boto3.s3.transfer import TransferConfig
     from botocore.exceptions import ClientError
     client = s3_client(namespace, profile)
@@ -1137,6 +1137,8 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
     checked = {}
     for row in transfer_rows(store,site,ident):
         if row["status"] not in {"verified", "archived"}:
+            continue
+        if (json.loads(row['data']).get('fields') or {}).get('source_association_quarantined'):
             continue
         expected_key = f"{namespace}/{bucket}/files/{row['sha256']}"
         published = row["sha256"] and row["remote_sha256"] == row["sha256"] and row["remote_verified_at"] and row["remote_key"] == expected_key
@@ -1154,7 +1156,16 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
         if key not in checked and not known:
             if path is None:
                 raise ValueError("local file unavailable for unpublished object: " + row["id"])
-            client.upload_file(str(path), bucket, key, ExtraArgs={"Metadata": {"sha256": result["sha256"]}}, Config=config)
+            if resumable:
+                from multipart_upload import transfer_and_readback,PublicReadbackMismatch
+                try:
+                    checked[key]=transfer_and_readback(store,client,namespace,bucket,key,path,result['sha256'],result['size'],
+                        lambda:public_digest(namespace,bucket,key))
+                except PublicReadbackMismatch:
+                    store.update(row['id'],remote_sha256=None,remote_verified_at=None)
+                    raise
+            else:
+                client.upload_file(str(path), bucket, key, ExtraArgs={"Metadata": {"sha256": result["sha256"]}}, Config=config)
         remote_sha, remote_size = checked.get(key) or public_digest(namespace, bucket, key)
         if (remote_sha, remote_size) != (result["sha256"], result["size"]):
             store.update(row["id"], remote_sha256=None, remote_verified_at=None)
@@ -1178,6 +1189,9 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
             if bound:acknowledged=store.update_if_current(row['id'],current['data'],**proof)
         if not acknowledged:
             raise ValueError("source metadata changed during publication; verified remote object retained")
+        if resumable:
+            from multipart_upload import discard
+            discard(store,namespace,bucket,key,result['sha256'])
         print(f"public read-back verified: {namespace}/{bucket}/{key}")
     if metadata:
         publish_metadata(store, namespace, bucket, profile)
@@ -1262,6 +1276,9 @@ def _publish_html(store, namespace, bucket, profile="hf"):
 
 
 def _compact_snapshot(db):
+    # In-flight remote IDs and part receipts are operational, not public metadata.
+    for table in ('_s3_upload_parts','_s3_uploads'):
+        db.execute('DROP TABLE IF EXISTS '+table)
     # This is an offline backup only. The live crawl keeps its existing schema.
     # Link primary keys contain long URLs; a rowid table duplicates those bytes
     # in its primary-key index (about 246 MB in the current catalogue).
@@ -1375,6 +1392,9 @@ def main(argv=None):
         if command in {"crawl", "download"}:
             p.add_argument("--delay", type=float, default=1)
         if command == "upload":
+            p.add_argument("--id", help="upload one catalog source record")
+            p.add_argument("--resumable", action="store_true", help="pilot: retain acknowledged multipart progress; requires --id")
+            p.add_argument("--files-only", action="store_true", help="publish binary only, without a catalogue/provenance checkpoint")
             p.add_argument("--namespace", default="vn-archive")
             p.add_argument("--bucket", default="mirrors")
             p.add_argument("--profile", default="hf")
@@ -1382,6 +1402,8 @@ def main(argv=None):
     if hasattr(args,"site") and args.site not in {"both","official"}:
         from mirror_sources import definitions
         if args.site not in definitions():parser.error("unregistered source: "+args.site)
+    if args.command=='upload' and args.resumable and not args.id:
+        parser.error('--resumable requires --id for the single-file pilot')
     if args.command == "archive-batch" and not 0 <= args.shard_index < args.shards:
         parser.error("--shard-index must be between 0 and --shards - 1")
     if args.command == "doctor":
@@ -1418,7 +1440,19 @@ def main(argv=None):
         if args.command == "verify":
             return int(bool(verify(store, args.site)))
         if args.command == "upload":
-            publish(store, args.namespace, args.bucket, args.profile, args.site, args.limit)
+            from contextlib import ExitStack
+            from archive_lock import exclusive_file
+            if args.id and not transfer_rows(store,args.site,args.id):
+                parser.error('source record ID not found for selected site: '+args.id)
+            try:
+                with ExitStack() as claims:
+                    if args.id:
+                        claims.enter_context(exclusive_file(store.root/'.claims'/(hashlib.sha256(args.id.encode()).hexdigest()+'.lock'),blocking=False))
+                    publish(store,args.namespace,args.bucket,args.profile,args.site,args.limit,ident=args.id,
+                        metadata=not args.files_only,resumable=args.resumable)
+            except BlockingIOError:
+                print('source record is busy; upload deferred',file=sys.stderr)
+                return 1
         if args.command == "status":
             for row in store.db.execute("SELECT site,status,count(*) FROM items WHERE (?='both' OR site=?) GROUP BY site,status", (args.site, args.site)):
                 print(*row)

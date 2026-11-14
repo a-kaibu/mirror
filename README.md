@@ -5,6 +5,24 @@ Preserve VN trial editions, patches and promotional movies in the public
 manufacturer-oriented download catalog for GitHub Pages. Trials and patches have
 priority. Python 3.11+. The project owner has permission from the source owners.
 
+## Resumable upload pilot
+
+The ordinary uploader is unchanged. To retain accepted multipart progress for one
+already downloaded source record, use:
+
+```sh
+uv run python archiver.py upload --site suezou --id SOURCE_ID --resumable --files-only
+```
+
+The pilot takes the source file claim and a separate object claim, sends one 8 MiB
+part at a time, and stores transfer checkpoints in the private SQLite cache under `archive/.work/`. Re-running the same command
+resumes only parts matching both the local digest and the server's size and opaque
+ETag. Network failures retain local files and remote parts. A complete anonymous
+SHA-256 and size check plus the source metadata CAS still gate publication. The
+operational cache is excluded from the public SQLite snapshot.
+Global rollout awaits complete live multipart verification; see the
+[design and validation boundaries](docs/resumable-upload.md).
+
 ## Source of truth
 
 `archive/index.sqlite3` is the only source of truth. `items` stores source records
