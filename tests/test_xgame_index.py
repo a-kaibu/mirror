@@ -5,6 +5,7 @@ from pathlib import Path
 import archiver as a
 import mirror_sources as m
 import portals
+import catalog
 
 PAGE='http://web.archive.org/web/20120503221242/http://www.xgamedata.com/index_m.html'
 HTML="""<table><tr><td><a href="demo6/g6361/"><img alt="detail"></a></td>
@@ -60,6 +61,28 @@ class XgameIndexTests(unittest.TestCase):
                 self.assertEqual(saved['expected_md5'],'a'*32)
                 self.assertNotEqual(row['id'],detail_id)
             finally:store.db.close()
+
+    def test_legacy_game_cells_keep_separate_titles_and_copyright_owners(self):
+        def cell(game,title,brand,name):
+            return f'<td><a href="demo1/{game}/"><img alt="unrelated-banner-name.jpg (999 bytes)"></a>{title}<br>(c) <a href="http://{game}.test/">{brand}</a><table><tr><td><a href="http://www.interq.or.jp/white/xes/{name}.wmv"><img></a></td></tr></table></td>'
+        html='<table><tr>'+cell('g0222','作品甲','ブランド甲','first')+cell('g0223','作品乙','ブランド乙','second')+'</tr></table>'
+        rows=portals.parse_xgame(html,PAGE)
+        self.assertEqual({(r['title'],r['brand'],r['filename']) for r in rows},{('作品甲','ブランド甲','first.wmv'),('作品乙','ブランド乙','second.wmv')})
+        self.assertEqual(len(rows),2)
+        self.assertTrue(all(r['fields']['brand_evidence']['method']=='copyright_and_index_link' for r in rows))
+        self.assertTrue(all(r['expected_size'] is None for r in rows))
+        self.assertTrue(all(catalog.release_info(r)[0]=='movie' for r in rows))
+
+    def test_legacy_mismatched_copyright_or_other_interq_account_is_rejected(self):
+        html='<table><tr><td><a href="demo1/g0222/"><img></a>作品甲 (c) ブランド甲<a href="http://publisher.test/">ブランド乙</a><a href="http://www.interq.or.jp/white/xes/first.wmv">DL</a></td></tr></table>'
+        self.assertEqual(portals.parse_xgame(html,PAGE),[])
+        html=html.replace('ブランド乙','ブランド甲').replace('/white/xes/','/white/another/')
+        self.assertEqual(portals.parse_xgame(html,PAGE),[])
+
+    def test_media_extension_fallback_is_anchored_and_keeps_explicit_labels(self):
+        for filename,label,kind in [('preview.WMV','作品名','movie'),('preview.mp4','作品名','movie'),('preview.wmv.exe','作品名','other'),('preview.zip','作品名','other'),('preview.wmv','修正パッチ','patch')]:
+            with self.subTest(filename=filename,label=label):
+                self.assertEqual(catalog.release_info({'title':'作品名','release_name':label,'filename':filename,'fields':{}})[0],kind)
 
     def test_other_hosts_and_rows_without_a_detail_link_are_not_catalogues(self):
         self.assertEqual(portals.parse_xgame(HTML,PAGE.replace('www.xgamedata.com','unrelated.test')),[])

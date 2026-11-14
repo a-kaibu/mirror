@@ -36,6 +36,10 @@ def release_info(record):
         kind = "patch"
     elif re.search(r"ムービー|movie|動画|PV|デモ", label, re.I):
         kind = "movie"
+    elif re.search(r"\.(?:wmv|mp4|mpg|mpeg|avi|mov|flv|webm|ogv)$", record.get("filename") or "", re.I):
+        # Old catalogues may publish only a game title and a direct media file.
+        # Do not invent a release label or treat an image's byte count as size.
+        kind = "movie"
     else:
         kind = "other"
     fields = record.get("fields", {})

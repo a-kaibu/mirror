@@ -700,6 +700,8 @@ HTML収集中のサイトは排他ロックで避け、保存済みHTMLと他の
 Xgame archive indexes can also contribute explicit per-row title, publisher and
 XES mirror links when detail pages are unavailable. Index observations have
 separate identities, retain their detail-page reference and official publisher
-link, and never overwrite richer detail records. Only links in the same published
-game directory are accepted; ambiguous rows are left for review. Rounded display
+link, and never overwrite richer detail records. Modern rows require mirror links
+in the same published game directory. Early per-game cells additionally require
+matching copyright and publisher names before accepting the observed XES account
+at `www.interq.or.jp/white/xes/`. Ambiguous rows remain for review. Rounded display
 sizes and absent MD5 values are not invented as integrity constraints.

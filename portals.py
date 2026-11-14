@@ -829,7 +829,7 @@ def parse_xgame_index(html,page):
     if host not in {'www.xgamedata.com','xgamedata.com'}:return []
     root=a.DOM(html).root;records={}
     normal=lambda value:re.sub(r'\s+',' ',unicodedata.normalize('NFKC',value)).strip()
-    for row in root.all({'tr'}):
+    for row in root.all({'tr','td'}):
         details=set();publishers={};binaries=[]
         for link in row.all({'a'}):
             target=a.resolve(page,link.attrs.get('href',''))
@@ -844,19 +844,33 @@ def parse_xgame_index(html,page):
         if len(details)!=1 or len(publishers)!=1:continue
         detail=next(iter(details));directory=urlsplit(detail).path
         text=normal(row.text());titles=re.findall(r'『([^』]+)』',text)
-        if len(titles)!=1:continue
-        title=titles[0];brand,official=next(iter(publishers.items()))
-        suffix=text.split('』',1)[1]
-        if brand not in suffix:continue
-        release=suffix.split(brand,1)[0].strip()
-        if not release or len(release)>300:continue
+        brand,official=next(iter(publishers.items()));legacy_credit=False
+        if len(titles)==1:
+            title=titles[0];suffix=text.split('』',1)[1]
+            if brand not in suffix:continue
+            release=suffix.split(brand,1)[0].strip()
+        elif not titles:
+            # Early TOP pages use nested per-game cells, visible plain titles
+            # and a copyright instead of the later quoted-title layout.
+            credit=re.fullmatch(r'(.*?)\s*(?:Copyright\s*)?(?:©|\(c\))\s*(.+)',text,re.I)
+            if not credit:continue
+            owner=re.sub(r'^\d{4}(?:\s*[-–]\s*\d{4})?\s*','',credit[2])
+            owner=re.sub(r'\s+All\s+Rights\s+Reserved\.?$','',owner,flags=re.I)
+            key=lambda value:re.sub(r'\s+','',normal(value)).casefold()
+            if key(owner)!=key(brand):continue
+            title=credit[1].strip();release=title;legacy_credit=True
+        else:continue
+        if not title or len(title)>200 or not release or len(release)>300:continue
         files={}
         for target in binaries:
             original=a.original(target);parts=urlsplit(original)
             # These are the actual XES mirrors observed in the catalogue. A
             # banner/archive hosted elsewhere cannot donate a game association.
-            if (not parts.hostname or not re.fullmatch(r'xes\d*\.plala\.jp',parts.hostname)
-                    or parts.path.rsplit('/',1)[0]+'/'!=directory):continue
+            directory_mirror=(parts.hostname and re.fullmatch(r'xes\d*\.plala\.jp',parts.hostname)
+                              and parts.path.rsplit('/',1)[0]+'/'==directory)
+            legacy_mirror=(legacy_credit and parts.hostname=='www.interq.or.jp'
+                           and parts.path.startswith('/white/xes/'))
+            if not (directory_mirror or legacy_mirror):continue
             filename=a.filename_from_url(target)
             if not filename:continue
             mirrors=files.setdefault(filename,[]);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
@@ -870,7 +884,7 @@ def parse_xgame_index(html,page):
                 'title':title,'brand':brand,'release_name':release,'filename':filename,'published_at':None,
                 'mirrors':list(dict.fromkeys(mirrors)),'expected_md5':None,'expected_size':None,'size_text':None,
                 'fields':{'detail_page_url':detail,'official_site_urls':sorted(official),
-                          'brand_evidence':{'method':'published_index_row','published_name':brand},
+                          'brand_evidence':{'method':'copyright_and_index_link' if legacy_credit else 'published_index_row','published_name':brand},
                           'index_release_label':release}}
     return list(records.values())
 
