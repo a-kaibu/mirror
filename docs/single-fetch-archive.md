@@ -282,3 +282,13 @@ without waiting for that second result. At the measured rates its transfer could
 approach the unchanged 20-minute job deadline; that timing remains a pilot risk,
 not a guarantee. A terminal timeout must abort the exact upload before any later
 source attempt, and no source is accepted from partial transfer progress.
+
+
+Large staged control operations now use a bounded 600-second S3 read timeout
+when the frozen transport size exceeds 2 GiB; smaller operations retain 60
+seconds. The 2,577,562,464-byte pilot returned all 308 acknowledged parts, but
+host completion hit the former read timeout before a staged object appeared.
+Longer completion/copy waiting preserves that same upload and receipt. It does
+not extend worker GET/PUT timeouts, workflow lifetime, capability expiry or the
+workflow observation window, and is not itself an acceptance proof. Recovery
+selects this client from the saved size rather than mutable source metadata.

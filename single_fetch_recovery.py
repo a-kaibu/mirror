@@ -32,7 +32,7 @@ def recover_one(store,ident,*,profile='hf',timeout=30,client=None,execute=None,r
     with exclusive_file(claim,blocking=False):
         state=transfer._load(store,ident)
         if not state or state['phase'] not in PHASES:return None
-        client=client or transfer.make_client(profile)
+        client=client or transfer.staging_client(profile,state.get('size'))
         if state['phase']=='accepted':
             # Cleanup must not fall through to a new transfer if metadata has
             # changed since the frozen observation was accepted.

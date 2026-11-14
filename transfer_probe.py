@@ -35,14 +35,15 @@ def gh(arguments):
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
-def client(profile="hf"):
+def client(profile="hf",*,read_timeout=60):
+    if type(read_timeout) is not int or not 0<read_timeout<=600:raise ValueError("invalid S3 control read timeout")
     import boto3
     from botocore.config import Config
     # Explicit SigV4 also governs presigning; the SDK may otherwise choose V2.
     return boto3.Session(profile_name=profile).client('s3',endpoint_url='https://vn-archive.s3.hf.co',
         config=Config(signature_version='s3v4',region_name='us-east-1',s3={'addressing_style':'path'},
             request_checksum_calculation='when_required',response_checksum_validation='when_required',
-            connect_timeout=10,read_timeout=60,retries={'total_max_attempts':2}))
+            connect_timeout=10,read_timeout=read_timeout,retries={'total_max_attempts':2}))
 
 
 def verify_receipt(state,receipt,server_parts):

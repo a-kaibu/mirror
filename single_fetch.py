@@ -140,13 +140,21 @@ def _prepare(store,source,source_url,size,client):
     return state
 
 
+def staging_client(profile,size=None):
+    # Multipart completion/copy of a large staged object can outlast the normal
+    # control request timeout. The worker's GET/PUT and observation bounds stay
+    # unchanged; uncertain completion still resumes the same frozen upload.
+    return make_client(profile,read_timeout=600) if type(size) is int and size>2*1024**3 else make_client(profile)
+
+
 def run_claimed(store,ident,source_url=None,size=None,*,profile='hf',client=None,execute=None,readback=None,timeout=1500):
     """Caller holds the primary source claim; equivalent claims are nonblocking."""
     if type(timeout) is not int or not 0<timeout<=1500:raise ValueError('invalid observation window')
     state=_load(store,ident)
     current=store.db.execute('SELECT * FROM items WHERE id=?',(ident,)).fetchone()
+    bound=state.get('size') if state else (size if size is not None else (json.loads(current['data']).get('expected_size') if current else None))
     if state and state['phase'] in {'accepted','cleaned'}:
-        client=client or make_client(profile)
+        client=client or staging_client(profile,bound)
         result=staged.promote(store,client,state['source'],state,state['receipt'],readback=readback)
         if state['phase']!='cleaned' or not current or hashlib.sha256(current['data'].encode()).hexdigest()==state['data_sha256']:return result
         _retire(store,state);state=None
@@ -155,7 +163,7 @@ def run_claimed(store,ident,source_url=None,size=None,*,profile='hf',client=None
     if state is None and current and reuse_verified(store,current,staged.NAMESPACE,staged.BUCKET):
         return dict(accepted_id=ident,reused=True,cleanup_pending=False)
     if state and state['phase'] in {'aborted','preparing'}:
-        client=client or make_client(profile)
+        client=client or staging_client(profile,bound)
         if state['phase']=='preparing':_abort(store,client,state)
         if source_url is None:source_url=state['source_url']
         if size is None:size=state['size']
@@ -164,7 +172,7 @@ def run_claimed(store,ident,source_url=None,size=None,*,profile='hf',client=None
     source=state['source'] if state else dict(current)
     with ExitStack() as claims:
         _claim_aliases(claims,store,source)
-        client=client or make_client(profile)
+        client=client or staging_client(profile,bound)
         if state is None:state=_prepare(store,source,source_url,size,client)
         if state['phase']=='job':
             if not state.get('dispatch_attempted_at') and (current is None or (json.loads(current['data']).get('fields') or {}).get('source_association_quarantined')):
