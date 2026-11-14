@@ -189,3 +189,28 @@ recovery. Preserve the donor's actual remote_verified_at and reused_from; do not
 claim a fresh network verification occurred. Completion, source CAS and exact
 staging cleanup still run. This avoids repeating full body reads when concurrent
 source observations converge on an already accepted byte object.
+
+
+## Recovery independent of catalogue scheduling
+
+A source can become public through checksum reuse while an earlier delegated
+journal still needs promotion or staging cleanup. Ordinary batch scheduling
+skips already public, evicted rows, and bounded shard workers can finish with
+other retained journals still queued. Recover those operations independently:
+
+```sh
+uv run python single_fetch_recovery.py --root archive --limit 10 --timeout 30
+uv run python single_fetch_recovery.py --root archive --watch --interval 120
+```
+
+The recovery pass does not start a new origin download. It takes the existing
+source claim nonblockingly, resumes dispatched job identities or staged
+promotion, and retries exact staging cleanup. A spec that was never dispatched
+is aborted rather than dispatched by recovery. Metadata changes after acceptance
+cannot make cleanup fall through to a new transfer. Active source/object owners
+and uncertain job observations stay untouched for the next pass. Counters report
+finished retained operations, not newly published unique files.
+
+The watch supervisor uses a fresh child per bounded pass, with separate watch
+and pass claims. Capability URLs and upload IDs remain in private journals;
+recovery output contains counters and exception types only.
