@@ -134,3 +134,21 @@ and job identity. Only acknowledged exact-upload abort permits mirror failover.
 One pass attempts each eligible observed URL at most once; exhausted sources are
 marked failed without stopping independent files. An uncertain abort, observation
 timeout or failed receipt retrieval cannot start a fallback origin download.
+
+Unknown publisher sizes can now use a HEAD-only probe through the existing
+Fetcher (same URL encoding, TLS pins, rate limits and identity encoding). Only
+HTTP 200, a positive bounded integer Content-Length and non-HTML/unencoded
+headers permit the runner route. The observed size is a transport bound; it does
+not populate expected_size or constitute content proof. HEAD refusal/missing or
+unusable length retains the normal host download route without a host probe GET.
+
+HEAD discovery is capped at three observed candidate URLs per selection before
+normal host fallback. Dated binary URLs already recorded in wayback_candidates
+are included and accepted as observed source URLs; no replay dates are invented.
+
+The first HEAD-bound official-site pilot (Waffle `setup_2.lzh`, 74,924 bytes,
+workflow run 43627913576) passed the same full canonical public read-back and
+SQLite acceptance with no publisher size and no local body. Origin fetch took
+3.670 s and delegated upload 0.434 s. Safe evidence:
+`.work/single-fetch-head-official-verified-20261115.json`. This does not establish
+that every official source supports HEAD; refused/invalid HEAD retains fallback.

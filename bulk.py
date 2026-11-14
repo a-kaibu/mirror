@@ -188,7 +188,7 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
                 if single_fetch:
                     from single_fetch import archive_candidate,SourceTransferFailed
                     try:
-                        result=archive_candidate(store,row,profile=profile)
+                        result=archive_candidate(store,row,profile=profile,probe=getattr(fetcher,"head",None))
                     except SourceTransferFailed:
                         stats['failed']+=1
                         print('single-fetch exhausted observed mirrors',row['id'],flush=True)

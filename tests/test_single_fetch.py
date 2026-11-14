@@ -194,3 +194,45 @@ class SingleFetchTests(unittest.TestCase):
             stats=bulk.archive_batch(self.store,a.Fetcher(),single_fetch=True,reserve_bytes=0)
         self.assertEqual(stats['failed'],1);self.assertEqual(stats['published'],1)
         self.assertEqual(self.row()['status'],'failed');self.assertEqual(self.origins,1)
+    def test_unknown_publisher_size_uses_head_without_reading_host_body(self):
+        self.store.add({**self.record,'expected_size':None})
+        response=Response();response.headers['Content-Length']=str(len(PAYLOAD))
+        response.read=Mock(side_effect=AssertionError('HEAD body read'))
+        probe=Mock(return_value=response)
+        result=controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,readback=self.readback,probe=probe)
+        self.assertEqual(result['accepted_id'],'target');probe.assert_called_once();response.read.assert_not_called()
+        self.assertEqual((self.origins,self.jobs),(1,1));self.assertIsNone(self.row()['path'])
+        state=controller._load(self.store,'target');self.assertIsNone(state['spec']['published_size'])
+        self.assertEqual(state['size'],len(PAYLOAD))
+
+    def test_invalid_or_unsupported_head_keeps_normal_host_route(self):
+        self.store.add({**self.record,'expected_size':None})
+        for headers in [{},{'Content-Length':'rounded 10MB'},{'Content-Length':'0'},{'Content-Length':str(worker.MAX_BYTES+1)},{'Content-Length':'17','Content-Encoding':'gzip'},{'Content-Length':'17','Content-Type':'text/html'}]:
+            with self.subTest(headers=headers):
+                response=Response();response.headers.update(headers)
+                response.read=Mock(side_effect=AssertionError('HEAD body'))
+                self.assertIsNone(controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,probe=Mock(return_value=response)))
+                response.read.assert_not_called()
+        self.assertIsNone(controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,probe=Mock(side_effect=OSError('HEAD unsupported'))))
+        self.assertEqual(self.client.created,0)
+
+    def test_fetcher_head_keeps_url_encoding_tls_opener_and_identity_headers(self):
+        fetcher=a.Fetcher(delay=0,retries=1);opener=Mock();fetcher.opener=opener
+        fetcher.head('https://source.test/日本語 file.zip',headers={'Referer':'https://publisher.test/'})
+        request=opener.open.call_args.args[0]
+        self.assertEqual(request.get_method(),'HEAD');self.assertNotIn('日本語',request.full_url)
+        self.assertIn('%20',request.full_url);self.assertEqual(request.get_header('Accept-encoding'),'identity')
+        self.assertEqual(request.get_header('Referer'),'https://publisher.test/')
+    def test_observed_dated_binary_capture_can_use_single_fetch(self):
+        capture='https://web.archive.org/web/20181025223313id_/http://source.test/demo.zip'
+        with self.store.db:
+            self.store.db.execute('INSERT INTO wayback_candidates VALUES(?,?,?,?,?)',('target',capture,self.url,'20181025223313',None))
+        result=controller.run(self.store,'target',capture,len(PAYLOAD),client=self.client,execute=self.execute,readback=self.readback)
+        self.assertEqual(result['accepted_id'],'target');self.assertEqual(self.row()['source_url'],capture)
+        self.assertEqual(self.origins,1)
+
+    def test_unknown_size_head_probes_are_bounded_before_host_fallback(self):
+        self.store.add({**self.record,'expected_size':None,'mirrors':['https://source.test/'+str(i)+'.zip' for i in range(7)]})
+        probe=Mock(side_effect=OSError('HEAD refused'))
+        self.assertIsNone(controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,probe=probe))
+        self.assertEqual(probe.call_count,3);self.assertEqual(self.client.created,0)

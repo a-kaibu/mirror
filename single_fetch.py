@@ -99,12 +99,18 @@ def _abort(store,client,state):
     state['phase']='aborted';state['aborted_at']=a.now();_save(store,state)
 
 
+def _observed_urls(store,source,record):
+    captures=[row[0] for row in store.db.execute(
+        'SELECT url FROM wayback_candidates WHERE item_id=? ORDER BY captured_at DESC',(source['id'],))]
+    return list(dict.fromkeys(captures+record.get('mirrors',[])+a.matching_mirrors(store,source,record)))
+
+
 def _prepare(store,source,source_url,size,client):
     record=json.loads(source['data'])
     if source['path']:raise ValueError('existing local body requires the verified-local route')
     if (record.get('fields') or {}).get('source_association_quarantined'):raise ValueError('quarantined source')
     public_source(source_url)
-    if source_url not in record.get('mirrors',[])+a.matching_mirrors(store,source,record):raise ValueError('source URL was not observed for this file')
+    if source_url not in _observed_urls(store,source,record):raise ValueError('source URL was not observed for this file')
     if size is None:size=record.get('expected_size')
     if type(size) is not int or not 0<size<=MAX_BYTES:raise ValueError('bounded exact transport size required')
     if record.get('expected_size') is not None and record['expected_size']!=size:raise ValueError('published size differs')
@@ -181,18 +187,18 @@ def run_claimed(store,ident,source_url=None,size=None,*,profile='hf',client=None
         return staged.promote(store,client,source,state,state['receipt'],readback=readback)
 
 
-def _archive_candidate_once(store,row,*,profile='hf',client=None,execute=None,readback=None,excluded=()):
+def _archive_candidate_once(store,row,*,profile='hf',client=None,execute=None,readback=None,excluded=(),probe=None):
     """Return None for the host route; never fall back while a job can still run."""
     state=_load(store,row['id'])
     if state and state['phase'] not in {'aborted','cleaned'}:
         return run_claimed(store,row['id'],profile=profile,client=client,execute=execute,readback=readback)
     record=json.loads(row['data']);size=record.get('expected_size')
-    if row['path'] or type(size) is not int or not 0<size<=MAX_BYTES:return None
+    if row['path'] or (size is not None and (type(size) is not int or not 0<size<=MAX_BYTES)):return None
     if (record.get('fields') or {}).get('source_association_quarantined'):return None
     # A managed partial from an earlier host attempt retains its resume route.
     directory=store.root/'files'/row['site']/row['id']
     if directory.exists() and any(directory.iterdir()):return None
-    urls=list(dict.fromkeys(record.get('mirrors',[])+a.matching_mirrors(store,row,record)))
+    urls=_observed_urls(store,row,record)
     from urllib.parse import urlsplit
     urls.sort(key=lambda url:urlsplit(url).hostname!='storage1.lathercraft.net')
     eligible=[]
@@ -209,6 +215,24 @@ def _archive_candidate_once(store,row,*,profile='hf',client=None,execute=None,re
     if state and state['phase']=='aborted' and state.get('source_url') in eligible:
         offset=(eligible.index(state['source_url'])+1)%len(eligible)
         eligible=eligible[offset:]+eligible[:offset]
+    if size is None:
+        if probe is None:return None
+        import http.client
+        referer=a.original(record.get('page_url') or '')
+        headers={'Referer':referer} if referer else {}
+        for url in eligible[:3]:
+            try:
+                with probe(url,headers=headers) as response:
+                    length=response.headers.get('Content-Length','').strip()
+                    if (response.status!=200 or response.headers.get('Content-Encoding','identity')!='identity'
+                        or 'html' in response.headers.get('Content-Type','').lower()
+                        or not re.fullmatch('[0-9]{1,20}',length)):continue
+                    observed=int(length)
+                    if not 0<observed<=MAX_BYTES:continue
+            except (OSError,http.client.HTTPException,ValueError):continue
+            # This is a transport bound, not a publisher size or a body proof.
+            return run_claimed(store,row['id'],url,observed,profile=profile,client=client,execute=execute,readback=readback)
+        return None
     return run_claimed(store,row['id'],eligible[0],size,profile=profile,client=client,execute=execute,readback=readback)
 
 

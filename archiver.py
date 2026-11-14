@@ -435,7 +435,10 @@ class Fetcher:
     def _record_pin(self, fingerprint):
         self.last_tls_pin = fingerprint
 
-    def open(self, url, headers=None):
+    def head(self, url, headers=None):
+        return self.open(url,headers=headers,method="HEAD")
+
+    def open(self, url, headers=None, *, method=None):
         self.last_tls_pin = None
         parts=urlsplit(url)
         if parts.scheme not in {"http", "https"}:
@@ -453,7 +456,7 @@ class Fetcher:
             self.last = time.monotonic()
             try:
                 return self.opener.open(Request(transport_url, headers={"User-Agent": "VN-Mirror-Archiver/0.1 (cultural preservation)",
-                    "Accept-Encoding": "identity", **(headers or {})}), timeout=self.timeout)
+                    "Accept-Encoding": "identity", **(headers or {})},method=method), timeout=self.timeout)
             except HTTPError as e:
                 if e.code not in {408, 429, 500, 502, 503, 504}:
                     raise
