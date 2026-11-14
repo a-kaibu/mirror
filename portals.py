@@ -823,9 +823,62 @@ def xgame_labeled_variants(fields):
     return [(title[1],release,filename,*digests[label]) for label,(release,filename) in filenames.items()]
 
 
+def parse_xgame_index(html,page):
+    """Keep explicit catalogue-row evidence when the detail capture is absent."""
+    host=urlsplit(a.original(page)).hostname
+    if host not in {'www.xgamedata.com','xgamedata.com'}:return []
+    root=a.DOM(html).root;records={}
+    normal=lambda value:re.sub(r'\s+',' ',unicodedata.normalize('NFKC',value)).strip()
+    for row in root.all({'tr'}):
+        details=set();publishers={};binaries=[]
+        for link in row.all({'a'}):
+            target=a.resolve(page,link.attrs.get('href',''))
+            if not target:continue
+            original=a.original(target);parts=urlsplit(original)
+            if parts.hostname in {'www.xgamedata.com','xgamedata.com'} and re.fullmatch(r'/demo\d+/g\d+/',parts.path):
+                details.add(original)
+            elif a.EXT.search(parts.path):binaries.append(target)
+            elif (parts.scheme in {'http','https'} and parts.hostname
+                    and parts.hostname not in {'www.xgamedata.com','xgamedata.com'} and normal(link.text())):
+                publishers.setdefault(normal(link.text()),set()).add(original)
+        if len(details)!=1 or len(publishers)!=1:continue
+        detail=next(iter(details));directory=urlsplit(detail).path
+        text=normal(row.text());titles=re.findall(r'『([^』]+)』',text)
+        if len(titles)!=1:continue
+        title=titles[0];brand,official=next(iter(publishers.items()))
+        suffix=text.split('』',1)[1]
+        if brand not in suffix:continue
+        release=suffix.split(brand,1)[0].strip()
+        if not release or len(release)>300:continue
+        files={}
+        for target in binaries:
+            original=a.original(target);parts=urlsplit(original)
+            # These are the actual XES mirrors observed in the catalogue. A
+            # banner/archive hosted elsewhere cannot donate a game association.
+            if (not parts.hostname or not re.fullmatch(r'xes\d*\.plala\.jp',parts.hostname)
+                    or parts.path.rsplit('/',1)[0]+'/'!=directory):continue
+            filename=a.filename_from_url(target)
+            if not filename:continue
+            mirrors=files.setdefault(filename,[]);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+            if stamp:mirrors.append(a.replay(original,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme))
+            mirrors.append(original)
+        for filename,mirrors in files.items():
+            capture=a.WAYBACK.match(page)
+            observed=capture[1] if capture else 'live'
+            ident=hashlib.sha256(('xgame-index\n'+a.original(page)+'\n'+observed+'\n'+detail+'\n'+filename).encode()).hexdigest()
+            records[ident]={'id':ident,'site':'xgame','page_url':page,'original_page_url':a.original(page),
+                'title':title,'brand':brand,'release_name':release,'filename':filename,'published_at':None,
+                'mirrors':list(dict.fromkeys(mirrors)),'expected_md5':None,'expected_size':None,'size_text':None,
+                'fields':{'detail_page_url':detail,'official_site_urls':sorted(official),
+                          'brand_evidence':{'method':'published_index_row','published_name':brand},
+                          'index_release_label':release}}
+    return list(records.values())
+
+
 def parse_xgame(html,page):
     parts=urlsplit(a.original(page))
-    if parts.hostname not in {'www.xgamedata.com','xgamedata.com'} or not re.fullmatch(r'/demo\d+/g\d+/',parts.path):return []
+    if parts.hostname not in {'www.xgamedata.com','xgamedata.com'}:return []
+    if not re.fullmatch(r'/demo\d+/g\d+/',parts.path):return parse_xgame_index(html,page)
     root=a.DOM(html).root
     brands=set()
     links=[]

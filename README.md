@@ -696,3 +696,10 @@ HTML収集中のサイトは排他ロックで避け、保存済みHTMLと他の
 公式サイトで1回のページ上限に達した作品は、`uv run python official_continue.py --watch` で続きを調べられます。
 未処理URL・巡回深度・配布種別の手掛かり・訪問済みURLをSQLiteの `official_scans` に保存し、
 次のバッチで未処理分から再開します。古い「残り件数のみ」の記録は一度起点ページから再構成します。
+
+Xgame archive indexes can also contribute explicit per-row title, publisher and
+XES mirror links when detail pages are unavailable. Index observations have
+separate identities, retain their detail-page reference and official publisher
+link, and never overwrite richer detail records. Only links in the same published
+game directory are accepted; ambiguous rows are left for review. Rounded display
+sizes and absent MD5 values are not invented as integrity constraints.
