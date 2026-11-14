@@ -428,3 +428,16 @@ class ShortTitleAndSharedHomeTests(unittest.TestCase):
             fetch=Fetch([Response(html.encode(),url=game['shoukai']+'other/support.html')])
             self.assertEqual(o.scan(store,fetch,game,BRAND,game['shoukai']),0)
             self.assertEqual(store.rows('official'),[])
+
+
+class PublisherNavigationIdentityTests(unittest.TestCase):
+    def test_sidebar_product_image_and_navigation_text_are_not_patch_evidence(self):
+        for navigation in ['<div id="supplement"><ul class="quicklink"><li><a href="/anemoi/"><img alt="anemoi"></a></li></ul></div>','<nav>anemoi</nav>','<aside><a href="/anemoi/">anemoi</a></aside>']:
+            with self.subTest(navigation=navigation):
+                html='<div><div>Other product 修正パッチ<a href="other_patch.zip">ダウンロード</a></div>'+navigation+'</div>'
+                rows,unknown=o.parse(html,PAGE,GAME,BRAND,scoped=False)
+                self.assertEqual(rows,[]);self.assertEqual(len(unknown),1)
+
+    def test_local_product_heading_image_remains_identity_evidence(self):
+        html='<div><h2><img alt="anemoi"></h2><p>修正パッチ <a href="patch.zip">ダウンロード</a></p></div>'
+        self.assertEqual(len(o.parse(html,PAGE,GAME,BRAND,scoped=False)[0]),1)

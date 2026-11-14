@@ -113,6 +113,23 @@ def product_title_present(game,text):
         or bool(re.search(r'(?:^|[。.!！?？:：])'+re.escape(title)+r'(?:の)?(?:体験版|修正|パッチ|ダウンロード|アップデート|アップデータ|サポート)',content)))
 
 
+
+def product_identity_text(node):
+    """Exclude publisher navigation and sidebars from local product evidence."""
+    parts=[];pending=[node]
+    while pending:
+        current=pending.pop()
+        if not isinstance(current,a.Node):parts.append(current);continue
+        marker=' '.join(current.attrs.get(k,'') or '' for k in ('id','class')).lower()
+        if (current.tag in {'nav','aside','header','footer','script','style'}
+            or current.attrs.get('role') in {'navigation','complementary'}
+            or re.search(r'(?:^|[ _-])(?:nav|navigation|menu|quicklink|sidebar|supplement)(?:[ _-]|$)',marker)
+            or any(token.startswith(('quicklink','supplement','sidebar')) for token in marker.split())):continue
+        if current.tag=='img':parts.append(current.attrs.get('alt') or '')
+        pending.extend(reversed(current.children))
+    return ' '.join(parts)
+
+
 def product_folder_scoped(page,game,brand,shared_home=False):
     """A publisher directory or reused metadata home is not a product scope."""
     home=urlsplit(game.get('shoukai') or '')
@@ -164,7 +181,7 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
                 break
             context=text;context_node=node
             if re.search(r"体験|trial|taiken|パッチ|patch|修正|アップデート|アップデータ|update|ムービー|movie|動画|(?:^|\W)PV(?:$|\W)",text,re.I):
-                if scoped or product_title_present(game,text) or labelled_product(node,page)==a.canonical(game.get('shoukai') or '') or publisher_patch_scope(node,brand):break
+                if scoped or product_title_present(game,product_identity_text(node)) or labelled_product(node,page)==a.canonical(game.get('shoukai') or '') or publisher_patch_scope(node,brand):break
             node=node.parent
         label=context+" "+filename
         kind=release_info({"title":label,"filename":filename})[0] if group is None else group[0]
@@ -177,7 +194,7 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
         product_link=a.canonical(page) if published_kind else labelled_product(context_node,page)
         linked=bool(published_kind or (game.get('shoukai') and product_link==a.canonical(game['shoukai'])))
         common_scope=publisher_patch_scope(context_node,brand) if kind=='patch' else None
-        if kind=="other" or (not scoped and not product_title_present(game,context) and not linked and not common_scope):
+        if kind=="other" or (not scoped and not product_title_present(game,product_identity_text(context_node)) and not linked and not common_scope):
             unsupported.append(target);continue
         key=hashlib.sha256(("official\n"+page+"\n"+filename).encode()).hexdigest()
         if key not in records:
