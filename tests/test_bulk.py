@@ -120,6 +120,8 @@ class BulkTests(unittest.TestCase):
         self.assertEqual(bulk.evict_verified(self.store, "a", "vn-archive", "mirrors"), 0)
         self.assertTrue(path.exists())
         self.assertEqual(bulk.evict_verified(self.store, "b", "vn-archive", "mirrors"), 0)
+        plan=self.store.db.execute("EXPLAIN QUERY PLAN SELECT * FROM items WHERE path=?",("files/managed.zip",)).fetchall()
+        self.assertTrue(any("items_path" in row[3] for row in plan))
 
     def test_eviction_refuses_external_file(self):
         self.add("a")

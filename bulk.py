@@ -65,6 +65,9 @@ def evict_verified(store, ident, namespace, bucket):
     # Do not delete user files, symlinks or files another unpublished row needs.
     if path.is_symlink() or not path.resolve().is_relative_to((store.root / "files").resolve()):
         raise ValueError("refusing to evict a path outside managed downloads")
+    # Transfer bookkeeping should not scan every metadata payload per file.
+    # Create lazily here so publication-only schema does not invalidate parsers.
+    store.db.execute("CREATE INDEX IF NOT EXISTS items_path ON items(path) WHERE path IS NOT NULL")
     references = store.db.execute("SELECT * FROM items WHERE path=?", (row["path"],)).fetchall()
     if not all(publicly_archived(r, namespace, bucket) for r in references):
         return 0
