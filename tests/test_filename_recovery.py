@@ -26,7 +26,8 @@ class FilenameRecoveryTests(unittest.TestCase):
 
     def test_published_sha_name_restores_catalog_without_changing_public_bytes(self):
         donor=self.donor();before=dict(self.store.db.execute("SELECT * FROM items WHERE id='target'").fetchone())
-        self.assertEqual(f.recover(self.store),{'recovered':1,'unresolved':0,'deferred':0})
+        with patch.object(self.store,'export',side_effect=AssertionError('background recovery must remain SQLite-only')):
+            self.assertEqual(f.recover(self.store),{'recovered':1,'unresolved':0,'deferred':0})
         after=dict(self.store.db.execute("SELECT * FROM items WHERE id='target'").fetchone());data=json.loads(after['data'])
         self.assertEqual(data['filename'],'日本語 体験版.zip')
         self.assertEqual(data['fields']['filename_recovered_from']['item_id'],donor['id'])

@@ -39,7 +39,7 @@ def reparse(store,site='both'):
         except (OSError,ValueError) as error:
             store.db.rollback();failed+=1
             store.db.execute('INSERT OR REPLACE INTO mirror_reparse VALUES(?,?,?,?,?,?,?)',(row['site'],row['url'],version,None,a.now(),0,str(error)));store.db.commit();print('reparse failed',row['url'],error,flush=True)
-    if processed:store.export()
+    # Background updates commit to SQLite; Pages builds the JSON derivative.
     return processed,found,failed
 
 

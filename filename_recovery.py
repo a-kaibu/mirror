@@ -73,7 +73,7 @@ def recover(store):
                 stats['recovered']+=1
                 print('recovered filename',row['id'],proof['filename'],proof['evidence'],flush=True)
         except BlockingIOError:stats['deferred']+=1
-    if stats['recovered']:store.export()
+    # Background updates commit to SQLite; Pages builds the JSON derivative.
     return stats
 
 
