@@ -13,7 +13,7 @@ import unicodedata
 KINDS = {"trial": "体験版", "patch": "パッチ", "full": "本編", "movie": "ムービー", "other": "その他"}
 PRIORITY = {"trial": 0, "patch": 1, "full": 2, "movie": 3, "other": 4}
 # Bump when release_info changes its classification rules.
-CLASSIFICATION_REVISION = "movie-filename-1"
+CLASSIFICATION_REVISION = "updater-label-2"
 
 
 def normalized(value):
@@ -34,7 +34,7 @@ def release_info(record):
     elif re.search(r"ムービー|movie|動画|(?:^|[ _])PV(?:$|[ _])", label, re.I):
         # A corrected movie is still a movie, rather than a game patch.
         kind = "movie"
-    elif re.search(r"パッチ|修正|アップデート|patch|update", label, re.I):
+    elif re.search(r"パッチ|修正|アップデー(?:ト|タ)|patch|update", label, re.I):
         kind = "patch"
     elif re.search(r"ムービー|movie|動画|PV|デモ", label, re.I):
         kind = "movie"

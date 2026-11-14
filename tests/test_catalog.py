@@ -44,6 +44,11 @@ class LiveHTMLTests(unittest.TestCase):
             self.assertTrue(r["brand"])
             self.assertTrue(r["expected_size"])
 
+    def test_japanese_updater_labels_are_patches_and_keep_trial_movie_precedence(self):
+        for label,kind in [('パッケージ版 アップデーター v1.0.1','patch'),('アップデータ Ver1.02','patch'),('体験版 アップデーター','trial'),('ムービー アップデーター','movie')]:
+            with self.subTest(label=label):
+                self.assertEqual(c.release_info(dict(title='Example',release_name=label,filename='update.zip'))[0],kind)
+
     def test_holyseal_patch_table_not_just_demo_table(self):
         records = a.parse_detail(a.decode_html((FIXTURES / "holy-patches.html").read_bytes()), "https://web.archive.org/web/20180513121656/http://holyseal.net/cgi-bin/mlistview.cgi?prdcode=13833", "holyseal")
         patches = [r for r in records if c.release_info(r)[0] == "patch"]
