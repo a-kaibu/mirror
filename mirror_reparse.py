@@ -1,5 +1,6 @@
 """Apply current dedicated mirror parsers to saved HTML without network requests."""
 import argparse
+import ast
 import hashlib
 from pathlib import Path
 import subprocess
@@ -13,10 +14,35 @@ from archive_lock import exclusive_file
 PARSERS={key:'parse_'+key for key in ['multi_inside','mimimaid','nekoneko','tsundere','moepedia','dlsite','d_station','lapistan','kokoron','dmm','alice_archives','alicefree','getchu','xgame','redistribution','magic_mirror','fuzzy2','suezou']}
 
 
+# Publication does not participate in HTML parsing or source-record persistence.
+# Keep every other definition and module constant in the fingerprint so shared
+# parsing helpers still invalidate saved results when their semantics change.
+PUBLICATION_FUNCTIONS={'s3_client','public_url','public_digest','init_bucket','publish',
+                       'publish_metadata','_publish_html','_compact_snapshot','_publish_snapshot','main'}
+
+
+def parser_archiver_source(source):
+    tree=ast.parse(source)
+    tree.body=[node for node in tree.body if not
+               (isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef)) and node.name in PUBLICATION_FUNCTIONS)]
+    return ast.dump(tree,include_attributes=False).encode()
+
+
+def parser_versions():
+    shared=Path(portals.__file__).read_bytes()+Path(m.__file__).read_bytes()
+    source=Path(a.__file__).read_bytes()
+    current=hashlib.sha256(shared+parser_archiver_source(source)).hexdigest()
+    legacy=hashlib.sha256(shared+source).hexdigest()
+    return current,legacy
+
+
 def reparse(store,site='both'):
     m.initialize(store)
-    version=hashlib.sha256(Path(portals.__file__).read_bytes()+Path(m.__file__).read_bytes()+Path(a.__file__).read_bytes()).hexdigest()
+    version,legacy=parser_versions()
     store.db.execute('CREATE TABLE IF NOT EXISTS mirror_reparse(site TEXT,url TEXT,parser_version TEXT,source_hash TEXT,parsed_at TEXT,files INTEGER,error TEXT,PRIMARY KEY(site,url))');store.db.commit()
+    # Exact legacy hashes prove these same parser sources already ran. Promote
+    # their identity without rewriting the capture time or reparsing the HTML.
+    store.db.execute('UPDATE mirror_reparse SET parser_version=? WHERE parser_version=?',(version,legacy));store.db.commit()
     pages=store.db.execute("SELECT site,url,path FROM pages WHERE status='ok' AND (?='both' OR site=?)",(site,site)).fetchall()
     processed=found=failed=0
     for row in pages:

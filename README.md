@@ -211,6 +211,9 @@ Catalogue classification records its rule revision in SQLite. Startup reparses o
 changed or outdated records in batches of 128; source edits and writes from older
 workers invalidate the corresponding entry. Interrupted backfills retain completed
 batches, and concurrent source changes are deferred rather than marked current.
+Saved-HTML reparsing also ignores publication-only function changes in its parser
+fingerprint. Shared parser helpers and constants still invalidate old results;
+exactly matching legacy fingerprints migrate without changing capture timestamps.
 
 ## Static Pages and original download names
 
