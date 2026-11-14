@@ -10,6 +10,7 @@ import time
 from urllib.parse import urlsplit
 import archiver as a
 import mirror_sources as m
+from archive_lock import exclusive_file
 
 INTERVAL=3*60*60
 URL="http://suezou.dyndns.org/"
@@ -113,11 +114,15 @@ def check(store,fetcher,capture=True,start_worker=True):
         # Refresh live catalogue pages after recovery or once daily; leave the
         # archive-date frontier separate from the current live frontier.
         cutoff=(datetime.now(timezone.utc)-timedelta(days=1)).isoformat()
-        if not previous or not previous[0]:
-            store.db.execute("UPDATE mirror_frontier SET status='pending' WHERE site='suezou' AND mode='live'")
-        else:store.db.execute("UPDATE mirror_frontier SET status='pending' WHERE site='suezou' AND mode='live' AND checked_at<?",(cutoff,))
-        store.db.commit()
-        m.crawl(store,m.definitions()["suezou"],fetcher,mode="live",max_pages=300)
+        try:
+            with exclusive_file(store.root/'.claims'/'discovery-suezou.lock',blocking=False):
+                if not previous or not previous[0]:
+                    store.db.execute("UPDATE mirror_frontier SET status='pending' WHERE site='suezou' AND mode='live'")
+                else:store.db.execute("UPDATE mirror_frontier SET status='pending' WHERE site='suezou' AND mode='live' AND checked_at<?",(cutoff,))
+                store.db.commit()
+                m.crawl(store,m.definitions()["suezou"],fetcher,mode="live",max_pages=300)
+        except BlockingIOError:
+            print('Suezo catalogue refresh deferred: discovery already active',flush=True)
         if start_worker:subprocess.run(["systemctl","--user","start","--no-block","mirror-suezou-archive.service"],check=True)
     return result
 

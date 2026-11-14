@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+from archive_lock import exclusive_file
 from urllib.error import HTTPError
 import archiver as a
 import suezou_watch as w
@@ -101,3 +103,32 @@ class SuezoYearIndexPriorityTests(unittest.TestCase):
         second=Fetch([Response(root,url=w.URL),Response(b'<a href="demo.zip">Trial</a>',url=urls[0])])
         resumed=w.probe(second,catalog_offset=result['next_catalog_offset'],catalog_urls=result['catalog_urls'])
         self.assertTrue(resumed['healthy']);self.assertEqual(second.requests[1][0],urls[0])
+
+
+class SuezoDiscoveryClaimTests(unittest.TestCase):
+    def test_busy_discovery_preserves_frontier_and_still_starts_body_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                w.m.initialize(store)
+                store.db.execute("INSERT INTO mirror_frontier(site,mode,url,status) VALUES('suezou','live',?,'captured')",(w.URL,));store.db.commit()
+                with exclusive_file(Path(tmp)/'.claims'/'discovery-suezou.lock'):
+                    with patch.object(w,'probe',return_value={'healthy':True}),patch.object(w.m,'crawl') as crawl,patch.object(w.subprocess,'run') as start:
+                        self.assertTrue(w.check(store,None)['healthy'])
+                        crawl.assert_not_called();start.assert_called_once()
+                self.assertEqual(store.db.execute("SELECT status FROM mirror_frontier WHERE site='suezou' AND url=?",(w.URL,)).fetchone()[0],'captured')
+                self.assertEqual(store.db.execute("SELECT healthy FROM source_health WHERE site='suezou'").fetchone()[0],1)
+            finally:store.db.close()
+
+    def test_refresh_owns_discovery_claim_during_frontier_crawl(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            def crawl(*args,**kwargs):
+                with self.assertRaises(BlockingIOError):
+                    with exclusive_file(Path(tmp)/'.claims'/'discovery-suezou.lock',blocking=False):pass
+            try:
+                with patch.object(w,'probe',return_value={'healthy':True}),patch.object(w.m,'crawl',side_effect=crawl) as call:
+                    w.check(store,None,start_worker=False)
+                    call.assert_called_once()
+                with exclusive_file(Path(tmp)/'.claims'/'discovery-suezou.lock',blocking=False):pass
+            finally:store.db.close()
