@@ -102,7 +102,26 @@ def product_title_present(game,text):
     # so short names and translated titles do not become fuzzy associations.
     compact=lambda value:re.sub(r"\s+","",normalized(value))
     title=compact(game["gamename"])
-    return bool(title and title in compact(text))
+    if not title:return False
+    content=compact(text)
+    if len(title)>4:return title in content
+    if re.fullmatch(r'[a-z0-9]+',title):
+        return bool(re.search(r'(?<![a-z0-9])'+re.escape(title)+r'(?![a-z0-9])',normalized(text)))
+    # Short Japanese titles can also be ordinary prose: 「あると」 occurs in
+    # 「異常であるという警告」. Require an explicit title or release label.
+    return (content==title or bool(re.search(r'[「『【《〈“"]'+re.escape(title)+r'[」』】》〉”"]',content))
+        or bool(re.search(r'(?:^|[。.!！?？:：])'+re.escape(title)+r'(?:の)?(?:体験版|修正|パッチ|ダウンロード|アップデート|アップデータ|サポート)',content)))
+
+
+def product_folder_scoped(page,game,brand,shared_home=False):
+    """A publisher directory or reused metadata home is not a product scope."""
+    home=urlsplit(game.get('shoukai') or '')
+    folder=home.path if home.path.endswith('/') else home.path.rsplit('/',1)[0]+'/'
+    if shared_home or folder in {'','/'}:return False
+    publisher=urlsplit(brand.get('url') or '')
+    landing=lambda path:re.sub(r'/(?:index|default)\.(?:html?|php|asp)$','/',path,flags=re.I).rstrip('/')
+    if home.hostname==publisher.hostname and landing(home.path)==landing(publisher.path):return False
+    return urlsplit(page).path.startswith(folder)
 
 
 def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
@@ -213,6 +232,12 @@ def scan(store, fetcher, game, brand, seed, max_pages=20, continuation=None):
         home=a.canonical(home)
         if home!=seed:queue.append((home,0))
     seen=set(continuation.get('seen',[])) if continuation else set()
+    # Multiple catalogue games can point at a brand homepage or a reused URL.
+    # Evaluate once per scan; every linked support page then requires its own
+    # product evidence instead of inheriting the whole directory.
+    shared_home=bool(game.get('shoukai') and store.db.execute("""SELECT 1 FROM external_metadata
+        WHERE provider='erogamescape' AND entity='game' AND external_id!=?
+        AND json_extract(data,'$.shoukai')=? LIMIT 1""",(game['id'],game['shoukai'])).fetchone())
     found=processed=0;failures=list(continuation.get('failures',[])) if continuation else [];unclassified=[]
     hints={entry['url']:set(entry.get('hints',[])) for entry in continuation['pending']} if continuation else ({seed:{'trial'}} if game.get('trial_url') and a.canonical(game['trial_url'])==seed else {})
     while queue and processed<max_pages:
@@ -229,9 +254,7 @@ def scan(store, fetcher, game, brand, seed, max_pages=20, continuation=None):
             store.db.execute("INSERT OR REPLACE INTO pages(url,site,path,fetched_at,status,error,response_url) VALUES(?,?,?,?,?,?,?)",(url,"official",rel,a.now(),"ok",None,actual));store.db.commit()
             html=a.decode_html(raw,charset)
             base=urlsplit(actual);folder=base.path.rsplit("/",1)[0]+"/"
-            home_path=urlsplit(game.get("shoukai") or "").path
-            product_folder=home_path if home_path.endswith("/") else home_path.rsplit("/",1)[0]+"/"
-            scoped=product_folder not in {"","/"} and base.path.startswith(product_folder)
+            scoped=product_folder_scoped(actual,game,brand,shared_home)
             options=hints.get(url,set())
             hint=next(iter(options)) if len(options)==1 else None
             records,unknown=parse(html,actual,game,brand,scoped=scoped,hint=hint,requested_page=url)

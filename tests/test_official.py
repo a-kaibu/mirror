@@ -393,3 +393,38 @@ class OfficialFilenameVersionTests(unittest.TestCase):
                 html='<a href="'+filename+'">Example 修正パッチ</a>'
                 records,_=o.parse(html,'https://publisher.test/support/',game,brand,scoped=False)
                 self.assertEqual(len(records),1);self.assertEqual(records[0]['release_name'],release)
+
+
+class ShortTitleAndSharedHomeTests(unittest.TestCase):
+    def test_short_japanese_title_in_error_description_is_not_product_evidence(self):
+        game={**GAME,'gamename':'あると'}
+        html='<p>削除異常であるという警告を修正 <a href="hapi_uninst101.exe">ダウンロード</a></p>'
+        rows,unknown=o.parse(html,PAGE,game,BRAND,scoped=False)
+        self.assertEqual(rows,[]);self.assertEqual(len(unknown),1)
+        for label in ['「あると」修正パッチ','『あると』修正パッチ','あると 修正パッチ']:
+            with self.subTest(label=label):
+                self.assertEqual(len(o.parse('<p>'+label+'<a href="alto_patch.zip">ダウンロード</a></p>',PAGE,game,BRAND,scoped=False)[0]),1)
+
+    def test_short_ascii_title_does_not_match_inside_another_word(self):
+        self.assertFalse(o.product_title_present({'gamename':'ef'},'Different title 修正パッチ'))
+        self.assertTrue(o.product_title_present({'gamename':'ef'},'ef 修正パッチ'))
+
+    def test_declared_publisher_home_does_not_scope_every_child_product(self):
+        game={**GAME,'shoukai':'https://publisher.test/brand/'}
+        brand={**BRAND,'url':'https://publisher.test/brand/index.html'}
+        self.assertFalse(o.product_folder_scoped('https://publisher.test/brand/other/support.html',game,brand))
+        self.assertFalse(o.product_folder_scoped('https://publisher.test/brand/other/support.html',{**game,'shoukai':brand['url']},brand))
+        self.assertTrue(o.product_folder_scoped(PAGE,GAME,BRAND))
+        self.assertFalse(o.product_folder_scoped(PAGE,GAME,BRAND,shared_home=True))
+
+    def test_shared_catalogue_home_cannot_assign_another_products_patch(self):
+        import json
+        game={**GAME,'shoukai':'https://publisher.test/brand/'}
+        other={**game,'id':35436,'gamename':'Other Game'}
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp);self.addCleanup(store.db.close);o.initialize(store)
+            store.db.execute('INSERT INTO external_metadata VALUES(?,?,?,?,?)',('erogamescape','game',other['id'],json.dumps(other),a.now()));store.db.commit()
+            html='<section><h2>Other Game 修正パッチ</h2><a href="other_patch.zip">ダウンロード</a></section>'
+            fetch=Fetch([Response(html.encode(),url=game['shoukai']+'other/support.html')])
+            self.assertEqual(o.scan(store,fetch,game,BRAND,game['shoukai']),0)
+            self.assertEqual(store.rows('official'),[])
