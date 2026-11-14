@@ -71,9 +71,9 @@ class PagesPublicationWatchTests(unittest.TestCase):
     def test_pages_publication_has_a_separate_pass_and_destination(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);store=Mock();client=Mock()
-            with exclusive_file(root/'.claims/catalogue-pass.lock'),patch.object(p.a,'Store',return_value=store),patch.object(p.a,'s3_client',return_value=client),patch('snapshot_upload.publish') as publish,patch.object(p.a,'publish_metadata') as full:
+            with exclusive_file(root/'.claims/catalogue-pass.lock'),patch.object(p.a,'Store',return_value=store),patch.object(p.a,'s3_client',return_value=client),patch('snapshot_upload.publish') as publish,patch.object(p.a,'publish_metadata') as full,patch.object(p,'request_pages_build') as trigger:
                 self.assertTrue(p.publish_once(root,pages_only=True))
-            publish.assert_called_once_with(store,client,'vn-archive','mirrors',compressed=True,pages=True);full.assert_not_called();store.db.close.assert_called_once()
+            publish.assert_called_once_with(store,client,'vn-archive','mirrors',compressed=True,pages=True);full.assert_not_called();store.db.close.assert_called_once();trigger.assert_called_once_with()
 
     def test_busy_pages_pass_and_conflicting_modes_never_open_a_store(self):
         with tempfile.TemporaryDirectory() as tmp,patch.object(p.a,'Store') as store:
@@ -86,3 +86,26 @@ class PagesPublicationWatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp,patch.object(p.subprocess,'run',side_effect=[subprocess.CompletedProcess([],0),KeyboardInterrupt]) as run,patch.object(p.time,'sleep') as sleep:
             with self.assertRaises(KeyboardInterrupt):p.watch(tmp,300,pages_only=True)
             self.assertTrue(all(call.args[0][-1]=='--pages-only' for call in run.call_args_list));sleep.assert_called_once_with(300)
+
+
+class PagesBuildTriggerTests(unittest.TestCase):
+    def test_build_is_requested_only_after_verified_snapshot_publication(self):
+        events=[]
+        with tempfile.TemporaryDirectory() as tmp,patch.object(p.a,'Store'),patch.object(p.a,'s3_client'),patch('snapshot_upload.publish',side_effect=lambda *args,**kwargs:events.append('verified')),patch.object(p,'request_pages_build',side_effect=lambda:events.append('build')):
+            p.publish_once(tmp,pages_only=True)
+        self.assertEqual(events,['verified','build'])
+
+    def test_failed_snapshot_never_requests_a_build(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.object(p.a,'Store'),patch.object(p.a,'s3_client'),patch('snapshot_upload.publish',side_effect=TimeoutError()),patch.object(p,'request_pages_build') as trigger:
+            with self.assertRaises(TimeoutError):p.publish_once(tmp,pages_only=True)
+            trigger.assert_not_called()
+
+    def test_trigger_failure_preserves_the_verified_snapshot_and_redacts_error(self):
+        import io
+        with tempfile.TemporaryDirectory() as tmp,patch.object(p.a,'Store'),patch.object(p.a,'s3_client'),patch('snapshot_upload.publish'),patch.object(p,'request_pages_build',side_effect=RuntimeError('sensitive diagnostic')),patch('sys.stdout',new_callable=io.StringIO) as output:
+            self.assertTrue(p.publish_once(tmp,pages_only=True))
+            self.assertNotIn('sensitive diagnostic',output.getvalue());self.assertIn('RuntimeError',output.getvalue())
+
+    def test_trigger_requests_the_existing_pages_workflow_on_main(self):
+        with patch('transfer_probe.gh') as gh:p.request_pages_build()
+        self.assertIn('repos/a-kaibu/mirror/actions/workflows/pages.yml/dispatches',gh.call_args.args[0]);self.assertEqual(gh.call_args.args[0][-1],'ref=main')

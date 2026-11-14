@@ -8,6 +8,12 @@ import archiver as a
 from archive_lock import exclusive_file
 
 
+
+def request_pages_build():
+    from transfer_probe import gh,REPO
+    gh(['api','repos/'+REPO+'/actions/workflows/pages.yml/dispatches','--method','POST','-f','ref=main'])
+
+
 def publish_once(root,*,catalogue_only=False,pages_only=False):
     if catalogue_only and pages_only:raise ValueError('conflicting publication modes')
     claim='pages-pass.lock' if pages_only else 'catalogue-pass.lock' if catalogue_only else 'provenance-pass.lock'
@@ -17,6 +23,8 @@ def publish_once(root,*,catalogue_only=False,pages_only=False):
             if pages_only:
                 import snapshot_upload
                 snapshot_upload.publish(store,a.s3_client('vn-archive'),'vn-archive','mirrors',compressed=True,pages=True)
+                try:request_pages_build()
+                except Exception as error:print('Pages build trigger deferred',type(error).__name__,flush=True)
                 return True
             if catalogue_only:
                 print('catalogue checkpoint starts',a.now(),flush=True)

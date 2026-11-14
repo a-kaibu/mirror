@@ -239,3 +239,12 @@ The Pages workflow restores with `catalogue_restore.py --pages`. The complete
 checkpoint supervisor and its in-flight generation continue independently. A
 first real Pages checkpoint and actual public-JSON visibility remain release
 checks; production latency is not implied by the size-only probe.
+
+
+After a Pages snapshot has passed its complete public read-back, the producer
+requests the existing Pages workflow on `main`. Failed snapshot publication
+cannot trigger a build. A failed GitHub trigger does not discard the verified
+snapshot; the next successful publication or the existing hourly Pages schedule
+can build the latest canonical view. Trigger errors log only their type. This
+trigger starts site generation; deployment and actual JSON visibility still
+need separate verification.
