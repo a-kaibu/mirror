@@ -441,3 +441,49 @@ class PublisherNavigationIdentityTests(unittest.TestCase):
     def test_local_product_heading_image_remains_identity_evidence(self):
         html='<div><h2><img alt="anemoi"></h2><p>修正パッチ <a href="patch.zip">ダウンロード</a></p></div>'
         self.assertEqual(len(o.parse(html,PAGE,GAME,BRAND,scoped=False)[0]),1)
+
+
+class AliceSupportEditionTests(unittest.TestCase):
+    page='https://www.alicesoft.com/support/rance8magnum.html'
+    brand={'id':30,'brandname':'ALICESOFT'}
+    base={'id':14858,'gamename':'ランス・クエスト','shoukai':'https://www.alicesoft.com/rance8/index.html'}
+    html='<section class="support-product"><h2>ランス・クエスト マグナム</h2><div class="cont01"><h3>アップデータVer.2.010</h3><p>"ランス・クエスト マグナム"の更新を行うプログラムです。</p><p>・ランス・クエスト マグナム統合版には適用できません。</p><p><a href="//download.alicesoft.com/rance8/rancequest_updater_ver2010.zip">ダウンロード</a></p></div></section>'
+
+    def test_expansion_target_overrides_base_game_and_keeps_printed_version(self):
+        rows,_=o.parse(self.html,self.page,self.base,self.brand,scoped=False)
+        self.assertEqual(len(rows),1);record=rows[0]
+        self.assertEqual(record['title'],'ランス・クエスト マグナム')
+        self.assertNotIn('erogamescape_game_id',record['fields'])
+        self.assertEqual(record['release_name'],'パッチ ver2.010')
+        self.assertEqual(record['fields']['バージョン'],'2.010')
+        self.assertIn('統合版には適用できません',record['fields']['適用条件'])
+        self.assertIsNone(record['expected_size'])
+        self.assertEqual(record['filename'],'rancequest_updater_ver2010.zip')
+
+    def test_exact_expansion_metadata_keeps_its_game_id(self):
+        game={**self.base,'id':16569,'gamename':'ランス・クエスト マグナム'}
+        record=o.parse(self.html,self.page,game,self.brand,scoped=False)[0][0]
+        self.assertEqual(record['fields']['erogamescape_game_id'],16569)
+
+    def test_faq_append_target_does_not_inherit_the_base_title(self):
+        game={'id':1,'gamename':'イブニクル','shoukai':'https://www.alicesoft.com/evenicle/'}
+        html='<section class="support-product"><h2>イブニクル</h2><div class="cont01"><h3>アップデータVer.1.01</h3><p>"イブニクル"の更新を行うプログラムです。</p><p><a href="evenicle_updater_ver101.zip">ダウンロード</a></p></div><div class="cont02"><dl class="list-faq"><dt>Windows XP / Vista で"イブニクル外典"が動作しない</dt><dd><p>"イブニクル外典"用のファイルです。"イブニクル"には関係ありません。</p><p><a href="evenicleapc_updater_ver100.zip">ダウンロード</a></p></dd></dl></div></section>'
+        rows,_=o.parse(html,'https://www.alicesoft.com/support/evenicle.html',game,self.brand,scoped=False)
+        records={r['filename']:r for r in rows};self.assertEqual(len(records),2)
+        self.assertEqual(records['evenicle_updater_ver101.zip']['title'],'イブニクル')
+        append=records['evenicleapc_updater_ver100.zip'];self.assertEqual(append['title'],'イブニクル外典')
+        self.assertNotIn('erogamescape_game_id',append['fields'])
+        self.assertIn('には関係ありません',append['fields']['適用条件'])
+        self.assertNotIn('バージョン',append['fields'])
+
+    def test_support_layout_on_other_publishers_is_not_treated_as_alicesoft(self):
+        self.assertEqual(o.parse(self.html,'https://publisher.test/support/patch.html',GAME,self.brand,scoped=False)[0],[])
+        self.assertEqual(o.parse(self.html,self.page,GAME,BRAND,scoped=False)[0],[])
+
+
+class AliceAmbiguousSupportTests(unittest.TestCase):
+    def test_conflicting_explicit_patch_targets_remain_for_review(self):
+        html='<section class="support-product"><h2>イブニクル</h2><div class="cont01"><p>"イブニクル"の更新を行うプログラムです。"イブニクル外典"用のファイルです。</p><a href="patch.zip">修正パッチ</a></div></section>'
+        game={'id':1,'gamename':'イブニクル'}
+        rows,unknown=o.parse(html,'https://www.alicesoft.com/support/evenicle.html',game,{'id':30,'brandname':'ALICESOFT'},scoped=False)
+        self.assertEqual(rows,[]);self.assertEqual(len(unknown),1)

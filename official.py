@@ -141,6 +141,42 @@ def product_folder_scoped(page,game,brand,shared_home=False):
     return urlsplit(page).path.startswith(folder)
 
 
+
+def alicesoft_support_details(link,page,brand):
+    """Keep explicit expansion/append targets and conditions on support pages."""
+    parts=urlsplit(page)
+    if (parts.hostname not in {'www.alicesoft.com','alicesoft.com'} or not parts.path.startswith('/support/')
+        or normalized(brand.get('brandname',''))!='alicesoft'):return None
+    nodes=[];node=link.parent;section=None
+    while node is not None:
+        nodes.append(node)
+        if node.tag=='section' and 'support-product' in node.attrs.get('class','').split():section=node;break
+        node=node.parent
+    if section is None:return None
+    headings=[n.text().strip() for n in section.children if isinstance(n,a.Node) and n.tag=='h2']
+    if len(headings)!=1 or not headings[0]:return {'ambiguous':True}
+    target=headings[0];context=None
+    for node in nodes:
+        paths={urlsplit(a.original(url)).path for _,url in binary_links(node,page)}
+        if len(paths)!=1:break
+        text=product_identity_text(node)
+        declarations=set(re.findall(r'["「『]([^"」』\r\n]{1,160})["」』](?:の更新を行うプログラムです|用のファイルです)',text))
+        if len(declarations)>1:return {'ambiguous':True}
+        if declarations:
+            target=next(iter(declarations));context=node;break
+        if context is None and (node.tag=='dd' or node.tag=='div' and 'cont01' in node.attrs.get('class','').split()):context=node
+    if context is None:return {'ambiguous':True}
+    versions=set()
+    for heading in context.all({'h3','h4','h5','h6'}):
+        versions.update(re.findall(r'アップデー(?:タ|ト)\s*Ver\.?\s*([0-9]+(?:\.[0-9]+)*[a-z]?)(?![a-z0-9_.])',heading.text(),re.I))
+    conditions=[]
+    for paragraph in context.all({'p'}):
+        text=paragraph.text().strip()
+        if any(token in text for token in ('適用できません','には関係ありません','用のファイルです')):
+            conditions.append(text)
+    return dict(title=target,version=next(iter(versions)) if len(versions)==1 else None,conditions=list(dict.fromkeys(conditions)))
+
+
 def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
     root=a.DOM(html).root
     records={}
@@ -194,7 +230,10 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
         product_link=a.canonical(page) if published_kind else labelled_product(context_node,page)
         linked=bool(published_kind or (game.get('shoukai') and product_link==a.canonical(game['shoukai'])))
         common_scope=publisher_patch_scope(context_node,brand) if kind=='patch' else None
-        if kind=="other" or (not scoped and not product_title_present(game,product_identity_text(context_node)) and not linked and not common_scope):
+        support=alicesoft_support_details(link,page,brand) if kind=='patch' else None
+        if support and support.get('ambiguous'):
+            unsupported.append(target);continue
+        if kind=="other" or (not scoped and not product_title_present(game,product_identity_text(context_node)) and not linked and not common_scope and not support):
             unsupported.append(target);continue
         key=hashlib.sha256(("official\n"+page+"\n"+filename).encode()).hexdigest()
         if key not in records:
@@ -207,6 +246,15 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
                 "filename":filename,"mirrors":[],"expected_md5":md5s[0].lower() if len(set(md5s))==1 else None,
                 "expected_size":int(exact[0].replace(",","")) if len(set(exact))==1 else None,
                 "size_text":None,"published_at":None,"fields":{"erogamescape_game_id":game["id"],"erogamescape_brand_id":brand["id"],"official_page":page}}
+        if support:
+            records[key]['title']=support['title']
+            records[key]['fields']['publisher_product_title']=support['title']
+            compact=lambda text:re.sub(r'\s+','',normalized(text))
+            if compact(game['gamename'])!=compact(support['title']):records[key]['fields'].pop('erogamescape_game_id',None)
+            if support['version']:
+                records[key]['release_name']=KINDS[kind]+' ver'+support['version']
+                records[key]['fields']['バージョン']=support['version']
+            if support['conditions']:records[key]['fields']['適用条件']='\n'.join(support['conditions'])
         if group:records[key]['fields']['official_group_heading']=group[1]
         if common_scope:
             records[key]['title']=common_scope
