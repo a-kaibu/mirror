@@ -132,3 +132,21 @@ SQLite checks, size bound, disk reserve and atomic replacement. Response handles
 and temporary files close on every path. Both modules are included in the wheel
 and the installed-package smoke check. The Pages workflow remains on the old
 restore command until the real compressed publication has a verified receipt.
+
+
+## Prepared canonical cutover
+
+The isolated cutover changes Pages to `catalogue_restore.py` and the default
+publisher to durable gzip staging for every catalogue size. A dedicated
+`.publish-gzip.lock` leaves a legacy raw upload free to finish and prevents that
+old lock from delaying current gzip generations. A busy gzip publisher still
+causes nonblocking acquisition checkpoints to defer rather than stall bodies.
+Raw and gzip destination claims and accepted-part checkpoints remain separate.
+
+This cutover is held off main until the first live compressed generation has a
+complete anonymous read-back receipt and a validated public restore. The raw
+object remains a bootstrap fallback only when gzip is absent. A malformed gzip
+fails restoration and preserves the deployed site. Tests exercise actual
+multipart reception for small synthetic catalogues as well as large stages;
+publication tests restore the resulting gzip and check SQLite integrity and
+source-publication proofs instead of assuming a raw upload_file call.

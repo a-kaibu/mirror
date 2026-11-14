@@ -306,6 +306,8 @@ class PublishTests(unittest.TestCase):
         def upload(path, bucket, key, **kwargs):
             objects[key] = Path(path).read_bytes()
         client.upload_file.side_effect = upload
+        from test_snapshot_upload import bind_snapshot_gateway
+        bind_snapshot_gateway(client,objects)
         public.get_object.side_effect = lambda Bucket, Key: {"Body": io.BytesIO(objects[Key])}
         with tempfile.TemporaryDirectory() as tmp:
             store = a.Store(tmp)

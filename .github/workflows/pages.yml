@@ -22,12 +22,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - name: Restore SQLite catalog from HF
-        run: |
-          mkdir -p archive
-          curl --fail --location --retry 3 \
-            https://huggingface.co/buckets/vn-archive/mirrors/resolve/index.sqlite3 \
-            --output archive/index.sqlite3
+      - name: Restore verified SQLite catalogue transport
+        run: python catalogue_restore.py --output archive/index.sqlite3
       - name: Generate HTML and JSON from SQLite
         run: python archiver.py build-site --output dist
       - uses: actions/configure-pages@v5

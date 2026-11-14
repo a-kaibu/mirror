@@ -154,6 +154,8 @@ class ConcurrentCollectionTests(unittest.TestCase):
                 finally:
                     with lock:state["active"]-=1
             client.upload_file.side_effect=upload
+            from test_snapshot_upload import bind_snapshot_gateway
+            bind_snapshot_gateway(client,objects)
             with patch.object(a,"s3_client",return_value=client),patch.object(a,"public_digest",side_effect=lambda ns,bucket,key:(hashlib.sha256(objects[key]).hexdigest(),len(objects[key]))):
                 a.publish_metadata(store,"vn-archive","mirrors")
             self.assertEqual(state["peak"],4)
@@ -182,3 +184,16 @@ class MetadataCheckpointIsolationTests(unittest.TestCase):
             finally:release.set();thread.join(5)
             self.assertEqual(errors,[])
             self.assertEqual(snapshot.call_count,2)
+
+
+    def test_verified_gzip_checkpoint_is_independent_of_legacy_raw_lock(self):
+        from types import SimpleNamespace
+        from archive_lock import exclusive_file
+        with tempfile.TemporaryDirectory() as tmp,patch.object(a,'_publish_snapshot') as snapshot:
+            store=SimpleNamespace(root=Path(tmp))
+            with exclusive_file(store.root/'.publish.lock'):
+                self.assertTrue(a.publish_metadata(store,'vn-archive','mirrors',include_html=False,blocking=False))
+                snapshot.assert_called_once()
+                with exclusive_file(store.root/'.publish-gzip.lock'):
+                    self.assertFalse(a.publish_metadata(store,'vn-archive','mirrors',include_html=False,blocking=False))
+                snapshot.assert_called_once()

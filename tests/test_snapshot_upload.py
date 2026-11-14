@@ -30,6 +30,14 @@ class VersionedGateway(Gateway):
         return result
 
 
+def bind_snapshot_gateway(client,objects):
+    """Give a small-file mock the same independently checked multipart server."""
+    gateway=VersionedGateway();gateway.objects=objects
+    for method in ['head_object','create_multipart_upload','upload_part','list_parts','complete_multipart_upload','abort_multipart_upload']:
+        getattr(client,method).side_effect=getattr(gateway,method)
+    return gateway
+
+
 class SnapshotUploadTests(unittest.TestCase):
     def setUp(self):
         tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup)
@@ -138,7 +146,7 @@ class SnapshotUploadTests(unittest.TestCase):
         self.large()
         with patch.object(a,'s3_client',return_value=self.client),patch.object(s,'publish') as publish:
             a._publish_snapshot(self.store,'vn-archive','mirrors')
-        publish.assert_called_once_with(self.store,self.client,'vn-archive','mirrors')
+        publish.assert_called_once_with(self.store,self.client,'vn-archive','mirrors',compressed=True)
 
 
 if __name__=='__main__':unittest.main()

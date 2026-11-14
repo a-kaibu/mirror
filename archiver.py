@@ -1229,7 +1229,7 @@ def publish_metadata(store, namespace, bucket, profile="hf", include_html=True, 
     from contextlib import ExitStack
     with ExitStack() as locks:
         try:
-            locks.enter_context(exclusive_file(store.root / ".publish.lock", blocking=blocking))
+            locks.enter_context(exclusive_file(store.root / ".publish-gzip.lock", blocking=blocking))
         except BlockingIOError:
             if blocking:raise
             # Another publisher is already refreshing the shared checkpoint.
@@ -1321,26 +1321,10 @@ def _compact_snapshot(db):
 
 
 def _publish_snapshot(store, namespace, bucket, profile="hf"):
-    from boto3.s3.transfer import TransferConfig
-    client = s3_client(namespace, profile)
-    config = TransferConfig(multipart_threshold=256 * 1024**2, multipart_chunksize=256 * 1024**2, max_concurrency=2)
     import snapshot_upload
-    from multipart_upload import PART_SIZE
-    size=store.db.execute('PRAGMA page_count').fetchone()[0]*store.db.execute('PRAGMA page_size').fetchone()[0]
-    if size>=PART_SIZE or snapshot_upload.has_pending(store.root,namespace,bucket):
-        return snapshot_upload.publish(store,client,namespace,bucket)
-    # Consistent SQLite backup, not a copy of a live DB/WAL. Pages builds derive
-    # HTML and their single JSON export from this same source of truth.
-    with tempfile.TemporaryDirectory() as tmp:
-        snapshot = Path(tmp) / "index.sqlite3"
-        with closing(sqlite3.connect(snapshot)) as backup:
-            store.db.backup(backup)
-            _compact_snapshot(backup)
-        client.upload_file(str(snapshot), bucket, "index.sqlite3", Config=config)
-        expected = digest(snapshot)
-        if public_digest(namespace, bucket, "index.sqlite3") != (expected["sha256"], expected["size"]):
-            raise ValueError("public SQLite snapshot read-back mismatch")
-    print("catalog checkpoint published")
+    # Gzip is canonical after the verified live transport cutover. Keep the
+    # durable stage even for small catalogues, so retries retain one generation.
+    return snapshot_upload.publish(store, s3_client(namespace, profile), namespace, bucket, compressed=True)
 
 
 def doctor():

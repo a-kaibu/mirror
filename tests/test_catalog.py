@@ -365,13 +365,17 @@ class CatalogTests(unittest.TestCase):
         objects = {}
         client = Mock()
         client.upload_file.side_effect = lambda path, bucket, key, **kw: objects.update({key: Path(path).read_bytes()})
+        from test_snapshot_upload import bind_snapshot_gateway
+        bind_snapshot_gateway(client,objects)
         with patch.object(a, "s3_client", return_value=client), patch.object(a, "public_digest", side_effect=lambda ns, bucket, key: (hashlib.sha256(objects[key]).hexdigest(), len(objects[key]))):
             a.publish(self.store, "vn-archive", "mirrors")
         uploads = [call.args[2] for call in client.upload_file.call_args_list if call.args[2].startswith("files/")]
         self.assertEqual(len(uploads), 1)
         self.assertEqual(uploads[0], "files/" + hashlib.sha256(PAYLOAD).hexdigest())
         snapshot = Path(self.tmp.name) / "snapshot.sqlite3"
-        snapshot.write_bytes(objects["index.sqlite3"])
+        import gzip
+        snapshot.write_bytes(gzip.decompress(objects["index.sqlite3.gz"]))
+        self.assertNotIn("index.sqlite3",objects)
         with closing(sqlite3.connect(snapshot)) as db:
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(db.execute("SELECT count(*) FROM items WHERE remote_verified_at IS NOT NULL").fetchone()[0], 2)

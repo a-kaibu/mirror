@@ -51,6 +51,8 @@ class BulkTests(unittest.TestCase):
         self.add("b")
         client, objects = Mock(), {}
         client.upload_file.side_effect = lambda path, bucket, key, **kw: objects.update({key: Path(path).read_bytes()})
+        from test_snapshot_upload import bind_snapshot_gateway
+        bind_snapshot_gateway(client,objects)
         with patch.object(a, "s3_client", return_value=client), patch.object(a, "public_digest", side_effect=lambda ns, bucket, key: (hashlib.sha256(objects[key]).hexdigest(), len(objects[key]))):
             stats = bulk.archive_batch(self.store, Fetch([Response(PAYLOAD)]), reserve_bytes=0)
         self.assertEqual(stats["published"], 1)
@@ -70,6 +72,8 @@ class BulkTests(unittest.TestCase):
             self.store.add(record)
         client,objects=Mock(),{}
         client.upload_file.side_effect=lambda path,bucket,key,**kw:objects.update({key:Path(path).read_bytes()})
+        from test_snapshot_upload import bind_snapshot_gateway
+        bind_snapshot_gateway(client,objects)
         with patch.object(a,'s3_client',return_value=client),patch.object(a,'public_digest',side_effect=lambda ns,bucket,key:(hashlib.sha256(objects[key]).hexdigest(),len(objects[key]))):
             stats=bulk.archive_batch(self.store,Fetch([Response(PAYLOAD)]),reserve_bytes=0)
         self.assertEqual(stats['published'],1)
@@ -83,7 +87,9 @@ class BulkTests(unittest.TestCase):
         self.add("a");self.add("b",brand="Other Brand")
         client,objects=Mock(),{}
         client.upload_file.side_effect=lambda path,bucket,key,**kw:objects.update({key:Path(path).read_bytes()})
-        with exclusive_file(self.store.root/".publish.lock"),patch.object(a,"_publish_snapshot") as snapshot,patch.object(a,"s3_client",return_value=client),patch.object(a,"public_digest",side_effect=lambda ns,bucket,key:(hashlib.sha256(objects[key]).hexdigest(),len(objects[key]))):
+        from test_snapshot_upload import bind_snapshot_gateway
+        bind_snapshot_gateway(client,objects)
+        with exclusive_file(self.store.root/".publish-gzip.lock"),patch.object(a,"_publish_snapshot") as snapshot,patch.object(a,"s3_client",return_value=client),patch.object(a,"public_digest",side_effect=lambda ns,bucket,key:(hashlib.sha256(objects[key]).hexdigest(),len(objects[key]))):
             stats=bulk.archive_batch(self.store,Fetch([Response(PAYLOAD),Response(PAYLOAD)]),reserve_bytes=0,checkpoint_every=1)
             snapshot.assert_not_called()
         self.assertEqual(stats["processed"],2)
@@ -236,6 +242,8 @@ class BulkTests(unittest.TestCase):
         done=threading.Event();result=[];errors=[]
         client,objects=Mock(),{}
         client.upload_file.side_effect=lambda path,bucket,key,**kw:objects.update({key:Path(path).read_bytes()})
+        from test_snapshot_upload import bind_snapshot_gateway
+        bind_snapshot_gateway(client,objects)
         def worker():
             store=a.Store(self.store.root)
             try:result.append(bulk.archive_batch(store,Fetch([Response(PAYLOAD)]),reserve_bytes=0))
