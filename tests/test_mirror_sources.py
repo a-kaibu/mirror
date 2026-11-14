@@ -870,3 +870,50 @@ class DmmNavigationTests(unittest.TestCase):
         self.assertTrue(m.navigable(source,product))
         self.assertTrue(m.navigable(source,a.replay(product,'20180101000000')))
         self.assertFalse(m.navigable(source,a.replay('https://www.dmm.co.jp/mono/pcgame/-/detail/review/=/cid=test/','20180101000000')))
+
+
+class DlsiteNavigationTests(unittest.TestCase):
+    def test_affiliate_navigation_is_retained_without_queuing_a_duplicate_product_fetch(self):
+        home='https://www.dlsite.com/'
+        product=home+'maniax/work/=/product_id/RJ123456.html'
+        affiliate=home+'maniax/user/affiliate/link/work/=/product_id/RJ123456.html'
+        source={**m.definitions()['dlsite'],'seeds':[],'homes':[home]}
+        html='<a href="'+product+'">作品</a><a href="'+affiliate+'">紹介リンク</a>'
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                m.crawl(store,source,Fetch([Response(html.encode(),url=home)]),mode='live',max_pages=1)
+                self.assertIsNotNone(store.db.execute("SELECT 1 FROM mirror_frontier WHERE site='dlsite' AND url=?",(product,)).fetchone())
+                self.assertIsNone(store.db.execute("SELECT 1 FROM mirror_frontier WHERE site='dlsite' AND url=?",(affiliate,)).fetchone())
+                self.assertIsNotNone(store.db.execute("SELECT 1 FROM mirror_links WHERE site='dlsite' AND url=?",(affiliate,)).fetchone())
+            finally:store.db.close()
+
+    def test_existing_queue_keeps_products_unique_affiliates_and_archived_observations(self):
+        home='https://www.dlsite.com/'
+        product=home+'maniax-touch/work/=/product_id/RJ123456.html'
+        paired=home+'maniax/user/affiliate/link/work/=/product_id/RJ123456.html'
+        unique=home+'maniax/user/affiliate/link/work/=/product_id/RJ777777.html'
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                m.initialize(store)
+                for url,mode,status in [(product,'live','captured'),(paired,'live','pending'),(unique,'live','pending'),(paired,'archive','pending')]:
+                    store.db.execute("INSERT INTO mirror_frontier(site,url,mode,status) VALUES('dlsite',?,?,?)",(url,mode,status))
+                record=a.parse_detail(HTML,'https://publisher.test/item','lathercraft')[0];store.add(record)
+                store.db.commit();before=[tuple(r) for r in store.db.execute('SELECT * FROM items')]
+                self.assertEqual(m.classify_dlsite_affiliates(store),{'excluded_navigation':1,'review':1})
+                self.assertEqual([tuple(r) for r in store.db.execute('SELECT * FROM items')],before)
+                def status(url,mode):return store.db.execute("SELECT status FROM mirror_frontier WHERE site='dlsite' AND url=? AND mode=?",(url,mode)).fetchone()[0]
+                self.assertEqual(status(product,'live'),'captured');self.assertEqual(status(unique,'live'),'review')
+                self.assertEqual(status(paired,'archive'),'pending');self.assertEqual(status(paired,'live'),'excluded_navigation')
+                self.assertEqual(m.classify_dlsite_affiliates(store),{'excluded_navigation':0,'review':0})
+                observed=home+'maniax/work/=/product_id/RJ777777.html'
+                with store.db:store.db.execute("INSERT INTO mirror_frontier(site,url,mode) VALUES('dlsite',?,'live')",(observed,))
+                self.assertEqual(m.classify_dlsite_affiliates(store),{'excluded_navigation':1,'review':0})
+                self.assertEqual(status(unique,'live'),'excluded_navigation')
+            finally:store.db.close()
+
+    def test_product_query_and_archive_links_stay_navigable(self):
+        source=m.definitions()['dlsite'];product='https://www.dlsite.com/pro/work/=/product_id/VJ123456.html?affiliate=public'
+        self.assertTrue(m.navigable(source,product));self.assertTrue(m.navigable(source,a.replay(product,'20181025223313')))
+        self.assertFalse(m.navigable(source,'https://www.dlsite.com/pro/user/affiliate/link/work/=/product_id/VJ123456.html'))

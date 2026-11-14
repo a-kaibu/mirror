@@ -75,8 +75,43 @@ def navigable(source,url):
     if key=="moepedia":return path=="/" or path.startswith("/trial/") or bool(re.fullmatch(r"/game/\d+/?",path))
     if key=="getchu":return path=="/" or path=="/all/demo.html" or path.endswith("/soft.phtml") or bool(re.fullmatch(r"/item/\d+/?",path))
     if key=="dmm":return (path=="/" or "/detail/" in path) and not re.search(r"/detail/review(?:/|$)",path)
-    if key=="dlsite":return path=="/" or "/work/" in path
+    if key=="dlsite":return path=="/" or ("/work/" in path and "/user/affiliate/" not in path)
     return True
+
+
+def classify_dlsite_affiliates(store):
+    """Keep observed navigation; do not fetch it as a duplicate product page."""
+    observed=set()
+    cursor=store.db.execute("SELECT url FROM mirror_frontier WHERE site='dlsite' AND mode='live' AND url LIKE '%/work/%' AND url NOT LIKE '%/user/affiliate/%'")
+    try:
+        for row in cursor:
+            parts=urlsplit(row[0])
+            if parts.hostname!='www.dlsite.com':continue
+            match=re.fullmatch(r'/[^/]+/work/=/product_id/((?:RJ|VJ|BJ)[0-9]+)\.html',parts.path,re.I)
+            if match:observed.add(match[1].upper())
+    finally:cursor.close()
+    review_reason='affiliate navigation; needs a separately observed product page'
+    cursor=store.db.execute("SELECT url,status FROM mirror_frontier WHERE site='dlsite' AND mode='live' AND (status='pending' OR (status='review' AND error=?)) AND url LIKE '%/user/affiliate/link/work/%'",(review_reason,))
+    groups={'excluded_navigation':[],'review':[]}
+    try:
+        for row in cursor:
+            parts=urlsplit(row[0])
+            if parts.hostname!='www.dlsite.com':continue
+            match=re.fullmatch(r'/[^/]+/user/affiliate/link/work/=/product_id/((?:RJ|VJ|BJ)[0-9]+)\.html',parts.path,re.I)
+            if not match:continue
+            status='excluded_navigation' if match[1].upper() in observed else 'review'
+            if row[1]!=status:groups[status].append(row[0])
+    finally:cursor.close()
+    stats={key:0 for key in groups}
+    for status,urls in groups.items():
+        reason=('affiliate navigation; separately observed product page retained' if status=='excluded_navigation'
+            else review_reason)
+        for start in range(0,len(urls),256):
+            with store.db:
+                cursor=store.db.executemany("UPDATE mirror_frontier SET status=?,error=?,checked_at=? WHERE site='dlsite' AND mode='live' AND url=? AND (status='pending' OR (status='review' AND error=?))",
+                    [(status,reason,a.now(),url,review_reason) for url in urls[start:start+256]])
+                stats[status]+=cursor.rowcount
+    return stats
 
 
 def seed_platform(store,source,mode):
@@ -287,6 +322,9 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
     # Known captures still precede URLs requiring an availability lookup.
     store.db.create_function('mirror_page_rank',1,lambda url:page_rank(source,url))
     initialize(store);enqueue(store,source,mode);seed_platform(store,source,mode)
+    if source['key']=='dlsite':
+        classified=classify_dlsite_affiliates(store)
+        if any(classified.values()):print('DLsite navigation classification',classified,flush=True)
     index=known_files(store,source["key"]);processed=found=0
     while processed<max_pages:
         row=store.db.execute("SELECT * FROM mirror_frontier WHERE site=? AND mode=? AND status='pending' ORDER BY CASE WHEN url LIKE '%web.archive.org/web/%' THEN 0 ELSE 1 END,mirror_page_rank(url),rowid LIMIT 1",(source["key"],mode)).fetchone()
