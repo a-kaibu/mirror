@@ -32,7 +32,8 @@ A real process restart and full public read-back have been verified; see the
 
 ## Source of truth
 
-HTML discovery batches and catalogue checkpoint uploads commit/copy SQLite directly;
+HTML discovery batches, transient-failure recovery and catalogue checkpoint uploads
+commit/copy SQLite directly;
 they do not materialize the complete JSON catalogue after each small batch.
 `build-site` generates the JSON when the static catalogue is built.
 

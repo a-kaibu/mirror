@@ -2,6 +2,8 @@ from datetime import datetime,timezone,timedelta
 import hashlib
 import tempfile
 import unittest
+import sqlite3
+from unittest.mock import patch
 import archiver as a
 import transient_recovery as r
 from archive_lock import exclusive_file
@@ -30,6 +32,18 @@ class TransientRecoveryTests(unittest.TestCase):
         self.assertEqual(tuple(row),('pending',None))
         self.assertEqual(self.store.db.execute('SELECT count(*) FROM attempts').fetchone()[0],1)
         self.assertEqual(self.store.db.execute('SELECT reason FROM transient_retries').fetchone()[0],'HTTP Error 429: Too Many Requests')
+    def test_requeue_is_durable_without_materializing_the_global_json_catalogue(self):
+        self.fail('HTTP Error 503: Service Unavailable',4)
+        with patch.object(self.store,'export',side_effect=AssertionError('unexpected complete JSON export')):
+            self.assertEqual(r.recover(self.store,self.at)['requeued'],1)
+        reader=sqlite3.connect(self.store.root/'index.sqlite3')
+        try:
+            self.assertEqual(reader.execute('SELECT status FROM items WHERE id=?',(self.ident,)).fetchone()[0],'pending')
+            self.assertEqual(reader.execute('SELECT count(*) FROM transient_retries WHERE item_id=?',(self.ident,)).fetchone()[0],1)
+        finally:reader.close()
+        self.assertFalse((self.store.root/'manifest.json').exists())
+        self.assertFalse(self.store.db.in_transaction)
+
     def test_repeated_failure_backs_off_and_same_attempt_is_not_requeued_twice(self):
         self.fail('<urlopen error timed out>',4)
         self.assertEqual(r.recover(self.store,self.at)['requeued'],1)
