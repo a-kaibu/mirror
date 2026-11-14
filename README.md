@@ -253,6 +253,9 @@ read-back, source metadata comparison and SQLite publication proof. Existing sou
 and object claims remain held. Reusable S3 keys stay local. A runner receipt alone
 never enables a download link or local eviction. This command skips the full JSON
 export; Pages still derives its one JSON catalogue from SQLite.
+Batch commands and all `upload --files-only` commands also skip the full local
+JSON export on both success and failure. SQLite remains the authoritative state;
+Pages builds its JSON derivative separately.
 
 The finite pilot and subsequent batches passed full public read-back. Batch mode
 can opt in to the same transport:

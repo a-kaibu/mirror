@@ -77,9 +77,23 @@ class BulkTests(unittest.TestCase):
         for enabled in [False, True]:
             args = ["--root", self.tmp.name, "archive-batch", "--site", "suezou", "--limit", "1"]
             if enabled: args.append("--runner-upload")
-            with self.subTest(enabled=enabled), patch.object(bulk, "archive_batch", return_value={"failed": 0}) as batch:
+            with self.subTest(enabled=enabled), patch.object(a.Store, "export", side_effect=AssertionError("batch must not export JSON")), patch.object(bulk, "archive_batch", return_value={"failed": 0}) as batch:
                 self.assertEqual(a.main(args), 0)
                 self.assertEqual(batch.call_args.kwargs["runner_upload"], enabled)
+
+    def test_cli_batch_failure_retains_original_error_without_json_export(self):
+        with patch.object(a.Store, "export", side_effect=AssertionError("batch must not export JSON")), patch.object(bulk, "archive_batch", side_effect=RuntimeError("publication unavailable")):
+            with self.assertRaisesRegex(RuntimeError, "publication unavailable"):
+                a.main(["--root", self.tmp.name, "archive-batch", "--site", "suezou", "--limit", "1"])
+
+    def test_files_only_upload_skips_full_json_for_both_transports(self):
+        self.add("target")
+        for delegated in [False, True]:
+            args=["--root",self.tmp.name,"upload","--site","lathercraft","--id","target","--files-only"]
+            if delegated:args.append("--runner-upload")
+            with self.subTest(delegated=delegated),patch.object(a.Store,"export",side_effect=AssertionError("files-only must not export JSON")),patch.object(a,"publish",return_value=0) as publish:
+                self.assertEqual(a.main(args),0)
+                self.assertFalse(publish.call_args.kwargs['metadata'])
 
     def test_runner_batch_uses_verified_size_and_successful_source_url(self):
         from runner_file_upload import MAX_BYTES

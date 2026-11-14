@@ -1474,7 +1474,7 @@ def main(argv=None):
                 print(*row)
         return 0
     finally:
-        if not (args.command=='upload' and args.runner_upload):store.export()
+        if args.command!='archive-batch' and not (args.command=='upload' and (args.runner_upload or args.files_only)):store.export()
         store.db.close()
 
 

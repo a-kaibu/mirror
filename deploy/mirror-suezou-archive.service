@@ -4,6 +4,8 @@ Description=Archive recovered Suezo mirror distributions
 [Service]
 Type=simple
 WorkingDirectory=%h/prj/mirror
+Environment="AQUA_GLOBAL_CONFIG=%h/.config/aquaproj-aqua/aqua.yaml"
+Environment="PATH=%h/.local/share/aquaproj-aqua/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=%h/prj/mirror/.venv/bin/python %h/prj/mirror/archiver.py archive-batch --site suezou --runner-upload --checkpoint-every 25 --retry-failed --delay 3
 Restart=on-failure
 RestartSec=15min
