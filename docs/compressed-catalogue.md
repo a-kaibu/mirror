@@ -1,0 +1,76 @@
+# Compressed catalogue publication
+
+Status: implementation plan, 2026-11-14. The local SQLite remains authoritative.
+
+## Observed problem
+
+A legacy worker holds `.publish.lock` while uploading a frozen 1,219,760,128-byte
+catalogue. Its two file read positions are not server acknowledgements. The
+canonical public SQLite last checked at 2026-11-14 08:08:23 UTC consequently
+predates later file-publication proofs. Body uploads and provenance collection
+continue separately. Pages currently downloads `index.sqlite3` on pushes and
+hourly at minute 23; its generated JSON remains a derivative, not the database.
+
+A streaming gzip level-1 measurement of that immutable snapshot produced
+204,071,844 bytes (16.73%) in 4.664 seconds, with a 19,760 KiB process RSS peak.
+The temporary output was removed. This measures compression cost and byte
+reduction, not end-to-end publication throughput. Evidence is in the private
+`archive/.work/catalogue-compression-audit.json` receipt.
+
+## Direction
+
+Publish a gzip transport of a consistent SQLite backup and let Pages restore it
+with Python standard-library streaming decompression. Trial, patch and movie
+payloads remain byte-for-byte unchanged. Do not expose storage implementation
+text in the site. Do not add a public JSON pointer or another JSON catalogue.
+
+Use the existing immutable staging, destination lock, resumable-part validation,
+full anonymous read-back and source-generation safeguards. Compression must use
+bounded buffers, a disk reserve, and deterministic gzip headers. Freeze the
+SQLite before network I/O. A retry resumes the exact pending compressed generation
+instead of recompressing a moving database. Validate the local SQLite and record
+both raw and compressed SHA-256 values privately. Complete public compressed-byte
+read-back before treating that transport generation as published.
+
+`index.sqlite3.gz` is the proposed transport key. Keep the existing raw object
+through migration; it is the bootstrap fallback while gzip has never been
+published. Before changing restore precedence, explicitly choose and test whether
+raw publication is retired after cutover or retained as a synchronized mirror.
+HTTP Last-Modified alone cannot order snapshots: a slow legacy upload can finish
+later while containing older data. Do not silently choose it as newer.
+
+## Alternatives
+
+* Raw-only publication preserves the current URL, but transmits about six times
+  as many bytes in this measured generation and keeps the current long wait.
+* A compressed transport reduces the measured bytes by 83.27%, uses only the
+  standard library, and leaves the SQLite data model unchanged. It introduces a
+  transport cutover and requires explicit ordering of legacy and new publishers.
+* Maintaining equally current raw and gzip copies still requires every large raw
+  upload. It is viable for compatibility, but cannot be a prerequisite for Pages
+  to consume a verified compressed generation or it retains the current delay.
+
+## Risks and required evidence
+
+* A gzip object must never be confused with a raw SQLite. Test keys, staging paths,
+  expected byte counts, decompression failure, HTML responses and integrity checks.
+* A successful multipart acknowledgement is insufficient. Test lost completion
+  responses, read-back failures, process restarts and retention of accepted parts.
+* Legacy workers must not overwrite the new canonical transport or hold its new
+  lock indefinitely. Inventory live publishers, preserve verified local bodies
+  and existing transfers, and prove a safe handover before interrupting any lane.
+* Partial decompression must not replace the Pages database. Restore to a temporary
+  file, bound output and disk usage, check SQLite integrity, then atomically replace.
+* Native HF upload speed has not been measured because no HF user token is
+  configured. Existing S3 credentials remain usable; this plan does not assume
+  native-auth availability or claim that compression fixes the network path.
+
+## Decisions before cutover
+
+The implementing agent must settle canonical transport precedence and legacy
+publisher handover after inspecting current workers, before changing the deployed
+Pages restore contract. These block cutover, not codec or staging tests. A finite
+live compressed upload plus full read-back must pass before claiming publication
+works. Tests and remote CI alone do not establish this. Remaining accepted costs
+are temporary staging disk, one bounded compression pass per frozen generation,
+and continued publication lag while each generation is transferred.

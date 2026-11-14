@@ -1,0 +1,34 @@
+name: Transfer probe
+run-name: Transfer probe ${{ inputs.nonce }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      nonce:
+        type: string
+        required: true
+      spec:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Transfer bounded diagnostic parts
+        # Read inputs from the event file; never interpolate capabilities into
+        # shell commands or step environment blocks that appear in public logs.
+        run: python runner_transfer_probe.py --event "$GITHUB_EVENT_PATH" --output "$RUNNER_TEMP/transfer-probe.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: transfer-probe
+          path: ${{ runner.temp }}/transfer-probe.json
+          retention-days: 1

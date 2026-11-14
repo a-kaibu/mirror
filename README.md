@@ -215,6 +215,23 @@ Saved-HTML reparsing also ignores publication-only function changes in its parse
 fingerprint. Shared parser helpers and constants still invalidate old results;
 exactly matching legacy fingerprints migrate without changing capture timestamps.
 
+## Finite transfer diagnosis
+
+`uv run python transfer_probe.py --id SOURCE_ID` compares one already public,
+SHA-256-verified 8–64 MiB object using the manually dispatched `Transfer probe`
+workflow. It requires the local `hf` S3 profile and authenticated `gh`; the checkout
+must match remote `main`. The runner receives only 30-minute, size-bound part
+capabilities for one temporary upload. It receives no S3 credentials and cannot
+complete an object. Inputs are read from the event file, never interpolated into
+shell commands or printed environment blocks. Results contain no capability URLs.
+
+The host checks the returned parts against S3 acknowledgements and always aborts
+its temporary upload; the existing public object remains intact. This is a bounded
+network diagnostic, not a scheduled collector. Private state is kept under
+`archive/.work/transfer-probe.json`. After an interrupted controller use `--resume`
+to follow the same job or `--cleanup-only` to abort that exact upload. A successful
+workflow alone is not treated as a completed archive-file publication.
+
 ## Static Pages and original download names
 
 `build-site` creates manufacturer pages, product sections, static HF download links,
