@@ -118,7 +118,12 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
     while True:
         # Exhaust the cursor before claiming/mutating rows or starting network
         # I/O. Retain only the best candidate rather than every JSON payload.
-        candidates = (r for r in store.iter_rows(site) if r["id"] not in visited and int.from_bytes(hashlib.sha256(r["id"].encode()).digest(), "big") % shards == shard_index and (retry_failed or r["status"] != "failed"))
+        candidates = (r for r in store.iter_rows(site)
+            if r["id"] not in visited
+            and not (r["status"] in {"verified", "archived"}
+                and publicly_archived(r, namespace, bucket) and (keep_local or not r["path"]))
+            and int.from_bytes(hashlib.sha256(r["id"].encode()).digest(), "big") % shards == shard_index
+            and (retry_failed or r["status"] != "failed"))
         row = min(candidates, key=priority, default=None)
         if row is None:
             break

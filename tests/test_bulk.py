@@ -30,6 +30,21 @@ class BulkTests(unittest.TestCase):
         self.store.update(ident, status="verified", path=path, size=len(PAYLOAD), md5=hashlib.md5(PAYLOAD).hexdigest(), sha256=sha,
             remote_sha256=sha, remote_key="vn-archive/mirrors/files/" + sha, remote_verified_at=a.now())
 
+    def test_completed_evicted_sources_do_not_enter_repeated_priority_selection(self):
+        for index in range(40):
+            ident = f"done-{index}"
+            self.add(ident); self.mark_public(ident)
+        self.add("waiting", brand="Unpublished Brand")
+        def failed(store, fetcher, site, ident=None, **kwargs):
+            store.update(ident, status="failed")
+            return 1
+        with patch.object(bulk, "scheduling_size", wraps=bulk.scheduling_size) as ranking, patch.object(bulk, "download", side_effect=failed) as download, patch.object(bulk, "publish_metadata"):
+            result = bulk.archive_batch(self.store, Fetch([]), reserve_bytes=0)
+        self.assertEqual(result["processed"], 1)
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(ranking.call_count, 1)
+        self.assertEqual(download.call_args.kwargs["ident"], "waiting")
+
     def test_cli_forwards_batch_runner_option(self):
         for enabled in [False, True]:
             args = ["--root", self.tmp.name, "archive-batch", "--site", "suezou", "--limit", "1"]
