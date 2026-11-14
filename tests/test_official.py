@@ -382,3 +382,14 @@ class SharedSupportProductIdentityTests(unittest.TestCase):
         rows,unknown=o.parse(html,PAGE,GAME,BRAND,scoped=False)
         self.assertEqual(rows,[])
         self.assertEqual(unknown,['https://key.visualarts.co.jp/other/update.zip'])
+
+
+class OfficialFilenameVersionTests(unittest.TestCase):
+    def test_separated_numeric_versions_are_not_truncated(self):
+        game={'id':1,'gamename':'Example','shoukai':'https://publisher.test/game/'}
+        brand={'id':2,'brandname':'Publisher'}
+        for filename,release in [('patch_v1_30.zip','パッチ ver1.30'),('patch_ver1.02.zip','パッチ ver1.02'),('patch_ver101.zip','パッチ ver101'),('patch_v1_30b.zip','パッチ ver1.30b'),('patch_v1_30beta.zip','パッチ')]:
+            with self.subTest(filename=filename):
+                html='<a href="'+filename+'">Example 修正パッチ</a>'
+                records,_=o.parse(html,'https://publisher.test/support/',game,brand,scoped=False)
+                self.assertEqual(len(records),1);self.assertEqual(records[0]['release_name'],release)

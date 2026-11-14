@@ -165,9 +165,9 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
             measured_context=context if metadata_context is None else metadata_context
             md5s=re.findall(r"MD5\s*[:：]?\s*([a-f0-9]{32})",measured_context,re.I)
             exact=re.findall(r"([0-9][0-9,]*)\s*bytes",measured_context,re.I)
-            version=re.search(r"(?:ver(?:sion)?[._ -]*|v)(\d+(?:\.\d+)*)",filename,re.I)
+            version=re.search(r"(?:ver(?:sion)?[._ -]*|v)(\d+(?:[._]\d+)*[a-z]?)(?![a-z0-9_]|\.[0-9])",filename,re.I)
             records[key]={"id":key,"site":"official","page_url":page,"original_page_url":page,
-                "title":game["gamename"],"brand":brand["brandname"],"release_name":KINDS[kind]+(" ver"+version[1] if version else ""),
+                "title":game["gamename"],"brand":brand["brandname"],"release_name":KINDS[kind]+(" ver"+version[1].replace("_", ".") if version else ""),
                 "filename":filename,"mirrors":[],"expected_md5":md5s[0].lower() if len(set(md5s))==1 else None,
                 "expected_size":int(exact[0].replace(",","")) if len(set(exact))==1 else None,
                 "size_text":None,"published_at":None,"fields":{"erogamescape_game_id":game["id"],"erogamescape_brand_id":brand["id"],"official_page":page}}
