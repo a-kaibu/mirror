@@ -120,6 +120,58 @@ def _object_exists(client,bucket,key,size):
         raise
 
 
+def _snapshot_parts(store,client,identity,path,sha256,size,state,remote,part_size):
+    """Two bounded payloads in flight; only this owning thread checkpoints."""
+    from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED,ALL_COMPLETED
+    namespace,bucket,key=identity
+    count=(size+part_size-1)//part_size
+    parts={};pending={};failure=None;assembled=hashlib.sha256()
+    pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix='catalogue-part')
+    def drain(all_parts=False):
+        nonlocal failure
+        while pending:
+            done,_=wait(tuple(pending),return_when=ALL_COMPLETED if all_parts else FIRST_COMPLETED)
+            for future in done:
+                number,expected,local_sha=pending.pop(future)
+                try:
+                    response=future.result();etag=response.get('ETag')
+                    if not isinstance(etag,str) or not etag:raise ValueError('missing multipart part ETag')
+                    with store.db:
+                        store.db.execute('INSERT OR REPLACE INTO _s3_upload_parts VALUES(?,?,?,?,?,?,?)',(*identity,number,etag,expected,local_sha))
+                    parts[number]={'PartNumber':number,'ETag':etag}
+                except Exception as error:
+                    if failure is None:failure=error
+            if not all_parts:break
+    try:
+        with path.open('rb') as stream:
+            for number in range(1,count+1):
+                if len(pending)>=2:
+                    drain()
+                    if failure is not None:raise failure
+                expected=min(part_size,size-(number-1)*part_size);payload=stream.read(expected)
+                if len(payload)!=expected:raise ValueError('multipart local body shortened')
+                assembled.update(payload);local_sha=hashlib.sha256(payload).hexdigest()
+                saved=store.db.execute('SELECT * FROM _s3_upload_parts WHERE namespace=? AND bucket=? AND key=? AND number=?',(*identity,number)).fetchone()
+                observed=remote.get(number)
+                reuse=(saved and observed and saved['sha256']==local_sha and saved['size']==expected
+                    and observed['Size']==expected and observed['ETag']==saved['etag'])
+                if reuse:parts[number]={'PartNumber':number,'ETag':saved['etag']}
+                else:
+                    future=pool.submit(client.upload_part,Bucket=bucket,Key=key,UploadId=state['upload_id'],PartNumber=number,Body=payload,ContentLength=expected)
+                    pending[future]=(number,expected,local_sha)
+                del payload
+            if stream.read(1):raise ValueError('multipart local body grew')
+        if assembled.hexdigest()!=sha256:raise ValueError('multipart body changed during transfer')
+    finally:
+        # A failed sibling must not discard successful acknowledgements or
+        # leave a background sender running after releasing the object claim.
+        try:drain(all_parts=True)
+        finally:pool.shutdown(wait=True)
+    if failure is not None:raise failure
+    if len(parts)!=count:raise ValueError('missing snapshot part acknowledgement')
+    return [parts[number] for number in range(1,count+1)]
+
+
 def _transfer_and_readback(store,client,namespace,bucket,key,path,sha256,size,readback,part_size=PART_SIZE,*,snapshot=False):
     """Return a full public digest; never update source records or evict bodies."""
     path=Path(path)
@@ -166,28 +218,31 @@ def _transfer_and_readback(store,client,namespace,bucket,key,path,sha256,size,re
         if not completed:
             count=((size+part_size-1)//part_size)
             if any(number>count for number in remote):raise ValueError('unexpected remote multipart part')
-            parts=[];assembled=hashlib.sha256()
-            with path.open('rb') as stream:
-                for number in range(1,count+1):
-                    expected=min(part_size,size-(number-1)*part_size);payload=stream.read(expected)
-                    if len(payload)!=expected:raise ValueError('multipart local body shortened')
-                    assembled.update(payload)
-                    local_sha=hashlib.sha256(payload).hexdigest()
-                    saved=store.db.execute('SELECT * FROM _s3_upload_parts WHERE namespace=? AND bucket=? AND key=? AND number=?',(*identity,number)).fetchone()
-                    observed=remote.get(number)
-                    reuse=(saved and observed and saved['sha256']==local_sha and saved['size']==expected
-                           and observed['Size']==expected and observed['ETag']==saved['etag'])
-                    if reuse:etag=saved['etag']
-                    else:
-                        response=client.upload_part(Bucket=bucket,Key=key,UploadId=state['upload_id'],PartNumber=number,Body=payload,ContentLength=expected)
-                        etag=response.get('ETag')
-                        if not isinstance(etag,str) or not etag:raise ValueError('missing multipart part ETag')
-                        with store.db:
-                            store.db.execute('INSERT OR REPLACE INTO _s3_upload_parts VALUES(?,?,?,?,?,?,?)',(*identity,number,etag,expected,local_sha))
-                    parts.append({'PartNumber':number,'ETag':etag})
-                    del payload
-                if stream.read(1):raise ValueError('multipart local body grew')
-            if assembled.hexdigest()!=sha256:raise ValueError('multipart body changed during transfer')
+            if snapshot:
+                parts=_snapshot_parts(store,client,identity,path,sha256,size,state,remote,part_size)
+            else:
+                parts=[];assembled=hashlib.sha256()
+                with path.open('rb') as stream:
+                    for number in range(1,count+1):
+                        expected=min(part_size,size-(number-1)*part_size);payload=stream.read(expected)
+                        if len(payload)!=expected:raise ValueError('multipart local body shortened')
+                        assembled.update(payload)
+                        local_sha=hashlib.sha256(payload).hexdigest()
+                        saved=store.db.execute('SELECT * FROM _s3_upload_parts WHERE namespace=? AND bucket=? AND key=? AND number=?',(*identity,number)).fetchone()
+                        observed=remote.get(number)
+                        reuse=(saved and observed and saved['sha256']==local_sha and saved['size']==expected
+                               and observed['Size']==expected and observed['ETag']==saved['etag'])
+                        if reuse:etag=saved['etag']
+                        else:
+                            response=client.upload_part(Bucket=bucket,Key=key,UploadId=state['upload_id'],PartNumber=number,Body=payload,ContentLength=expected)
+                            etag=response.get('ETag')
+                            if not isinstance(etag,str) or not etag:raise ValueError('missing multipart part ETag')
+                            with store.db:
+                                store.db.execute('INSERT OR REPLACE INTO _s3_upload_parts VALUES(?,?,?,?,?,?,?)',(*identity,number,etag,expected,local_sha))
+                        parts.append({'PartNumber':number,'ETag':etag})
+                        del payload
+                    if stream.read(1):raise ValueError('multipart local body grew')
+                if assembled.hexdigest()!=sha256:raise ValueError('multipart body changed during transfer')
             client.complete_multipart_upload(Bucket=bucket,Key=key,UploadId=state['upload_id'],MultipartUpload={'Parts':parts})
         with store.db:
             store.db.execute("UPDATE _s3_uploads SET phase='completed' WHERE namespace=? AND bucket=? AND key=?",identity)
