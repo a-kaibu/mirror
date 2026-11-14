@@ -1135,6 +1135,7 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
     config = TransferConfig(multipart_threshold=256 * 1024**2, multipart_chunksize=256 * 1024**2, max_concurrency=2)
     count = 0
     checked = {}
+    verified_times = {}
     for row in transfer_rows(store,site,ident):
         if row["status"] not in {"verified", "archived"}:
             continue
@@ -1152,9 +1153,18 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
         from multipart_upload import PART_SIZE,MAX_PARTS
         retain_parts = resumable if resumable is not None else PART_SIZE <= result["size"] <= PART_SIZE * MAX_PARTS
         count += 1
-        # A successful upload alone is insufficient. Always anonymously read
-        # back the complete object, including on a rerun after interruption.
-        known = store.db.execute("SELECT 1 FROM items WHERE remote_key=? AND remote_sha256=? AND remote_verified_at IS NOT NULL", (f"{namespace}/{bucket}/{key}", result["sha256"])).fetchone()
+        # Full anonymous read-back proves an immutable object, not each source
+        # observation. Reuse only a matching accepted proof; retain its original
+        # verification time. Explicit rechecks still read the entire object.
+        known = store.db.execute("""SELECT remote_verified_at FROM items
+            WHERE remote_key=? AND sha256=? AND remote_sha256=sha256 AND size=?
+              AND remote_verified_at IS NOT NULL AND remote_verified_at!=''
+              AND status IN ('verified','archived')
+              AND coalesce(json_extract(data,'$.fields.source_association_quarantined'),0)=0
+            LIMIT 1""", (f"{namespace}/{bucket}/{key}", result["sha256"], result["size"])).fetchone()
+        if known and not recheck and key not in checked:
+            checked[key] = result["sha256"], result["size"]
+            verified_times[key] = known["remote_verified_at"]
         if key not in checked and not known:
             if path is None:
                 raise ValueError("local file unavailable for unpublished object: " + row["id"])
@@ -1173,7 +1183,8 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
             store.update(row["id"], remote_sha256=None, remote_verified_at=None)
             raise ValueError(f"public read-back mismatch: {key}")
         checked[key] = remote_sha, remote_size
-        proof={"remote_key":f"{namespace}/{bucket}/{key}","remote_sha256":remote_sha,"remote_verified_at":now()}
+        verified_times.setdefault(key, now())
+        proof={"remote_key":f"{namespace}/{bucket}/{key}","remote_sha256":remote_sha,"remote_verified_at":verified_times[key]}
         acknowledged=store.update_if_current(row["id"],row["data"],**proof)
         if not acknowledged:
             current=store.db.execute('SELECT * FROM items WHERE id=?',(row['id'],)).fetchone()
@@ -1191,10 +1202,10 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
             if bound:acknowledged=store.update_if_current(row['id'],current['data'],**proof)
         if not acknowledged:
             raise ValueError("source metadata changed during publication; verified remote object retained")
-        if retain_parts:
+        if retain_parts and not known:
             from multipart_upload import discard
             discard(store,namespace,bucket,key,result['sha256'])
-        print(f"public read-back verified: {namespace}/{bucket}/{key}")
+        print(f"public object verified: {namespace}/{bucket}/{key}")
     if metadata:
         publish_metadata(store, namespace, bucket, profile)
     print(f"published {count} file(s); https://huggingface.co/buckets/{namespace}/{bucket}")

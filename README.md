@@ -193,9 +193,13 @@ error pages and empty files are rejected. SHA-256 is stored and rechecked before
 upload. Rounded sizes such as `1.4GB` are preserved as text, never enforced as
 exact bytes. Verified local files are skipped on subsequent download runs.
 
-Uploads use HF's S3 gateway with path-style addressing and 256 MiB multipart
-chunks. The full public HTTPS copy is downloaded anonymously and compared by
-SHA-256 and byte count before recording publication. Anonymous S3 access is not
+Uploads use HF's S3 gateway with path-style addressing. Files from 8 MiB through
+80,000 MiB use durable 8 MiB parts; smaller files use the SDK uploader. The full
+public HTTPS copy is downloaded anonymously and compared by SHA-256 and byte count
+before recording publication. A duplicate source with the same SHA-256 and size can
+reuse an accepted proof for the exact destination object, retaining its original
+verification time. Local checksums, source quarantine and metadata comparison still
+apply. `upload --recheck` forces a full public read-back. Anonymous S3 access is not
 used: the gateway requires a signature even for public buckets. HTML, JSON and
 the SQLite backup also receive anonymous read-back verification. The backup uses
 SQLite's backup API; journals, partial files, credentials and unrelated workspace

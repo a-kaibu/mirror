@@ -256,6 +256,71 @@ class PublicationIntegrationTests(unittest.TestCase):
     def publish(self,proof=None):
         with patch.object(a,'s3_client',return_value=self.client),patch.object(a,'public_digest',side_effect=proof or self.proof):
             return a.publish(self.store,'vn-archive','mirrors',ident='target',metadata=False,resumable=True)
+    def prior_proof(self,**changes):
+        record=dict(self.record,id='prior')
+        self.store.add(record)
+        values=dict(status='archived',sha256=self.sha,size=len(PAYLOAD),
+                    remote_sha256=self.sha,remote_key='vn-archive/mirrors/'+self.key,
+                    remote_verified_at='2026-11-12T00:00:00+00:00')
+        values.update(changes);self.store.update('prior',**values)
+
+    def test_duplicate_reuses_full_object_proof_without_network_readback(self):
+        self.prior_proof()
+        with patch.object(a,'public_digest') as proof:
+            self.assertEqual(self.publish(proof),1)
+        proof.assert_not_called();self.assertEqual(self.client.created,0)
+        row=self.store.db.execute("SELECT * FROM items WHERE id='target'").fetchone()
+        self.assertEqual(row['remote_verified_at'],'2026-11-12T00:00:00+00:00')
+        self.assertEqual(row['remote_sha256'],self.sha)
+
+    def test_duplicate_recheck_reads_full_object_without_upload(self):
+        self.prior_proof();self.client.objects[self.key]=PAYLOAD
+        with patch.object(a,'s3_client',return_value=self.client),patch.object(a,'public_digest',side_effect=self.proof) as proof:
+            self.assertEqual(a.publish(self.store,'vn-archive','mirrors',ident='target',metadata=False,resumable=True,recheck=True),1)
+        proof.assert_called_once();self.assertEqual(self.client.created,0)
+        self.assertNotEqual(self.store.db.execute("SELECT remote_verified_at FROM items WHERE id='target'").fetchone()[0],'2026-11-12T00:00:00+00:00')
+
+    def test_invalid_prior_object_proof_is_not_reused(self):
+        cases=[{'size':len(PAYLOAD)+1},{'sha256':'0'*64},{'remote_key':'other/mirrors/'+self.key},
+               {'remote_verified_at':None},{'remote_verified_at':''},{'status':'failed'},{'remote_sha256':'0'*64}]
+        for changes in cases:
+            with self.subTest(changes=changes):
+                self.store.update('target',remote_key=None,remote_sha256=None,remote_verified_at=None)
+                self.prior_proof(**changes);self.client=Gateway()
+                with patch.object(a,'public_digest',side_effect=self.proof) as proof:
+                    self.assertEqual(self.publish(proof),1)
+                proof.assert_called_once();self.assertEqual(self.client.created,1)
+
+    def test_quarantined_prior_proof_is_not_reused(self):
+        self.prior_proof()
+        record=dict(self.record,id='prior',fields={'source_association_quarantined':True})
+        self.store.db.execute("UPDATE items SET data=? WHERE id='prior'",(json.dumps(record),));self.store.db.commit()
+        with patch.object(a,'public_digest',side_effect=self.proof) as proof:
+            self.assertEqual(self.publish(proof),1)
+        proof.assert_called_once();self.assertEqual(self.client.created,1)
+
+    def test_reusing_proof_leaves_another_transfer_checkpoint_untouched(self):
+        self.prior_proof()
+        self.cache.execute('INSERT INTO _s3_uploads VALUES(?,?,?,?,?,?,?,?,?)',
+                           ('vn-archive','mirrors',self.key,self.sha,len(PAYLOAD),m.PART_SIZE,'other-owner','active','2026-11-12'))
+        self.cache.commit()
+        with patch.object(a,'public_digest') as proof:self.assertEqual(self.publish(proof),1)
+        proof.assert_not_called()
+        self.assertEqual(self.cache.execute('SELECT upload_id,phase FROM _s3_uploads').fetchone()[:],('other-owner','active'))
+
+    def test_duplicate_proof_still_validates_local_body(self):
+        self.prior_proof();(self.store.root/'files/body').write_bytes(b'corrupt')
+        with patch.object(a,'public_digest') as proof,self.assertRaises(ValueError):self.publish(proof)
+        proof.assert_not_called();self.assertEqual(self.client.created,0)
+
+    def test_duplicate_proof_does_not_bypass_source_cas(self):
+        self.prior_proof()
+        with patch.object(self.store,'update_if_current',return_value=False),patch.object(a,'public_digest') as proof:
+            with self.assertRaisesRegex(ValueError,'source metadata changed'):self.publish(proof)
+        proof.assert_not_called()
+        self.assertIsNone(self.store.db.execute("SELECT remote_verified_at FROM items WHERE id='target'").fetchone()[0])
+        self.assertTrue((self.store.root/'files/body').exists())
+
     def test_default_large_file_uses_durable_parts_and_full_readback(self):
         body=b'x'*(m.PART_SIZE+1)
         (self.store.root/'files/body').write_bytes(body)
