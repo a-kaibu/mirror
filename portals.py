@@ -368,11 +368,57 @@ def parse_mimimaid(html,page):
     return list({r["id"]:r for r in legacy+results}.values())
 
 
+def _parse_nekoneko_menu(root,page):
+    """Later menus bind a footer rights holder to blue per-work headings."""
+    holders=set(re.findall(r'このページに掲載しております各データの著作権は[、,]?\s*『([^『』]+)』様にあります',root.text()))
+    if len(holders)!=1:return []
+    brand=next(iter(holders)).strip()
+    titles=[node.text() for node in root.all({'title'})]
+    declared={match[1].strip() for text in titles for match in re.finditer(r'\[([^\[\]]+?)各作品の[^\[\]]*ダウンロード\]',text)}
+    compact=lambda value:re.sub(r'\s+','',unicodedata.normalize('NFKC',value))
+    if {compact(value) for value in declared}!={compact(brand)}:return []
+    def scope(node):
+        while node.parent:
+            node=node.parent
+            if node.tag=='font' and node.attrs.get('color','').lower()=='#000000':return node
+        return None
+    title=None;section=None;results=[]
+    for node in root.all({'font','a'}):
+        if node.tag=='font' and node.attrs.get('color','').lower()=='#0000ff':
+            heading=re.fullmatch(r'\s*『([^『』]+)』\s*',node.text())
+            title=heading[1] if heading else None;section=scope(node)
+        if node.tag!='a' or not title or section is None or scope(node) is not section:continue
+        target=a.resolve(page,node.attrs.get('href',''))
+        if not target or not a.EXT.search(urlsplit(a.original(target)).path):continue
+        if re.search(r'MD5',section.text(),re.I):continue
+        label=node.text().strip()
+        size=re.search(r'[:：]\s*([0-9]+(?:\.[0-9]+)?\s*(?:[KMGT]i?B))\s*$',label,re.I)
+        if not size:continue
+        release=label[:size.start()].strip()
+        if not release or not re.search(r'体験|パッチ|修正|更新|アップデー(?:ト|タ)|ムービー|動画|主題歌|ソング|ボイス|ED曲',release,re.I):continue
+        raw=a.original(target);parts=urlsplit(raw)
+        # These menus publish their own mirror paths, rather than attaching an
+        # unrelated archive/advertisement binary elsewhere on the page.
+        if parts.hostname not in {'www.nekoneko-web.net','nekoneko-web.multi-band.net'}:continue
+        if not parts.path.startswith(('/mirror-service/','/nekoneko-web18/download/')):continue
+        filename=a.filename_from_url(raw);stamp=a.WAYBACK.match(target) or a.WAYBACK.match(page)
+        page_stamp=a.WAYBACK.match(page)
+        capture=page_stamp[1] if page_stamp else 'live'
+        # Hashless dated observations cannot assert that another capture of
+        # the same filename carries the same historical build.
+        ident=hashlib.sha256(('nekoneko-menu\n'+a.original(page)+'\n'+capture+'\n'+raw).encode()).hexdigest()
+        results.append(dict(id=ident,site='nekoneko',page_url=page,original_page_url=a.original(page),title=title,brand=brand,
+            release_name=release,filename=filename,mirrors=([a.replay(raw,stamp[1],raw=True,scheme=urlsplit(stamp[0]).scheme)] if stamp else [])+[raw],
+            expected_md5=None,expected_size=None,size_text=size[1],published_at=None,
+            fields={'parser':'nekoneko_menu','size_is_rounded':True,'published_link':target,'source_page_capture':page_stamp[1] if page_stamp else None}))
+    return list({record['id']:record for record in results}.values())
+
+
 def parse_nekoneko(html,page):
     if urlsplit(a.original(page)).hostname not in {"nekoneko-web.multi-band.net","www.nekoneko-web.net"}:return []
     root=a.DOM(html).root
     brand=re.search(r"□\s*(.+?)さんのミラーページ",root.text())
-    if not brand:return []
+    if not brand:return _parse_nekoneko_menu(root,page)
     brand=brand[1].strip();title=None;results=[]
     for node in root.all({"font","a"}):
         if node.tag=="font" and node.attrs.get("color", "").lower()=="#000000":
