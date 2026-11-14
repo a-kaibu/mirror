@@ -1,0 +1,64 @@
+name: Metadata source probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Check the public SQL form with a constant row only
+        env:
+          PROBE_OUTPUT: ${{ runner.temp }}/metadata-source-probe.json
+        run: |
+          python - <<'PYCODE'
+          import json, os, time
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+          from urllib.parse import urlencode
+          from urllib.error import HTTPError
+          import archiver as a
+          import erogamescape as e
+
+          sql = "SELECT row_to_json(q)::text AS metadata FROM (SELECT 1 AS id) q"
+          results = []
+          for scheme in ['https', 'http']:
+              if results:
+                  time.sleep(3)
+              url = scheme + e.FORM[e.FORM.index(':'):]
+              request = Request(url, data=urlencode({'sql': sql}).encode(), headers={
+                  'User-Agent': 'VN-Mirror-Archiver/0.1 (cultural preservation)',
+                  'Content-Type': 'application/x-www-form-urlencoded'})
+              start = time.monotonic()
+              result = {'scheme': scheme, 'constant_row_verified': False}
+              try:
+                  with urlopen(request, timeout=20) as response:
+                      result['http_status'] = response.status
+                      raw = response.read(1024 * 1024 + 1)
+                      charset = response.headers.get_content_charset()
+                  if len(raw) > 1024 * 1024:
+                      raise ValueError('probe response exceeds bound')
+                  result['constant_row_verified'] = e.parse_rows(a.decode_html(raw, charset)) == [{'id': 1}]
+              except Exception as error:
+                  result['error_type'] = type(error).__name__
+                  if isinstance(error, HTTPError):
+                      result['http_status'] = error.code
+                      error.close()
+              result['elapsed_seconds'] = round(time.monotonic() - start, 3)
+              results.append(result)
+              print(json.dumps(result), flush=True)
+          Path(os.environ['PROBE_OUTPUT']).write_text(json.dumps({'results': results}, indent=2) + '\n')
+          PYCODE
+      - uses: actions/upload-artifact@v7
+        with:
+          name: metadata-source-probe
+          path: ${{ runner.temp }}/metadata-source-probe.json
+          retention-days: 1
