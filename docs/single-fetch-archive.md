@@ -1,8 +1,9 @@
 # Single source fetch for delegated archival
 
 Status: design selected; staging worker and combined public hash read-back are
-implemented and unit tested. Host controller and production migration are not
-implemented.
+implemented and unit tested. Staged completion, conditional promotion, public
+proof and source CAS are implemented and unit tested in `staged_archive.py`.
+Job orchestration, collector integration and production migration remain.
 Existing collection stays active during implementation. This replaces the double
 origin read for new eligible files; existing verified-local upload remains usable.
 
