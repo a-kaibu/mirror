@@ -120,3 +120,15 @@ that requires the successful full public gzip read-back receipt. Safe local test
 now cover compressed staging and proof retention, resume of the exact frozen
 snapshot after failed read-back, independent/exclusive transport claims, and
 rejection of unmanaged paths and arbitrary destination keys.
+
+
+## Restore CLI prepared, 2026-11-14
+
+`python catalogue_restore.py --output archive/index.sqlite3` now implements the
+chosen gzip-first contract. Only an HTTP 404 for gzip permits the raw bootstrap;
+timeouts, 403/429/5xx, malformed gzip, CRC/truncation, invalid SQLite and expansion
+limit failures preserve the destination and fail. Raw bootstrap has the same
+SQLite checks, size bound, disk reserve and atomic replacement. Response handles
+and temporary files close on every path. Both modules are included in the wheel
+and the installed-package smoke check. The Pages workflow remains on the old
+restore command until the real compressed publication has a verified receipt.

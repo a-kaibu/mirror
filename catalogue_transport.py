@@ -1,5 +1,5 @@
 """Bounded deterministic gzip transport for immutable SQLite catalogue backups."""
-from contextlib import closing
+from contextlib import closing,nullcontext
 import gzip
 import hashlib
 from pathlib import Path
@@ -55,14 +55,14 @@ def compress(source,destination,*,reserve=RESERVE):
         if temporary is not None:temporary.unlink(missing_ok=True)
 
 
-def restore(stream,destination,*,max_size=MAX_SIZE,reserve=RESERVE):
-    """Consume gzip with CRC, bounds and SQLite checks before atomic replacement."""
+def restore(stream,destination,*,max_size=MAX_SIZE,reserve=RESERVE,compressed=True):
+    """Consume gzip (or raw SQLite) with bounds and checks before replacement."""
     if max_size<=0 or reserve<0:raise ValueError("invalid catalogue restore bounds")
     destination=_destination(destination);temporary=None;sha=hashlib.sha256();size=0
     try:
         with tempfile.NamedTemporaryFile(prefix=".catalogue-",dir=destination.parent,delete=False) as output:
             temporary=Path(output.name)
-            with gzip.GzipFile(fileobj=stream,mode="rb") as incoming:
+            with (gzip.GzipFile(fileobj=stream,mode="rb") if compressed else nullcontext(stream)) as incoming:
                 while data:=incoming.read(min(CHUNK,max_size-size+1)):
                     size+=len(data)
                     if size>max_size:raise ValueError("catalogue exceeds restore bound")
