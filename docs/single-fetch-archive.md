@@ -292,3 +292,23 @@ Longer completion/copy waiting preserves that same upload and receipt. It does
 not extend worker GET/PUT timeouts, workflow lifetime, capability expiry or the
 workflow observation window, and is not itself an acceptance proof. Recovery
 selects this client from the saved size rather than mutable source metadata.
+
+
+## 継続取得の巡回位置
+
+`delegated_archive.py` は、既存の通常取得と並行して新規ファイルの委譲取得を進める。
+配布元ごとにSQLiteの `delegated_scan_cursor` に巡回位置を保存し、体験版・パッチ、動画、その他の順で巡回する。
+各パスは既定で最大100件のIDだけを読み、最大4件を試す。先頭が非対応、使用中、失敗でも次の候補へ進み、末尾まで進むと先頭へ戻る。
+ネットワーク処理の前に読み取りカーソルを閉じ、巡回位置をコミットする。
+
+```sh
+uv run python delegated_archive.py --site dmm --watch
+uv run python delegated_archive.py --site dlsite --watch
+```
+
+監視はパスごとに新しい子プロセスを起動する。
+同じサイトの巡回は専用ロック、ファイルの取得は既存の主キー・同一内容・公開オブジェクトのロックで保護する。
+ローカルに途中ファイルがある候補と関連付けを保留した候補は触らない。
+委譲に非対応の候補は通常取得に残し、この処理自身はホストで本体を取得しない。
+ジョブの観測がタイムアウトしても同じ状態を保持し、`single_fetch_recovery.py` が元の配布元への再取得なしに処理を継続する。
+この巡回位置は取得完了の証明ではない。完了は既存の公開URLからの全量ハッシュ検証とSQLiteへの受理で判定する。
