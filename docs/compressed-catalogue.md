@@ -95,3 +95,28 @@ was 50.838 seconds including both SQLite checks, with 24,656 KiB peak RSS. Both
 temporary derivatives were removed. The private receipt is
 `archive/.work/catalogue-codec-live.json`. This proves the codec on real data;
 it does not establish remote compressed publication or Pages cutover.
+
+
+## Transport integration and chosen cutover, 2026-11-14
+
+`snapshot_upload.publish(..., compressed=True)` now stages a consistent compacted
+SQLite backup, deterministic gzip bytes and both digests in a private durable
+generation. The compressed key, staging directory, destination claim and multipart
+checkpoint are separate from the raw transport. Existing raw publishers can
+finish without overwriting this generation. All accepted-part, lost-completion
+and complete anonymous read-back rules remain shared with the original uploader.
+
+After the first complete verified gzip publication, `index.sqlite3.gz` becomes
+the canonical Pages transport. Raw `index.sqlite3` is retained only as bootstrap
+fallback while gzip does not exist, independent of HTTP Last-Modified. A present
+but invalid gzip must fail a build and preserve the deployed site, not silently
+fall back to a possibly stale raw generation. Future default publishers will use
+gzip; an already running legacy raw upload is allowed to finish. No source body
+transfer needs interruption for this migration. The local SQLite remains SSOT.
+
+A single finite real publication is running independently of the legacy raw
+publication lock. Pages restore and the default publisher have not yet switched;
+that requires the successful full public gzip read-back receipt. Safe local tests
+now cover compressed staging and proof retention, resume of the exact frozen
+snapshot after failed read-back, independent/exclusive transport claims, and
+rejection of unmanaged paths and arbitrary destination keys.

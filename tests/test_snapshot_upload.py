@@ -142,3 +142,64 @@ class SnapshotUploadTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class CompressedSnapshotTests(unittest.TestCase):
+    def setUp(self):
+        tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup)
+        self.store=a.Store(tmp.name);self.addCleanup(self.store.db.close)
+        self.record=a.parse_detail(HTML,"https://source.test/items/a","lathercraft")[0]
+        self.record["id"]="a";self.store.add(self.record)
+        self.client=VersionedGateway();self.key="index.sqlite3.gz"
+
+    def publish(self,readback=None):
+        def proof(*args):
+            self.assertEqual(args[-1],self.key)
+            body=self.client.objects[self.key]
+            return hashlib.sha256(body).hexdigest(),len(body)
+        with patch.object(a,"public_digest",side_effect=readback or proof):
+            s.publish(self.store,self.client,"vn-archive","mirrors",compressed=True)
+
+    def pointer(self):return s.slot(self.store.root,"vn-archive","mirrors",self.key)/"current.json"
+
+    def values(self):
+        import catalogue_transport as c
+        import io
+        path=self.store.root/"restored.sqlite3"
+        proof=c.restore(io.BytesIO(self.client.objects[self.key]),path,reserve=0)
+        with closing(sqlite3.connect(path)) as db:
+            return [row[0] for row in db.execute("SELECT id FROM items ORDER BY id")],proof
+
+    def test_compressed_publication_retains_raw_proof_and_does_not_replace_raw_object(self):
+        self.client.objects["index.sqlite3"]=b"legacy snapshot"
+        self.publish();rows,proof=self.values();self.assertEqual(rows,["a"])
+        receipt=json.loads((self.pointer().parent/"last-verified.json").read_text())
+        self.assertEqual(receipt["raw_sha256"],proof["sha256"])
+        self.assertEqual(receipt["raw_size"],proof["size"])
+        self.assertEqual(self.client.objects["index.sqlite3"],b"legacy snapshot")
+        self.assertFalse(self.pointer().exists())
+
+    def test_failed_readback_resumes_same_frozen_generation(self):
+        with self.assertRaises(TimeoutError):
+            self.publish(readback=lambda *args:(_ for _ in ()).throw(TimeoutError()))
+        first=json.loads(self.pointer().read_text());sent=list(self.client.sent)
+        self.store.add(dict(self.record,id="b"))
+        with patch.object(a,"_compact_snapshot",side_effect=AssertionError("generation rebuilt")):
+            self.publish()
+        self.assertEqual(self.client.sent,sent);self.assertEqual(self.values()[0],["a"])
+        self.assertFalse(m.snapshot_path(self.store.root,"vn-archive","mirrors",first["sha256"],self.key).exists())
+
+    def test_compressed_destination_claim_is_independent_and_exclusive(self):
+        raw=hashlib.sha256(m.json_identity("vn-archive","mirrors").encode()).hexdigest()
+        gz=hashlib.sha256(m.json_identity("vn-archive","mirrors",self.key).encode()).hexdigest()
+        with exclusive_file(self.store.root/".claims"/("snapshot-"+raw+".lock")):
+            self.publish()
+        with exclusive_file(self.store.root/".claims"/("snapshot-"+gz+".lock")),self.assertRaises(BlockingIOError):
+            self.publish()
+
+    def test_compressed_snapshot_requires_its_exact_managed_path(self):
+        path=self.store.root/"index.sqlite3"
+        with self.assertRaisesRegex(ValueError,"immutable managed staging"):
+            m.transfer_snapshot_and_readback(self.store,self.client,"vn-archive","mirrors",path,"0"*64,path.stat().st_size,lambda:None,key=self.key)
+        with self.assertRaises(ValueError):m.snapshot_path(self.store.root,"vn-archive","mirrors","0"*64,"arbitrary.gz")
+        self.assertEqual(self.client.created,0)
