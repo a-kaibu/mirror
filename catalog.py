@@ -12,6 +12,8 @@ import unicodedata
 
 KINDS = {"trial": "体験版", "patch": "パッチ", "full": "本編", "movie": "ムービー", "other": "その他"}
 PRIORITY = {"trial": 0, "patch": 1, "full": 2, "movie": 3, "other": 4}
+# Bump when release_info changes its classification rules.
+CLASSIFICATION_REVISION = "movie-filename-1"
 
 
 def normalized(value):
@@ -60,6 +62,20 @@ def initialize(store):
       CREATE INDEX IF NOT EXISTS item_catalog_product ON item_catalog(product_id);
       CREATE INDEX IF NOT EXISTS products_manufacturer ON products(manufacturer_id);
       CREATE INDEX IF NOT EXISTS manufacturer_aliases_manufacturer ON manufacturer_aliases(manufacturer_id);
+      CREATE TABLE IF NOT EXISTS catalog_classification_state(
+        item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE, revision TEXT NOT NULL);
+      CREATE TRIGGER IF NOT EXISTS catalog_classification_source_changed
+        AFTER UPDATE OF data ON items WHEN OLD.data IS NOT NEW.data BEGIN
+          DELETE FROM catalog_classification_state WHERE item_id=NEW.id;
+        END;
+      CREATE TRIGGER IF NOT EXISTS catalog_classification_inserted
+        AFTER INSERT ON item_catalog BEGIN
+          DELETE FROM catalog_classification_state WHERE item_id=NEW.item_id;
+        END;
+      CREATE TRIGGER IF NOT EXISTS catalog_classification_kind_changed
+        AFTER UPDATE OF kind ON item_catalog WHEN OLD.kind IS NOT NEW.kind BEGIN
+          DELETE FROM catalog_classification_state WHERE item_id=NEW.item_id;
+        END;
     """)
     if "remote_verified_at" not in {r[1] for r in db.execute("PRAGMA table_info(items)")}:
         db.execute("ALTER TABLE items ADD COLUMN remote_verified_at TEXT")
@@ -73,16 +89,34 @@ def initialize(store):
     for ident in missing:
         row=db.execute("SELECT data FROM items WHERE id=?",(ident,)).fetchone()
         index_record(store,json.loads(row[0]))
-    # Refresh derived classification when parser rules change; SQLite remains
-    # authoritative and source records are never rewritten by this migration.
-    changes=[]
-    for row in db.execute("SELECT i.id,i.data,c.kind FROM items i JOIN item_catalog c ON c.item_id=i.id"):
-        kind = release_info(json.loads(row[1]))[0]
-        if kind != row[2]:changes.append((kind,row[0]))
-    # Finish the read before mutating its joined classification table. Keep
-    # only changed IDs, rather than every source record's JSON payload.
-    db.executemany("UPDATE item_catalog SET kind=? WHERE item_id=?",changes)
     db.commit()
+    # Old workers can still write the six-column table. Triggers invalidate
+    # their rows without changing that schema; current writers mark their work.
+    # Reconcile only stale rows, releasing each bounded reader before writes.
+    last=None
+    while True:
+        after=" AND c.item_id>?" if last is not None else ""
+        params=(CLASSIFICATION_REVISION,last) if last is not None else (CLASSIFICATION_REVISION,)
+        rows=db.execute("""SELECT i.id,i.data,c.kind FROM item_catalog c
+            JOIN items i ON i.id=c.item_id
+            LEFT JOIN catalog_classification_state s ON s.item_id=c.item_id
+            WHERE (s.revision IS NULL OR s.revision!=?)"""+after+
+            " ORDER BY c.item_id LIMIT 128",params).fetchall()
+        if not rows:break
+        changes=[];classified=[]
+        for row in rows:
+            kind=release_info(json.loads(row[1]))[0]
+            if kind!=row[2]:changes.append((kind,row[0],row[1]))
+            classified.append((CLASSIFICATION_REVISION,row[0],row[1],kind))
+        with db:
+            db.executemany("""UPDATE item_catalog SET kind=? WHERE item_id=?
+                AND EXISTS(SELECT 1 FROM items i WHERE i.id=item_catalog.item_id AND i.data=?)""",changes)
+            # A concurrent source edit must stay stale, rather than permanently
+            # accepting a classification computed from its previous payload.
+            db.executemany("""INSERT OR REPLACE INTO catalog_classification_state
+                SELECT i.id,? FROM items i JOIN item_catalog c ON c.item_id=i.id
+                WHERE i.id=? AND i.data=? AND c.kind=?""",classified)
+        last=rows[-1][0]
 
 
 def index_record(store, record):
@@ -99,6 +133,9 @@ def index_record(store, record):
     product_id = identity(maker_id, normalized(title), scope)
     db.execute("INSERT OR IGNORE INTO products VALUES(?,?,?)", (product_id, maker_id, title))
     db.execute("INSERT OR REPLACE INTO item_catalog VALUES(?,?,?,?,?,?)", (record["id"], product_id, *release_info(record)))
+    db.execute("""INSERT OR REPLACE INTO catalog_classification_state
+        SELECT id,? FROM items WHERE id=? AND data=?""",
+        (CLASSIFICATION_REVISION,record["id"],json.dumps(record,ensure_ascii=False)))
 
 
 def alias_maker(store, alias, name):

@@ -88,6 +88,65 @@ class CatalogTests(unittest.TestCase):
         r = a.parse_detail(HTML, "https://example.test/items/" + ident, "lathercraft")[0]
         return {**r, "id": ident, "brand": brand, "site": site, "filename": "日本語 体験版.zip", "release_name": "体験版"}
 
+    def test_unchanged_startup_does_not_reparse_catalogue_payloads(self):
+        self.store.add(self.record('unchanged'))
+        with patch.object(c,'release_info',wraps=c.release_info) as classify:c.initialize(self.store)
+        classify.assert_not_called()
+
+    def test_raw_source_update_invalidates_only_changed_classification(self):
+        self.store.add(self.record('changed'));self.store.add(self.record('stable'))
+        record=self.record('changed');record.update(filename='fix.zip',release_name='修正パッチ')
+        self.store.db.execute('UPDATE items SET data=? WHERE id=?',(json.dumps(record),'changed'));self.store.db.commit()
+        with patch.object(c,'release_info',wraps=c.release_info) as classify:c.initialize(self.store)
+        self.assertEqual(classify.call_count,1)
+        self.assertEqual(self.store.db.execute("SELECT kind FROM item_catalog WHERE item_id='changed'").fetchone()[0],'patch')
+
+    def test_old_six_column_writer_invalidates_cached_classification(self):
+        self.store.add(self.record('legacy'))
+        row=list(self.store.db.execute("SELECT * FROM item_catalog WHERE item_id='legacy'").fetchone());row[2]='movie'
+        self.store.db.execute('INSERT OR REPLACE INTO item_catalog VALUES(?,?,?,?,?,?)',row);self.store.db.commit()
+        with patch.object(c,'release_info',wraps=c.release_info) as classify:c.initialize(self.store)
+        self.assertEqual(classify.call_count,1)
+        self.assertEqual(self.store.db.execute("SELECT kind FROM item_catalog WHERE item_id='legacy'").fetchone()[0],'trial')
+        with patch.object(c,'release_info',wraps=c.release_info) as classify:c.initialize(self.store)
+        classify.assert_not_called()
+
+    def test_rule_revision_refreshes_once(self):
+        self.store.add(self.record('revision'))
+        with patch.object(c,'CLASSIFICATION_REVISION','fixture-new-rules'):
+            with patch.object(c,'release_info',wraps=c.release_info) as classify:c.initialize(self.store)
+            self.assertEqual(classify.call_count,1)
+            with patch.object(c,'release_info',wraps=c.release_info) as classify:c.initialize(self.store)
+            classify.assert_not_called()
+
+    def test_source_changed_during_refresh_is_not_marked_current(self):
+        self.store.add(self.record('racing'))
+        self.store.db.execute("DELETE FROM catalog_classification_state WHERE item_id='racing'");self.store.db.commit()
+        fresh=self.record('racing');fresh.update(filename='fix.zip',release_name='修正パッチ')
+        original=c.release_info
+        def changed(record):
+            self.store.db.execute("UPDATE items SET data=? WHERE id='racing'",(json.dumps(fresh),));self.store.db.commit()
+            return original(record)
+        with patch.object(c,'release_info',side_effect=changed):c.initialize(self.store)
+        self.assertIsNone(self.store.db.execute("SELECT revision FROM catalog_classification_state WHERE item_id='racing'").fetchone())
+        c.initialize(self.store)
+        self.assertEqual(self.store.db.execute("SELECT kind FROM item_catalog WHERE item_id='racing'").fetchone()[0],'patch')
+
+    def test_interrupted_classification_refresh_retains_committed_batches(self):
+        for n in range(257):self.store.add(self.record(f'item-{n:04}'))
+        self.store.db.execute('DELETE FROM catalog_classification_state');self.store.db.commit()
+        original=c.release_info;calls=0
+        def interrupted(record):
+            nonlocal calls
+            calls+=1
+            if calls==130:raise RuntimeError('fixture interruption')
+            return original(record)
+        with patch.object(c,'release_info',side_effect=interrupted),self.assertRaisesRegex(RuntimeError,'fixture interruption'):c.initialize(self.store)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM catalog_classification_state').fetchone()[0],128)
+        with patch.object(c,'release_info',wraps=c.release_info) as classify:c.initialize(self.store)
+        self.assertEqual(classify.call_count,129)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM catalog_classification_state').fetchone()[0],257)
+
     def test_recover_mirrors_requires_published_digest_and_same_maker(self):
         donor = self.record("donor")
         donor["mirrors"] = ["https://storage1.lathercraft.net/recovered.zip"]

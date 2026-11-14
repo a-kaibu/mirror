@@ -207,6 +207,11 @@ files are not uploaded. SQLite backups contain source metadata and error history
 and are public, like the JSON export. Work on one authoritative local DB, rather
 than replacing it with an older published snapshot.
 
+Catalogue classification records its rule revision in SQLite. Startup reparses only
+changed or outdated records in batches of 128; source edits and writes from older
+workers invalidate the corresponding entry. Interrupted backfills retain completed
+batches, and concurrent source changes are deferred rather than marked current.
+
 ## Static Pages and original download names
 
 `build-site` creates manufacturer pages, product sections, static HF download links,
