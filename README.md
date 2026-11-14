@@ -254,12 +254,23 @@ and object claims remain held. Reusable S3 keys stay local. A runner receipt alo
 never enables a download link or local eviction. This command skips the full JSON
 export; Pages still derives its one JSON catalogue from SQLite.
 
-Default collectors are unchanged until the finite pilot is validated. A failed
+The finite pilot and subsequent batches passed full public read-back. Batch mode
+can opt in to the same transport:
+
+```sh
+uv run python archiver.py archive-batch --site suezou --runner-upload --limit 25
+```
+
+It delegates files from 8 MiB through 2 GiB with an eligible public HTTP(S) source
+URL; smaller files, larger files and unsupported source URLs use the normal host
+transport. Each source is still downloaded and verified locally first. A delegated
+failure stops the batch and retains the local body; it does not start a competing
+local upload. Default collectors keep the host transport. A failed
 refetch retains the local body. Failures abort that exact delegated upload before
 local fallback can reuse the source; an interrupted active delegation must be
 resumed with the same opt-in command, rather than writing locally over a live job.
-Private journals are under `archive/.work/runner-uploads/`. The design and remaining
-live verification gate are in [docs/runner-uploads.md](docs/runner-uploads.md).
+Private journals are under `archive/.work/runner-uploads/`. The design and
+verification gates are in [docs/runner-uploads.md](docs/runner-uploads.md).
 
 ## Static Pages and original download names
 

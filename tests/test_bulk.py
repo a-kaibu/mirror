@@ -30,6 +30,62 @@ class BulkTests(unittest.TestCase):
         self.store.update(ident, status="verified", path=path, size=len(PAYLOAD), md5=hashlib.md5(PAYLOAD).hexdigest(), sha256=sha,
             remote_sha256=sha, remote_key="vn-archive/mirrors/files/" + sha, remote_verified_at=a.now())
 
+    def test_cli_forwards_batch_runner_option(self):
+        for enabled in [False, True]:
+            args = ["--root", self.tmp.name, "archive-batch", "--site", "suezou", "--limit", "1"]
+            if enabled: args.append("--runner-upload")
+            with self.subTest(enabled=enabled), patch.object(bulk, "archive_batch", return_value={"failed": 0}) as batch:
+                self.assertEqual(a.main(args), 0)
+                self.assertEqual(batch.call_args.kwargs["runner_upload"], enabled)
+
+    def test_runner_batch_uses_verified_size_and_successful_source_url(self):
+        from runner_file_upload import MAX_BYTES
+        from multipart_upload import PART_SIZE
+        cases = [
+            (False, PART_SIZE, "https://example.test/trial.zip", False),
+            (True, PART_SIZE - 1, "https://example.test/trial.zip", False),
+            (True, PART_SIZE, "https://example.test/trial.zip", True),
+            (True, MAX_BYTES, "https://example.test/trial.zip", True),
+            (True, MAX_BYTES + 1, "https://example.test/trial.zip", False),
+            (True, PART_SIZE, "ftp://example.test/trial.zip", False),
+            (True, PART_SIZE, "https://mega.nz/file/id#secret", False),
+            (True, PART_SIZE, "http://127.0.0.1/trial.zip", False),
+            (True, PART_SIZE, None, False),
+        ]
+        for enabled, size, url, expected in cases:
+            with self.subTest(enabled=enabled, size=size, url=url):
+                record = self.add("runner")
+                # Posted sizes are scheduling hints; transport uses measured bytes.
+                record["expected_size"] = MAX_BYTES + 100
+                self.store.add(record)
+                self.store.update("runner", status="pending")
+                def downloaded(store, fetcher, site, ident=None, **kwargs):
+                    store.update(ident, status="verified", size=size, source_url=url)
+                    return 0
+                with patch.object(bulk, "download", side_effect=downloaded), patch.object(bulk, "publish", return_value=1) as publish, patch.object(bulk, "publish_metadata"):
+                    stats = bulk.archive_batch(self.store, Fetch([]), reserve_bytes=0, keep_local=True, runner_upload=enabled)
+                self.assertEqual(stats["published"], 1)
+                self.assertEqual(publish.call_args.kwargs.get("via_runner", False), expected)
+                self.assertFalse(publish.call_args.kwargs["metadata"])
+                self.assertEqual(publish.call_args.kwargs["ident"], "runner")
+
+    def test_runner_failure_preserves_body_and_stops_before_next_download(self):
+        from multipart_upload import PART_SIZE
+        self.add("a"); self.add("b")
+        path = self.store.root / "files" / "saved.zip"
+        path.parent.mkdir(); path.write_bytes(PAYLOAD)
+        def downloaded(store, fetcher, site, ident=None, **kwargs):
+            store.update(ident, status="verified", size=PART_SIZE, path="files/saved.zip", source_url="https://example.test/trial.zip")
+            return 0
+        with patch.object(bulk, "download", side_effect=downloaded) as download, patch.object(bulk, "publish", side_effect=RuntimeError("delegation failed")), patch.object(bulk, "evict_verified") as evict, patch.object(bulk, "publish_metadata") as metadata:
+            with self.assertRaisesRegex(RuntimeError, "delegation failed"):
+                bulk.archive_batch(self.store, Fetch([]), reserve_bytes=0, runner_upload=True)
+        self.assertEqual(download.call_count, 1)
+        self.assertEqual(path.read_bytes(), PAYLOAD)
+        evict.assert_not_called(); metadata.assert_not_called()
+        self.assertEqual(self.store.db.execute("SELECT status FROM items WHERE id='a'").fetchone()[0], "verified")
+        self.assertEqual(self.store.db.execute("SELECT status FROM items WHERE id='b'").fetchone()[0], "pending")
+
     def test_queue_selection_streams_and_closes_readers_before_transfer(self):
         self.add("a");self.add("b")
         active=[];selected=[];original=self.store.iter_rows

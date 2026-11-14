@@ -95,7 +95,7 @@ def scheduling_size(record,live_sizes):
 
 
 def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", profile="hf", site="both",
-                  limit=None, keep_local=False, reserve_bytes=16 * 1024**3, checkpoint_every=10, retry_failed=False, shards=1, shard_index=0):
+                  limit=None, keep_local=False, reserve_bytes=16 * 1024**3, checkpoint_every=10, retry_failed=False, shards=1, shard_index=0, runner_upload=False):
     if shards < 1 or not 0 <= shard_index < shards:
         raise ValueError("invalid shard assignment")
     stats = {"processed": 0, "published": 0, "reused": 0, "failed": 0, "evicted_bytes": 0, "busy": 0}
@@ -160,7 +160,19 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
                     continue
                 # Publishing failures stop the batch; do not fill disk with a queue
                 # that cannot be uploaded. Source failures above remain retryable.
-                stats["published"] += publish(store, namespace, bucket, profile, site, ident=row["id"], metadata=False)
+                options = {}
+                if runner_upload:
+                    from runner_file_upload import MAX_BYTES, public_source
+                    from multipart_upload import PART_SIZE
+                    verified = store.db.execute("SELECT size,source_url FROM items WHERE id=?", (row["id"],)).fetchone()
+                    if verified and PART_SIZE <= (verified["size"] or 0) <= MAX_BYTES:
+                        try:
+                            public_source(verified["source_url"])
+                        except ValueError:
+                            pass
+                        else:
+                            options["via_runner"] = True
+                stats["published"] += publish(store, namespace, bucket, profile, site, ident=row["id"], metadata=False, **options)
                 if not keep_local:
                     stats["evicted_bytes"] += evict_verified(store, row["id"], namespace, bucket)
             print("batch", now(), json.dumps(stats), flush=True)

@@ -121,3 +121,19 @@ acknowledgements, still-running jobs, safe fallback and metadata CAS conflicts.
 Finally prove a real newly published object with complete public read-back and
 actual Pages visibility before declaring that integration complete. Continue all
 other named sources through their existing paths throughout the pilot.
+
+## Batch transport
+
+`archive-batch --runner-upload` opts a sequential batch into the same bounded
+transport after each local download. Selection uses measured SQLite size and the
+successful `source_url`, not the posted size hint or an untried mirror. Eligible
+files are 8 MiB through 2 GiB with a URL accepted by `public_source`; other files
+keep normal host uploads. Existing source/object locks, donor reuse, public
+read-back, metadata CAS and eviction rules apply. A delegated publication failure
+stops the batch with its local body retained, without competing local fallback.
+
+The initial 638,504,629-byte production pilot passed complete anonymous read-back
+on 2026-11-14 and its actual download link was subsequently verified in the public
+Pages catalogue. Finite subsequent trial and patch batches also passed public
+read-back. Default collectors do not opt in automatically. The batch flag does
+not raise the per-file size, capability expiry or observation deadlines.

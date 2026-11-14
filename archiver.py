@@ -1377,6 +1377,7 @@ def main(argv=None):
     p.add_argument("--profile", default="hf")
     p.add_argument("--limit", type=positive)
     p.add_argument("--checkpoint-every", type=positive, default=10)
+    p.add_argument("--runner-upload", action="store_true", help="delegate eligible 8 MiB to 2 GiB public HTTP(S) uploads")
     p.add_argument("--shards", type=positive, default=1)
     p.add_argument("--shard-index", type=int, default=0)
     p.add_argument("--delay", type=float, default=1)
@@ -1427,7 +1428,8 @@ def main(argv=None):
             from bulk import archive_batch
             stats = archive_batch(store, Fetcher(delay=args.delay, timeout=25, retries=2, tls_pins=source_tls_pins()),
                 args.namespace, args.bucket, args.profile, args.site, args.limit, args.keep_local,
-                args.reserve_gib * 1024**3, args.checkpoint_every, args.retry_failed, args.shards, args.shard_index)
+                args.reserve_gib * 1024**3, args.checkpoint_every, args.retry_failed, args.shards, args.shard_index,
+                runner_upload=args.runner_upload)
             return int(bool(stats["failed"]))
         if args.command == "build-site":
             from catalog import build_site
