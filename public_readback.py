@@ -21,14 +21,20 @@ class RangeIncomplete(ValueError):
     pass
 
 
-def sequential(response):
-    sha=hashlib.sha256();size=0
+def _proof(sha,md5,size):
+    if md5 is None:return sha.hexdigest(),size
+    return dict(sha256=sha.hexdigest(),md5=md5.hexdigest(),size=size)
+
+
+def sequential(response,*,include_md5=False):
+    sha=hashlib.sha256();md5=hashlib.md5() if include_md5 else None;size=0
     while chunk:=response.read(1024*1024):
         sha.update(chunk);size+=len(chunk)
-    return sha.hexdigest(),size
+        if md5 is not None:md5.update(chunk)
+    return _proof(sha,md5,size)
 
 
-def ranged(url,size,etag,open_response):
+def ranged(url,size,etag,open_response,*,include_md5=False):
     def fetch_once(start):
         end=min(size,start+CHUNK_SIZE)-1
         with open_response(url,{'Range':f'bytes={start}-{end}','If-Match':etag,'Accept-Encoding':'identity'}) as response:
@@ -54,21 +60,23 @@ def ranged(url,size,etag,open_response):
                 # Keep the same exact range and strong validator. Only a complete
                 # response advances the ordered full-body hash.
                 time.sleep(min(2**attempt,10))
-    sha=hashlib.sha256();total=0;offsets=iter(range(0,size,CHUNK_SIZE))
+    sha=hashlib.sha256();md5=hashlib.md5() if include_md5 else None;total=0;offsets=iter(range(0,size,CHUNK_SIZE))
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         pending=deque()
         for _ in range(WORKERS):
             start=next(offsets,None)
             if start is not None:pending.append(pool.submit(fetch,start))
         while pending:
-            chunk=pending.popleft().result();sha.update(chunk);total+=len(chunk);del chunk
+            chunk=pending.popleft().result();sha.update(chunk);total+=len(chunk)
+            if md5 is not None:md5.update(chunk)
+            del chunk
             start=next(offsets,None)
             if start is not None:pending.append(pool.submit(fetch,start))
     if total!=size:raise ValueError('public range coverage mismatch')
-    return sha.hexdigest(),total
+    return _proof(sha,md5,total)
 
 
-def digest(url,open_response):
+def _digest(url,open_response,*,include_md5=False):
     with open_response(url) as response:
         length=response.headers.get('Content-Length','')
         size=int(length) if str(length).isdigit() else 0
@@ -77,9 +85,19 @@ def digest(url,open_response):
         if not (response.status==200 and size>=THRESHOLD and strong
                 and response.headers.get('Accept-Ranges','').lower()=='bytes'
                 and response.headers.get('Content-Encoding','identity')=='identity'):
-            return sequential(response)
-    try:return ranged(url,size,etag,open_response)
+            return sequential(response,include_md5=include_md5)
+    try:return ranged(url,size,etag,open_response,include_md5=include_md5)
     except RangeUnsupported:
         # Some intermediaries advertise ranges but return the complete object.
         # A fresh whole-body read retains the same final SHA-256/size contract.
-        with open_response(url) as response:return sequential(response)
+        with open_response(url) as response:return sequential(response,include_md5=include_md5)
+
+
+def digest(url,open_response):
+    """Keep the established (SHA-256, size) public-proof API."""
+    return _digest(url,open_response)
+
+
+def digest_hashes(url,open_response):
+    """Compute MD5, SHA-256 and size in one ordered public body read."""
+    return _digest(url,open_response,include_md5=True)

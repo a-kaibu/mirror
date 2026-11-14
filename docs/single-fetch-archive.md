@@ -1,7 +1,8 @@
 # Single source fetch for delegated archival
 
-Status: design selected; staging worker implemented and unit tested. Host
-controller and production migration are not implemented.
+Status: design selected; staging worker and combined public hash read-back are
+implemented and unit tested. Host controller and production migration are not
+implemented.
 Existing collection stays active during implementation. This replaces the double
 origin read for new eligible files; existing verified-local upload remains usable.
 
@@ -18,6 +19,10 @@ https://huggingface.co/docs/hub/storage-buckets-s3#other-api-differences
 A real 19,760-byte object was copied in 0.269 s, independently read back with the
 expected SHA-256, and an incorrect source ETag was rejected. Temporary probe
 objects were deleted. Local evidence: `.work/single-fetch-copy-capability-20261115.json`.
+Combined public read-back also matched the existing MD5, SHA-256 and size for
+that 19,760-byte object using one public request. Local evidence:
+`.work/single-fetch-combined-readback-live.json`. Existing SHA/size-only callers
+retain their tuple interface and do not compute an unused MD5.
 
 ## Selected flow
 

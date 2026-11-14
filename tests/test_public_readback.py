@@ -50,6 +50,44 @@ class PublicReadbackTests(unittest.TestCase):
         self.threshold=patch.object(p,'THRESHOLD',8);self.chunk=patch.object(p,'CHUNK_SIZE',5)
         self.threshold.start();self.chunk.start()
     def tearDown(self):self.chunk.stop();self.threshold.stop()
+    def test_both_hashes_use_the_same_ordered_range_reads(self):
+        source=PublicSource(overlap=True)
+        proof=p.digest_hashes('https://public.test/file',source)
+        self.assertEqual(proof,dict(sha256=hashlib.sha256(source.data).hexdigest(),md5=hashlib.md5(source.data).hexdigest(),size=len(source.data)))
+        self.assertEqual(len(source.calls),5)
+        self.assertEqual(len({h['Range'] for h in source.calls if h}),4)
+        self.assertTrue(all(r.closed for r in source.replies))
+
+    def test_both_hashes_stream_small_bodies_once_and_preserve_range_fallback(self):
+        for source in [PublicSource(data=b'small'),PublicSource(mutate=lambda h,b,s:(h,b,200))]:
+            with self.subTest(size=len(source.data)):
+                result=p.digest_hashes('https://public.test/file',source)
+                self.assertEqual(result['md5'],hashlib.md5(source.data).hexdigest())
+                self.assertEqual(result['sha256'],hashlib.sha256(source.data).hexdigest())
+                if len(source.data)<8:self.assertEqual(source.calls,[None])
+                self.assertTrue(all(r.closed for r in source.replies))
+
+    def test_both_hashes_reject_mixed_object_versions(self):
+        source=PublicSource(mutate=lambda h,b,s:({**h,'ETag':'"other"'},b,s))
+        with self.assertRaisesRegex(ValueError,'validator changed'):
+            p.digest_hashes('https://public.test/file',source)
+        self.assertTrue(all(r.closed for r in source.replies))
+
+    def test_both_hashes_retry_without_duplicating_a_failed_range(self):
+        source=PublicSource();failed=[]
+        def request(url,headers=None):
+            response=source(url,headers)
+            if headers and headers['Range']=='bytes=5-9' and not failed:
+                failed.append(True)
+                def timeout():raise TimeoutError('retry same bytes')
+                response.before_read=timeout
+            return response
+        with patch.object(p.time,'sleep'):
+            result=p.digest_hashes('https://public.test/file',request)
+        self.assertEqual(result['md5'],hashlib.md5(source.data).hexdigest())
+        self.assertEqual(result['sha256'],hashlib.sha256(source.data).hexdigest())
+        self.assertEqual(sum(h is not None and h['Range']=='bytes=5-9' for h in source.calls),2)
+
     def test_out_of_order_ranges_hash_the_complete_body_in_original_order(self):
         source=PublicSource(overlap=True)
         self.assertEqual(p.digest('https://public.test/file',source),(hashlib.sha256(source.data).hexdigest(),len(source.data)))
