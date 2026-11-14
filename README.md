@@ -32,6 +32,10 @@ A real process restart and full public read-back have been verified; see the
 
 ## Source of truth
 
+HTML discovery batches and catalogue checkpoint uploads commit/copy SQLite directly;
+they do not materialize the complete JSON catalogue after each small batch.
+`build-site` generates the JSON when the static catalogue is built.
+
 `archive/index.sqlite3` is the only source of truth. `items` stores source records
 and download progress; `manufacturers`, `manufacturer_aliases`, `products` and
 `item_catalog` store the cross-source catalog. Source sites are provenance, not

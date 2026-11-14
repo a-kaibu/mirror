@@ -38,6 +38,21 @@ class MirrorSourcesTests(unittest.TestCase):
                     self.assertTrue({a.resolve(home,link) for link in links}<=pending)
                 finally:store.db.close()
 
+    def test_html_batch_commits_sqlite_without_rebuilding_global_json(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source={**m.definitions()['multi_inside'],'seeds':[],'homes':['http://www.pachi.ac/~multi/']}
+            page='https://web.archive.org/web/20190102030405/http://www.pachi.ac/~multi/'
+            store=a.Store(folder)
+            try:
+                m.initialize(store)
+                store.db.execute("INSERT INTO mirror_frontier(site,url,mode) VALUES('multi_inside',?,'archive')",(page,));store.db.commit()
+                with patch.object(store,'export',side_effect=AssertionError('unexpected complete JSON export')):
+                    result=m.crawl(store,source,Fetch([Response(b'<a href="demo.mirror.shtml">demo</a>',url=page)]),max_pages=1)
+                self.assertEqual(result,(1,0));self.assertFalse(store.db.in_transaction)
+                self.assertEqual(store.db.execute('SELECT status FROM pages').fetchone()[0],'ok')
+                self.assertFalse((store.root/'manifest.json').exists())
+            finally:store.db.close()
+
     def test_retired_getchu_service_uses_dated_archive_lookup(self):
         from urllib.parse import parse_qs,urlsplit
         source=m.definitions()["getchu"]

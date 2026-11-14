@@ -375,7 +375,10 @@ def crawl(store,source,fetcher,mode="archive",max_pages=100):
             print("mirror",source["key"],status,"files",matched,actual,flush=True)
         except (OSError,ValueError,http.client.HTTPException) as error:
             store.db.execute("UPDATE mirror_frontier SET status='failed',capture_url=?,path=?,checked_at=?,error=? WHERE site=? AND url=? AND mode=?",(actual,rel,a.now(),str(error),source["key"],url,mode));store.db.commit();print("mirror failed",source["key"],url,error,flush=True)
-    store.export();return processed,found
+    # SQLite commits above are the checkpoint. A five-page discovery batch
+    # must not materialize the complete catalogue merely to discard its JSON.
+    # build-site produces the requested JSON from the published SQLite copy.
+    return processed,found
 
 
 class SharedArchiveFetcher:

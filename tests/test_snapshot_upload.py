@@ -128,6 +128,12 @@ class SnapshotUploadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'unsafe snapshot cache'):self.publish()
         self.assertEqual(list(outside.iterdir()),[]);self.assertEqual(self.client.created,0)
 
+    def test_snapshot_does_not_materialize_or_write_the_full_json_catalogue(self):
+        with patch.object(self.store,'export',side_effect=AssertionError('unexpected complete JSON export')):
+            self.publish()
+        self.assertEqual(self.values(),['a'])
+        self.assertFalse((self.store.root/'manifest.json').exists())
+
     def test_large_catalogue_routes_through_durable_stage(self):
         self.large()
         with patch.object(a,'s3_client',return_value=self.client),patch.object(s,'publish') as publish:

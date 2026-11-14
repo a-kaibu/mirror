@@ -89,7 +89,6 @@ def publish(store,client,namespace,bucket):
             size=store.db.execute('PRAGMA page_count').fetchone()[0]*store.db.execute('PRAGMA page_size').fetchone()[0]
             if shutil.disk_usage(directory).free < 3*size+1024**3:
                 raise OSError('disk reserve reached before snapshot staging')
-            store.export()
             with tempfile.TemporaryDirectory(prefix='build-',dir=directory) as temporary:
                 built=Path(temporary)/'index.sqlite3'
                 with closing(sqlite3.connect(built)) as backup:

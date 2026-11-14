@@ -1312,7 +1312,6 @@ def _publish_snapshot(store, namespace, bucket, profile="hf"):
     size=store.db.execute('PRAGMA page_count').fetchone()[0]*store.db.execute('PRAGMA page_size').fetchone()[0]
     if size>=PART_SIZE or snapshot_upload.has_pending(store.root,namespace,bucket):
         return snapshot_upload.publish(store,client,namespace,bucket)
-    store.export()
     # Consistent SQLite backup, not a copy of a live DB/WAL. Pages builds derive
     # HTML and their single JSON export from this same source of truth.
     with tempfile.TemporaryDirectory() as tmp:
