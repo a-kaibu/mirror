@@ -74,3 +74,24 @@ live compressed upload plus full read-back must pass before claiming publication
 works. Tests and remote CI alone do not establish this. Remaining accepted costs
 are temporary staging disk, one bounded compression pass per frozen generation,
 and continued publication lag while each generation is transferred.
+
+
+## Codec implementation, 2026-11-14
+
+`catalogue_transport.py` now provides deterministic, level-1 streaming gzip for
+an already immutable SQLite backup, plus bounded atomic restoration. Both paths
+retain a 1 GiB free-disk reserve; restoration defaults to a 16 GiB expanded limit.
+Gzip CRC/truncation and SQLite quick-check must pass before a restored generation
+replaces its destination. Temporary derivatives are removed on failure. The codec
+is not yet wired to publication or Pages: the raw canonical contract remains in
+force pending the live compressed transport and handover gates above. Tests cover
+determinism, complete recovery, corrupt/truncated/HTML input, invalid SQLite,
+expansion limits, disk pressure, symlinks and preservation of a prior generation.
+
+
+A finite real-backup round trip passed: 1,219,760,128 raw bytes became
+204,071,844 bytes, then restored to the identical raw SHA-256. Total elapsed time
+was 50.838 seconds including both SQLite checks, with 24,656 KiB peak RSS. Both
+temporary derivatives were removed. The private receipt is
+`archive/.work/catalogue-codec-live.json`. This proves the codec on real data;
+it does not establish remote compressed publication or Pages cutover.
