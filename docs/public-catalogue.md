@@ -23,3 +23,10 @@ receipt is `archive/.work/public-catalogue-live.json`.
 Tests check that origin URLs, errors and posted checksums survive in the public
 view; full source fields, attempt history and linked metadata remain available
 from the same SQLite; and static output still contains just one JSON catalogue.
+
+
+A retained byte-publication proof does not enable a download while that source's
+product association is quarantined. The source and its complete proof remain in
+SQLite; the file can still be offered when another confirmed source for the same
+product and bytes establishes its association. Both export profiles apply this
+rule.

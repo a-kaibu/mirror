@@ -186,7 +186,8 @@ def manifest(store, *, public=False):
             "name": data.get("release_name") or data["title"], "version": r["version"], "platform": r["platform"],
             "requirements": r["requirements"], "filename": data["filename"], "size": r["size"], "md5": r["md5"],
             "sha256": r["sha256"], "download_url": None, "remote_key": None, "public_verified_at": None, "sources": []})
-        if r["status"] in {"verified", "archived"} and r["sha256"] and r["remote_sha256"] == r["sha256"] and r["remote_verified_at"]:
+        if (r["status"] in {"verified", "archived"} and r["sha256"] and r["remote_sha256"] == r["sha256"] and r["remote_verified_at"]
+                and not data.get("fields", {}).get("source_association_quarantined")):
             namespace, bucket, key = r["remote_key"].split("/", 2)
             item.update(download_url=public_url(namespace, bucket, key, download=True), remote_key=r["remote_key"], public_verified_at=r["remote_verified_at"])
         if not item["filename"] and data["filename"]:

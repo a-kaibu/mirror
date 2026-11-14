@@ -300,6 +300,27 @@ class CatalogTests(unittest.TestCase):
         self.store.update("a", status="failed")
         self.assertIsNone(self.store.export()["files"][0]["download_url"])
 
+    def test_quarantined_source_retains_proof_without_enabling_download(self):
+        record=self.record('held');self.store.add(record);sha='a'*64
+        self.store.update('held',status='verified',sha256=sha,md5=record['expected_md5'],size=record['expected_size'],remote_sha256=sha,remote_key='vn-archive/mirrors/files/'+sha,remote_verified_at=a.now())
+        self.assertTrue(self.store.export()['files'][0]['download_url'])
+        record['fields']['source_association_quarantined']=True;self.store.add(record)
+        for public in [False,True]:
+            self.assertIsNone(c.export_manifest(self.store,public=public)['files'][0]['download_url'])
+        self.assertIsNotNone(self.store.db.execute("SELECT remote_verified_at FROM items WHERE id='held'").fetchone()[0])
+
+    def test_confirmed_source_can_enable_same_file_despite_quarantined_observation(self):
+        sha='a'*64
+        for ident in ['a','b']:
+            record=self.record(ident)
+            if ident=='a':record['fields']['source_association_quarantined']=True
+            self.store.add(record)
+            self.store.update(ident,status='verified',sha256=sha,md5=record['expected_md5'],size=record['expected_size'],remote_sha256=sha,remote_key='vn-archive/mirrors/files/'+sha,remote_verified_at=a.now())
+        data=c.export_manifest(self.store,public=True)
+        self.assertEqual(len(data['files']),1)
+        self.assertTrue(data['files'][0]['download_url'])
+        self.assertEqual(len(data['files'][0]['sources']),2)
+
     def test_static_html_escape_subpaths_and_single_json(self):
         r = self.record("a", '<script>alert("x")</script>')
         r["title"] = "作品 <img src=x onerror=alert(1)>"
