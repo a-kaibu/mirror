@@ -26,14 +26,20 @@ def validate_spec(spec):
     return sha,size,part_size,urls
 
 
-def validate_capabilities(sha,numbered_urls):
+def validate_capabilities(sha,numbered_urls,*,staging_key=None):
+    if staging_key is None:
+        if not isinstance(sha,str) or not re.fullmatch('[a-f0-9]{64}',sha):raise ValueError('invalid digest')
+        expected_path='/mirrors/files/'+sha
+    else:
+        if not isinstance(staging_key,str) or not re.fullmatch('staging/[a-f0-9]{64}',staging_key):raise ValueError('invalid staging key')
+        expected_path='/mirrors/'+staging_key
     upload_id=None
     for number,url in numbered_urls:
         if not isinstance(url,str):raise ValueError('invalid capability')
         parts=urlsplit(url);query=parse_qs(parts.query)
         if (parts.scheme!='https' or parts.hostname!='vn-archive.s3.hf.co' or parts.port not in (None,443)
                 or parts.username is not None or parts.password is not None or parts.fragment
-                or unquote(parts.path)!='/mirrors/files/'+sha):raise ValueError('invalid upload endpoint')
+                or unquote(parts.path)!=expected_path):raise ValueError('invalid upload endpoint')
         if query.get('partNumber')!=[str(number)] or len(query.get('uploadId',[]))!=1:raise ValueError('invalid part identity')
         if upload_id is None:upload_id=query['uploadId'][0]
         if query['uploadId'][0]!=upload_id or not upload_id:raise ValueError('mixed uploads')

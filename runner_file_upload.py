@@ -53,9 +53,20 @@ def public_source(url):
 
 def validate_spec(spec):
     sha=spec.get('sha256');size=spec.get('size');part_size=spec.get('part_size');parts=spec.get('parts')
-    if not isinstance(sha,str) or not re.fullmatch('[a-f0-9]{64}',sha):raise ValueError('invalid digest')
+    mode=spec.get('mode','verified')
+    if mode not in {'verified','staging'}:raise ValueError('invalid transfer mode')
+    if mode=='verified' or sha is not None:
+        if not isinstance(sha,str) or not re.fullmatch('[a-f0-9]{64}',sha):raise ValueError('invalid digest')
+    md5=spec.get('md5')
+    if md5 is not None and (not isinstance(md5,str) or not re.fullmatch('[a-f0-9]{32}',md5)):raise ValueError('invalid MD5')
+    staging_key=spec.get('staging_key')
+    if mode=='staging':
+        if not isinstance(staging_key,str) or not re.fullmatch('staging/[a-f0-9]{64}',staging_key):raise ValueError('invalid staging key')
+    elif staging_key is not None:raise ValueError('staging key requires staging mode')
     if type(size) is not int or not 0<size<=MAX_BYTES:raise ValueError('invalid size')
     if type(part_size) is not int or not MIN_PART<=part_size<=64*1024**2:raise ValueError('invalid part size')
+    published_size=spec.get('published_size')
+    if published_size is not None and (type(published_size) is not int or published_size!=size):raise ValueError('published size differs from transport size')
     public_source(spec.get('source_url'))
     if spec.get('referer'):public_source(spec['referer'])
     count=(size+part_size-1)//part_size
@@ -65,7 +76,7 @@ def validate_spec(spec):
         number=part.get('number')
         if type(number) is not int or not previous<number<=count:raise ValueError('invalid selected part number')
         previous=number
-    validate_capabilities(sha,((p['number'],p.get('url')) for p in parts))
+    validate_capabilities(sha,((p['number'],p.get('url')) for p in parts),staging_key=staging_key)
     return sha,size,part_size,parts
 
 
@@ -77,15 +88,20 @@ def transfer(spec,source_open=None,part_open=urlopen,clock=time.monotonic):
         source_open=fetcher.open
     with tempfile.TemporaryDirectory(prefix='mirror-runner-upload-') as folder:
         if shutil.disk_usage(folder).free<size+1024**3:raise OSError('runner disk reserve')
-        path=Path(folder)/'body';digest=hashlib.sha256();count=0;start=clock()
+        path=Path(folder)/'body';digest=hashlib.sha256();md5=hashlib.md5();count=0;start=clock()
         headers={'Referer':spec['referer']} if spec.get('referer') else {}
         with source_open(spec['source_url'],headers=headers) as response,path.open('wb') as target:
             if response.status!=200:raise ValueError('source HTTP status')
+            if response.headers.get('Content-Encoding','identity')!='identity':raise ValueError('encoded source body')
+            if 'html' in response.headers.get('Content-Type','').lower():raise ValueError('HTML source body')
             while chunk:=response.read(1024**2):
+                if count==0 and chunk[:512].lstrip().lower().startswith((b'<!doctype html',b'<html',b'<head',b'<body')):raise ValueError('HTML source body')
                 count+=len(chunk)
                 if count>size:raise ValueError('source exceeded expected size')
-                digest.update(chunk);target.write(chunk)
-        if (digest.hexdigest(),count)!=(sha,size):raise ValueError('refetched source digest or size mismatch')
+                digest.update(chunk);md5.update(chunk);target.write(chunk)
+        actual_sha=digest.hexdigest();actual_md5=md5.hexdigest()
+        if count!=size or (sha is not None and actual_sha!=sha):raise ValueError('refetched source digest or size mismatch')
+        if spec.get('md5') is not None and actual_md5!=spec['md5']:raise ValueError('published MD5 mismatch')
         downloaded=clock()-start;start=clock();accepted=[]
         with path.open('rb') as source:
             for part in parts:
@@ -99,7 +115,7 @@ def transfer(spec,source_open=None,part_open=urlopen,clock=time.monotonic):
                     if not isinstance(etag,str) or not etag:raise ValueError('part ETag missing')
                 accepted.append({'number':number,'size':expected,'sha256':hashlib.sha256(payload).hexdigest(),'etag':etag})
                 del payload
-        return {'sha256':sha,'size':size,'parts':accepted,'download_seconds':round(downloaded,3),
+        return {'sha256':actual_sha,'md5':actual_md5,'size':size,'parts':accepted,'download_seconds':round(downloaded,3),
                 'upload_seconds':round(clock()-start,3),'completed_public_object':False}
 
 
