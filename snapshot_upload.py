@@ -51,8 +51,9 @@ def cleanup_orphans(directory,key='index.sqlite3'):
             entries[0].unlink();child.rmdir()
 
 
-def publish(store,client,namespace,bucket,*,compressed=False):
-    key='index.sqlite3.gz' if compressed else 'index.sqlite3'
+def publish(store,client,namespace,bucket,*,compressed=False,pages=False):
+    if pages and not compressed:raise ValueError('Pages snapshots require compressed transport')
+    key='pages.sqlite3.gz' if pages else 'index.sqlite3.gz' if compressed else 'index.sqlite3'
     directory=slot(store.root,namespace,bucket,key)
     if any(p.is_symlink() for p in (directory,directory.parent,directory.parent.parent)):
         raise ValueError('unsafe snapshot cache directory')
@@ -92,13 +93,17 @@ def publish(store,client,namespace,bucket,*,compressed=False):
                 raise OSError('disk reserve reached before snapshot staging')
             with tempfile.TemporaryDirectory(prefix='build-',dir=directory) as temporary:
                 built=Path(temporary)/'index.sqlite3'
-                with closing(sqlite3.connect(built)) as backup:
-                    store.db.backup(backup);a._compact_snapshot(backup)
+                if pages:
+                    import pages_snapshot
+                    pages_snapshot.export(store,built)
+                else:
+                    with closing(sqlite3.connect(built)) as backup:
+                        store.db.backup(backup);a._compact_snapshot(backup)
                 raw_proof={}
                 if compressed:
                     import catalogue_transport
                     encoded=Path(temporary)/key
-                    expected=catalogue_transport.compress(built,encoded)
+                    expected=catalogue_transport.compress(built,encoded,**({"pages":True} if pages else {}))
                     raw_proof={name:expected[name] for name in ('raw_sha256','raw_size')}
                     built=encoded
                 else:expected=a.digest(built)

@@ -167,3 +167,75 @@ A catalogue-only mode in `provenance_watch.py` now uses its own supervisor/pass
 claims and calls nonblocking metadata publication without waiting for HTML. The
 live supervisor runs with `--catalogue-only --interval 1800`; ordinary HTML
 publication retains its existing independent supervisor and claims.
+
+
+## Separate Pages transport from the complete archival checkpoint
+
+The 2026-11-15 size audit found 2,179,559,424 bytes in the live database. The
+`mirror_links` table and its primary-key index alone occupied about 1.46 GB.
+Public manifest generation does not read that frontier/observation state. A
+size-only copy of the six catalogue tables held all 83,309 items and compressed
+to 35,843,500 bytes in 32.377 seconds; that probe omitted constraints and is not
+a deployable archive. Production size must be measured separately.
+
+Selected design: keep `archive/index.sqlite3` as the sole authoritative store
+and continue the existing complete `index.sqlite3.gz` checkpoint unchanged.
+Publish an independently derived, consistently copied `pages.sqlite3.gz` for
+Pages builds. It contains items, their complete catalogue associations,
+manufacturers, products, manufacturer aliases and classification revisions.
+It preserves publisher constraints, provenance fields and accepted public-body
+proofs; it omits discovery queues and other operational tables. GitHub Pages
+still generates one public JSON from SQLite. No manifest is committed or
+uploaded to HF.
+
+An explicit `public-pages` marker and schema/relation validation distinguish the
+derivative from a complete checkpoint. Normal catalogue restore must reject it;
+only `--pages` opts into that transport. Missing Pages transport (HTTP 404)
+permits bootstrap from the complete checkpoint. Corrupt/truncated transport,
+wrong purpose, relation failures and other HTTP/network errors must preserve
+the deployed site and may not silently select another generation. Snapshot
+freezing, exact object ownership, accepted-part resume and full anonymous hash
+read-back apply independently to each canonical key.
+
+Alternatives: keeping the complete transport for Pages needs no new format but
+couples file visibility to the expanding discovery database. Publishing JSON to
+HF would violate the chosen storage policy. A derived SQLite transport adds one
+replaceable object and a restore mode, while keeping the full checkpoint and
+one-JSON site contract. The new object is never used as a replacement for the
+SSOT or advertised as the full metadata export.
+
+Remaining risks are consistency during concurrent collection, accidental use of
+a partial copy as the SSOT, drift between copy and manifest schemas, and a
+separate transfer failing. Test a pinned read transaction across tables,
+manifest parity, purpose rejection, broken associations, interrupted transfer
+resume and independent claims. Use a new supervisor/pass claim for Pages so it
+does not interrupt the complete checkpoint. Release gates are those tests, a
+real small checkpoint with full public read-back, a successful Pages restore
+and build, and the actual public JSON containing recent accepted download
+links. The existing complete checkpoint path remains available throughout.
+
+The implementing agent will measure production size and publication latency
+before changing concurrency or dropping any further tables. Those questions do
+not block the selected six-table implementation. Failure to meet parity or
+purpose validation blocks publication of the derivative, rather than weakening
+its validation or the SSOT contract.
+
+
+Implementation copies the six original table schemas and their rows in one
+read transaction, then compares every source and destination row as bounded
+streams before committing. Foreign-key and missing-association checks and the
+purpose marker are validated again before gzip encoding and on restore. No full
+JSON is built on the collection host. The public-manifest parity, concurrent
+writer, tampered-copy, wrong-purpose, corruption/fallback, independent ownership
+and interrupted-upload tests pass with the rest of the 853-test suite.
+
+Run the independent producer with:
+
+```sh
+uv run python provenance_watch.py --root archive --pages-only --interval 300
+```
+
+The Pages workflow restores with `catalogue_restore.py --pages`. The complete
+checkpoint supervisor and its in-flight generation continue independently. A
+first real Pages checkpoint and actual public-JSON visibility remain release
+checks; production latency is not implied by the size-only probe.

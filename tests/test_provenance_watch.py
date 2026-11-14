@@ -65,3 +65,24 @@ class ProvenanceWatchTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class PagesPublicationWatchTests(unittest.TestCase):
+    def test_pages_publication_has_a_separate_pass_and_destination(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);store=Mock();client=Mock()
+            with exclusive_file(root/'.claims/catalogue-pass.lock'),patch.object(p.a,'Store',return_value=store),patch.object(p.a,'s3_client',return_value=client),patch('snapshot_upload.publish') as publish,patch.object(p.a,'publish_metadata') as full:
+                self.assertTrue(p.publish_once(root,pages_only=True))
+            publish.assert_called_once_with(store,client,'vn-archive','mirrors',compressed=True,pages=True);full.assert_not_called();store.db.close.assert_called_once()
+
+    def test_busy_pages_pass_and_conflicting_modes_never_open_a_store(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.object(p.a,'Store') as store:
+            with exclusive_file(Path(tmp)/'.claims/pages-pass.lock'):
+                with self.assertRaises(BlockingIOError):p.publish_once(tmp,pages_only=True)
+            with self.assertRaises(ValueError):p.publish_once(tmp,pages_only=True,catalogue_only=True)
+            store.assert_not_called()
+
+    def test_pages_supervisor_reloads_a_bounded_child(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.object(p.subprocess,'run',side_effect=[subprocess.CompletedProcess([],0),KeyboardInterrupt]) as run,patch.object(p.time,'sleep') as sleep:
+            with self.assertRaises(KeyboardInterrupt):p.watch(tmp,300,pages_only=True)
+            self.assertTrue(all(call.args[0][-1]=='--pages-only' for call in run.call_args_list));sleep.assert_called_once_with(300)

@@ -68,7 +68,7 @@ def snapshot_path(root,namespace,bucket,sha256,key='index.sqlite3'):
 
 def json_identity(namespace,bucket,key='index.sqlite3'):
     import json
-    if key not in {'index.sqlite3','index.sqlite3.gz'}:raise ValueError('invalid snapshot transport key')
+    if key not in {'index.sqlite3','index.sqlite3.gz','pages.sqlite3.gz'}:raise ValueError('invalid snapshot transport key')
     return json.dumps([namespace,bucket,key],separators=(',', ':'))
 
 
@@ -176,7 +176,7 @@ def _transfer_and_readback(store,client,namespace,bucket,key,path,sha256,size,re
     """Return a full public digest; never update source records or evict bodies."""
     path=Path(path)
     if (not isinstance(sha256,str) or not re.fullmatch('[a-f0-9]{64}',sha256)
-            or (key!='files/'+sha256 and not (snapshot and key in {'index.sqlite3','index.sqlite3.gz'})) or type(size) is not int or size<=0
+            or (key!='files/'+sha256 and not (snapshot and key in {'index.sqlite3','index.sqlite3.gz','pages.sqlite3.gz'})) or type(size) is not int or size<=0
             or type(part_size) is not int or not MIN_PART_SIZE<=part_size<=MAX_PART_SIZE
             or ((size+part_size-1)//part_size)>MAX_PARTS):
         raise ValueError('invalid immutable multipart upload parameters')

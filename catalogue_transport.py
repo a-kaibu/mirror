@@ -12,12 +12,18 @@ RESERVE=1024**3
 MAX_SIZE=16*1024**3
 
 
-def validate(path):
+def validate(path,*,pages=False):
     with Path(path).open("rb") as source:
         if source.read(16)!=b"SQLite format 3\x00":raise ValueError("missing SQLite catalogue header")
     with closing(sqlite3.connect(Path(path).resolve().as_uri()+"?mode=ro&immutable=1",uri=True)) as db:
         result=db.execute("PRAGMA quick_check").fetchall()
         if result!=[("ok",)]:raise ValueError("invalid SQLite catalogue")
+        marked=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mirror_pages_snapshot'").fetchone()
+        if pages:
+            if not marked:raise ValueError('missing Pages snapshot purpose')
+            import pages_snapshot
+            pages_snapshot.validate_connection(db)
+        elif marked:raise ValueError('Pages derivative is not a complete catalogue')
 
 
 def _destination(path):
@@ -28,12 +34,12 @@ def _destination(path):
     return path
 
 
-def compress(source,destination,*,reserve=RESERVE):
+def compress(source,destination,*,reserve=RESERVE,pages=False):
     """Encode an already frozen backup; no timestamps or local names in gzip."""
     if reserve<0:raise ValueError("invalid catalogue compression bounds")
     source=Path(source);destination=_destination(destination)
     if source.resolve()==destination.resolve():raise ValueError("source equals destination")
-    validate(source)
+    validate(source,pages=pages)
     raw_sha=hashlib.sha256();size=0
     temporary=None
     try:
@@ -55,7 +61,7 @@ def compress(source,destination,*,reserve=RESERVE):
         if temporary is not None:temporary.unlink(missing_ok=True)
 
 
-def restore(stream,destination,*,max_size=MAX_SIZE,reserve=RESERVE,compressed=True):
+def restore(stream,destination,*,max_size=MAX_SIZE,reserve=RESERVE,compressed=True,pages=False):
     """Consume gzip (or raw SQLite) with bounds and checks before replacement."""
     if max_size<=0 or reserve<0:raise ValueError("invalid catalogue restore bounds")
     destination=_destination(destination);temporary=None;sha=hashlib.sha256();size=0
@@ -69,7 +75,7 @@ def restore(stream,destination,*,max_size=MAX_SIZE,reserve=RESERVE,compressed=Tr
                     if shutil.disk_usage(destination.parent).free<len(data)+reserve:
                         raise OSError("disk reserve reached during catalogue restore")
                     sha.update(data);output.write(data)
-        validate(temporary)
+        validate(temporary,pages=pages)
         temporary.replace(destination)
         return {"sha256":sha.hexdigest(),"size":size}
     finally:

@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Restore verified SQLite catalogue transport
-        run: python catalogue_restore.py --output archive/index.sqlite3
+        run: python catalogue_restore.py --pages --output archive/index.sqlite3
       - name: Generate HTML and JSON from SQLite
         run: python archiver.py build-site --output dist
       - uses: actions/configure-pages@v5

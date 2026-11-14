@@ -7,8 +7,18 @@ import catalogue_transport as codec
 BASE="https://huggingface.co/buckets/vn-archive/mirrors/resolve"
 
 
-def restore(destination,*,base=BASE,opener=None,max_size=codec.MAX_SIZE,reserve=codec.RESERVE):
+def restore(destination,*,base=BASE,opener=None,max_size=codec.MAX_SIZE,reserve=codec.RESERVE,pages=False):
     opener=opener or urlopen
+    if pages:
+        try:
+            response=opener(Request(base.rstrip('/')+'/pages.sqlite3.gz',headers={'Accept-Encoding':'identity'}),timeout=60)
+        except HTTPError as error:
+            if error.code!=404:
+                error.close();raise
+            error.close()
+        else:
+            with response:proof=codec.restore(response,destination,max_size=max_size,reserve=reserve,pages=True)
+            return dict(proof,transport='pages-gzip')
     try:
         response=opener(Request(base.rstrip("/")+"/index.sqlite3.gz",headers={"Accept-Encoding":"identity"}),timeout=60)
     except HTTPError as error:
@@ -29,5 +39,6 @@ def restore(destination,*,base=BASE,opener=None,max_size=codec.MAX_SIZE,reserve=
 if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output",default="archive/index.sqlite3")
+    parser.add_argument("--pages",action="store_true",help="restore the marked Pages read model; full catalogue is only a 404 fallback")
     args=parser.parse_args()
-    print(restore(args.output),flush=True)
+    print(restore(args.output,pages=args.pages),flush=True)
