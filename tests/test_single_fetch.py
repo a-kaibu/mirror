@@ -141,3 +141,12 @@ class SingleFetchTests(unittest.TestCase):
         self.store.add({**self.record,'mirrors':['https://drive.google.com/uc?id=fixture']})
         self.assertIsNone(controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute))
         self.assertEqual(self.client.created,0)
+    def test_lost_dispatch_can_be_found_beyond_first_hundred_runs(self):
+        first=[dict(id=i,display_title='unrelated') for i in range(100)]
+        with patch.object(jobs,'gh',side_effect=[{'workflow_runs':first},{'workflow_runs':[dict(id=999,display_title='Runner upload target')]}]) as api:
+            self.assertEqual(jobs.find_run({'nonce':'target'}),999)
+        self.assertIn('page=2',api.call_args.args[0][1])
+
+    def test_duplicate_nonce_is_not_silently_assigned_to_a_run(self):
+        with patch.object(jobs,'gh',return_value={'workflow_runs':[dict(id=i,display_title='Runner upload target') for i in [1,2]]}):
+            with self.assertRaises(jobs.RunnerIdentityMismatch):jobs.find_run({'nonce':'target'})

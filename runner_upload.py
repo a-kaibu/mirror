@@ -20,6 +20,28 @@ class RunnerIdentityMismatch(ValueError):
     pass
 
 
+def find_run(state):
+    """Recover a lost dispatch acknowledgement beyond the newest run page."""
+    title='Runner upload '+state['nonce']
+    for page in range(1,11):
+        runs=gh(['api','repos/'+REPO+'/actions/workflows/'+WORKFLOW+'/runs?per_page=100&page='+str(page)])['workflow_runs']
+        matches=[run for run in runs if run.get('display_title')==title]
+        if len(matches)>1:raise RunnerIdentityMismatch('duplicate workflow nonce')
+        if matches:return matches[0]['id']
+        if len(runs)<100:return None
+        # API rows are newest first. Once older than persisted dispatch intent,
+        # the desired run cannot be hidden on a still older page.
+        created=[run.get('created_at') for run in runs]
+        if state.get('dispatch_attempted_at') and all(isinstance(value,str) for value in created):
+            from datetime import datetime
+            try:
+                oldest=min(datetime.fromisoformat(value.replace('Z','+00:00')) for value in created)
+                dispatched=datetime.fromisoformat(state['dispatch_attempted_at'].replace('Z','+00:00'))
+                if oldest<dispatched:return None
+            except ValueError:pass
+    return None
+
+
 def execute_job(state,spec,journal,*,timeout=1500):
     if not state.get('dispatch_attempted_at'):
         state['dispatch_attempted_at']=now();save(journal,state)
@@ -32,10 +54,9 @@ def execute_job(state,spec,journal,*,timeout=1500):
         observed=None
         try:
             if not state.get('run_id'):
-                runs=gh(['api','repos/'+REPO+'/actions/workflows/'+WORKFLOW+'/runs?per_page=30'])['workflow_runs']
-                matches=[r for r in runs if r.get('display_title')=='Runner upload '+state['nonce']]
-                if matches:
-                    state['run_id']=matches[0]['id'];save(journal,state)
+                recovered=find_run(state)
+                if recovered:
+                    state['run_id']=recovered;save(journal,state)
             if state.get('run_id'):observed=gh(['api','repos/'+REPO+'/actions/runs/'+str(state['run_id'])])
         except RuntimeError:pass  # Poll failure is not job completion or permission to redispatch.
         if observed:
