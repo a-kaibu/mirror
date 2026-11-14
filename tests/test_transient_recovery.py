@@ -20,9 +20,9 @@ class TransientRecoveryTests(unittest.TestCase):
         self.store.update(self.ident,status='failed',error=error)
         self.store.db.execute('INSERT INTO attempts(item_id,url,attempted_at,error) VALUES(?,?,?,?)',(self.ident,'https://source.test/demo.zip',(self.at-timedelta(hours=age)).isoformat(),error));self.store.db.commit()
     def test_only_temporary_errors_are_eligible(self):
-        for error in ['HTTP Error 429: Too Many Requests','HTTP Error 503: Service Unavailable','<urlopen error timed out>','Remote end closed connection without response','<urlopen error [Errno -3] Temporary failure in name resolution>']:
+        for error in ['HTTP Error 429: Too Many Requests','HTTP Error 503: Service Unavailable','HTTP Error 520: unknown origin error','HTTP Error 521: <none>','HTTP Error 522: connection timed out','HTTP Error 523: origin unreachable','HTTP Error 524: timeout','truncated HTTP body','<urlopen error timed out>','Remote end closed connection without response','<urlopen error [Errno -3] Temporary failure in name resolution>']:
             self.assertTrue(r.temporary(error),error)
-        for error in ['HTTP Error 404: Not Found','MD5 mismatch','server returned HTML for a download','<urlopen error [Errno -2] Name or service not known>','certificate verify failed']:
+        for error in ['HTTP Error 404: Not Found','HTTP Error 525: SSL handshake failed','HTTP Error 526: invalid SSL certificate','MD5 mismatch','server returned HTML for a download','<urlopen error [Errno -2] Name or service not known>','certificate verify failed']:
             self.assertFalse(r.temporary(error),error)
     def test_cooldown_and_requeue_receipt_preserve_attempt_evidence(self):
         self.fail('HTTP Error 429: Too Many Requests',2)
@@ -78,3 +78,19 @@ class TransientRecoveryTests(unittest.TestCase):
         self.fail('HTTP Error 429: Too Many Requests',6)
         self.fail('HTTP Error 404: Not Found',5)
         self.assertEqual(r.recover(self.store,self.at)['requeued'],0)
+
+    def test_origin_connection_failure_requeues_with_its_attempt_evidence(self):
+        self.fail('HTTP Error 521: <none>',4)
+        self.assertEqual(r.recover(self.store,self.at)['requeued'],1)
+        self.assertEqual(self.store.db.execute('SELECT status FROM items WHERE id=?',(self.ident,)).fetchone()[0],'pending')
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM attempts').fetchone()[0],1)
+        self.assertEqual(self.store.db.execute('SELECT reason FROM transient_retries').fetchone()[0],'HTTP Error 521: <none>')
+
+    def test_truncated_download_preserves_partial_bytes_and_obeys_cooldown(self):
+        partial=self.store.root/'files'/'kokoron'/self.ident/'demo.zip.part';partial.parent.mkdir(parents=True);partial.write_bytes(b'PK\x03\x04')
+        self.fail('truncated HTTP body',1)
+        self.assertEqual(r.recover(self.store,self.at)['cooling'],1)
+        self.assertEqual(partial.read_bytes(),b'PK\x03\x04')
+        self.assertEqual(r.recover(self.store,self.at+timedelta(hours=3))['requeued'],1)
+        self.assertEqual(partial.read_bytes(),b'PK\x03\x04')
+        self.assertIsNone(self.store.db.execute('SELECT path FROM items WHERE id=?',(self.ident,)).fetchone()[0])

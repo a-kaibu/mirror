@@ -12,8 +12,11 @@ from archive_lock import exclusive_file
 
 
 def temporary(error):
-    return bool(error and (re.match(r'^HTTP Error (?:408|425|429|500|502|503|504):',error)
-        or error in {'timed out','The read operation timed out','<urlopen error timed out>','Remote end closed connection without response'}
+    # Origin connection failures (520-524) can clear; retain the existing
+    # exponential cooldown. TLS failures (525/526) still require separate review.
+    # https://developers.cloudflare.com/fundamentals/reference/error-responses/
+    return bool(error and (re.match(r'^HTTP Error (?:408|425|429|500|502|503|504|52[0-4]):',error)
+        or error in {'timed out','The read operation timed out','<urlopen error timed out>','Remote end closed connection without response','truncated HTTP body'}
         or re.match(r'^(?:<urlopen error )?\[Errno (?:104|-3)\] (?:Connection reset by peer|Temporary failure in name resolution)',error)))
 
 
