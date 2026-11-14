@@ -1,6 +1,6 @@
 # Resumable binary publication
 
-Status: implementation for an explicit single-file pilot; ordinary publication keeps its current transport.
+Status: enabled by default for immutable files from 8 MiB through 80,000 MiB; smaller files keep a single SDK request. Existing processes are not interrupted.
 
 ## Evidence and decision
 
@@ -26,4 +26,4 @@ Tests must cover restart after a network failure, changed local content, opaque/
 
 ## Remaining decisions
 
-Global rollout waits for that live proof; the project maintainer/agent can then select a default from observed throughput and memory. This does not block the opt-in implementation. Mutable SQLite/provenance snapshot resume requires a durable immutable staging policy and a disk budget; it is deferred and continues using the existing uploader. No new daemon or host-wide network setting is introduced. The implementation has no blocker for the single immutable-file pilot. Expiry and the small acknowledgement crash windows above are accepted residual risks.
+Live proof completed on 2026-11-14: a 103,831,556-byte movie was interrupted after its first acknowledged part, resumed in a fresh process starting with part 2, completed all 13 parts, and passed full anonymous SHA-256/size verification. Object SHA-256: `2a0acbaabae762f068b3faba385e433d6509584613b4d93291995e39d7816c4e`. The finite parent reported `process resume exercised True` and evicted the local body only after public proof. This establishes correctness, not improved bandwidth: the resumed phase still took about 64 minutes. New processes therefore use sequential durable 8 MiB parts by default for eligible immutable bodies, preserving progress and bounding upload buffers. Files below 8 MiB retain the single-request SDK path; files beyond 10,000 parts use the existing uploader. An explicit Python `resumable=False` remains available for transport comparison. Existing productive transfers retain their loaded implementation. Mutable SQLite/provenance snapshot resume requires a durable immutable staging policy and a disk budget; it is deferred and continues using the existing uploader. No new daemon or host-wide network setting is introduced. The implementation has no blocker for the single immutable-file pilot. Expiry and the small acknowledgement crash windows above are accepted residual risks.

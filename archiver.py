@@ -1122,7 +1122,7 @@ def init_bucket(namespace, bucket, profile="hf"):
     print(f"bucket ready: https://huggingface.co/buckets/{namespace}/{bucket}")
 
 
-def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ident=None, metadata=True, recheck=False, resumable=False):
+def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ident=None, metadata=True, recheck=False, resumable=None):
     from boto3.s3.transfer import TransferConfig
     from botocore.exceptions import ClientError
     client = s3_client(namespace, profile)
@@ -1149,6 +1149,8 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
         path = store.root / row["path"] if row["path"] else None
         result = validate(path, json.loads(row["data"]), dict(row)) if path else {"sha256": row["sha256"], "size": row["size"]}
         key = "files/" + result["sha256"]
+        from multipart_upload import PART_SIZE,MAX_PARTS
+        retain_parts = resumable if resumable is not None else PART_SIZE <= result["size"] <= PART_SIZE * MAX_PARTS
         count += 1
         # A successful upload alone is insufficient. Always anonymously read
         # back the complete object, including on a rerun after interruption.
@@ -1156,7 +1158,7 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
         if key not in checked and not known:
             if path is None:
                 raise ValueError("local file unavailable for unpublished object: " + row["id"])
-            if resumable:
+            if retain_parts:
                 from multipart_upload import transfer_and_readback,PublicReadbackMismatch
                 try:
                     checked[key]=transfer_and_readback(store,client,namespace,bucket,key,path,result['sha256'],result['size'],
@@ -1189,7 +1191,7 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
             if bound:acknowledged=store.update_if_current(row['id'],current['data'],**proof)
         if not acknowledged:
             raise ValueError("source metadata changed during publication; verified remote object retained")
-        if resumable:
+        if retain_parts:
             from multipart_upload import discard
             discard(store,namespace,bucket,key,result['sha256'])
         print(f"public read-back verified: {namespace}/{bucket}/{key}")
@@ -1393,7 +1395,7 @@ def main(argv=None):
             p.add_argument("--delay", type=float, default=1)
         if command == "upload":
             p.add_argument("--id", help="upload one catalog source record")
-            p.add_argument("--resumable", action="store_true", help="pilot: retain acknowledged multipart progress; requires --id")
+            p.add_argument("--resumable", action="store_true", default=None, help="force resumable upload even for small files; requires --id")
             p.add_argument("--files-only", action="store_true", help="publish binary only, without a catalogue/provenance checkpoint")
             p.add_argument("--namespace", default="vn-archive")
             p.add_argument("--bucket", default="mirrors")
@@ -1403,7 +1405,7 @@ def main(argv=None):
         from mirror_sources import definitions
         if args.site not in definitions():parser.error("unregistered source: "+args.site)
     if args.command=='upload' and args.resumable and not args.id:
-        parser.error('--resumable requires --id for the single-file pilot')
+        parser.error('--resumable requires --id for an explicit single-file override')
     if args.command == "archive-batch" and not 0 <= args.shard_index < args.shards:
         parser.error("--shard-index must be between 0 and --shards - 1")
     if args.command == "doctor":

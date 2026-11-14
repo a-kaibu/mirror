@@ -256,6 +256,25 @@ class PublicationIntegrationTests(unittest.TestCase):
     def publish(self,proof=None):
         with patch.object(a,'s3_client',return_value=self.client),patch.object(a,'public_digest',side_effect=proof or self.proof):
             return a.publish(self.store,'vn-archive','mirrors',ident='target',metadata=False,resumable=True)
+    def test_default_large_file_uses_durable_parts_and_full_readback(self):
+        body=b'x'*(m.PART_SIZE+1)
+        (self.store.root/'files/body').write_bytes(body)
+        self.sha=hashlib.sha256(body).hexdigest();self.key='files/'+self.sha
+        self.record['expected_md5']=hashlib.md5(body).hexdigest()
+        self.record['expected_size']=len(body)
+        self.store.add(self.record)
+        self.store.update('target',status='verified',path='files/body',sha256=self.sha,md5=self.record['expected_md5'],size=len(body))
+        with patch.object(a,'s3_client',return_value=self.client),patch.object(a,'public_digest',side_effect=self.proof) as proof:
+            self.assertEqual(a.publish(self.store,'vn-archive','mirrors',ident='target',metadata=False),1)
+        self.assertEqual(self.client.sent,[1,2]);proof.assert_called_once()
+        self.assertEqual(self.store.db.execute("SELECT remote_sha256 FROM items WHERE id='target'").fetchone()[0],self.sha)
+
+    def test_default_small_file_keeps_single_request_and_full_readback(self):
+        def upload(path,bucket,key,**kwargs):self.client.objects[key]=Path(path).read_bytes()
+        with patch.object(self.client,'upload_file',side_effect=upload) as upload_file,patch.object(a,'s3_client',return_value=self.client),patch.object(a,'public_digest',side_effect=self.proof) as proof:
+            self.assertEqual(a.publish(self.store,'vn-archive','mirrors',ident='target',metadata=False),1)
+        upload_file.assert_called_once();proof.assert_called_once();self.assertEqual(self.client.created,0)
+
     def test_success_records_proof_and_clears_only_transfer_checkpoint(self):
         self.assertEqual(self.publish(),1)
         row=self.store.db.execute("SELECT * FROM items WHERE id='target'").fetchone()

@@ -1,4 +1,4 @@
-"""Opt-in immutable-file uploads with durable, independently verified parts."""
+"""Immutable-file uploads with durable, independently verified parts."""
 import hashlib
 from contextlib import contextmanager
 import sqlite3
