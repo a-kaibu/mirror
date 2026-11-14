@@ -279,7 +279,11 @@ URL; smaller files, larger files and unsupported source URLs use the normal host
 transport. Each source is still downloaded and verified locally first. A delegated
 failure stops the batch and retains the local body; it does not start a competing
 local upload. A busy object claim defers that source, retains its verified body
-and lets the batch continue with other files; a later pass retries it. Default collectors keep the host transport. A failed
+and lets the batch continue with other files; a later pass retries it. Before a fresh
+download, a verified local equivalent with the same published MD5 and manufacturer
+can defer duplicate origin traffic while another process holds its source claim.
+Posted SHA-256 and exact size constraints must also agree. An unowned local file
+never blocks recovery, and deferral does not create publication proof. Default collectors keep the host transport. A failed
 refetch retains the local body. Failures abort that exact delegated upload before
 local fallback can reuse the source; an interrupted active delegation must be
 resumed with the same opt-in command, rather than writing locally over a live job.

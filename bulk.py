@@ -94,6 +94,33 @@ def scheduling_size(record,live_sizes):
     return max(1,int(value)) if 0<value<2**63 else 2**63
 
 
+def equivalent_upload_active(store, row, namespace, bucket):
+    """Defer a fresh download while a checksum-bound local donor is owned."""
+    if row["path"] or row["status"] == "verified":return False
+    record=json.loads(row["data"])
+    if (record.get("fields") or {}).get("source_association_quarantined"):return False
+    md5=record.get("expected_md5")
+    if not isinstance(md5,str) or not re.fullmatch('[a-f0-9]{32}',md5) or not record.get("brand"):return False
+    maker=store.db.execute("SELECT p.manufacturer_id FROM item_catalog c JOIN products p ON p.id=c.product_id WHERE c.item_id=?",(row['id'],)).fetchone()
+    if not maker:return False
+    donors=store.db.execute("""SELECT d.* FROM items d JOIN item_catalog c ON c.item_id=d.id
+        JOIN products p ON p.id=c.product_id WHERE d.id!=? AND d.md5=?
+        AND p.manufacturer_id=? AND d.status='verified' AND d.path IS NOT NULL
+        AND d.sha256 IS NOT NULL""",(row['id'],md5,maker[0])).fetchall()
+    for donor in donors:
+        if publicly_archived(donor,namespace,bucket):continue
+        if (json.loads(donor['data']).get('fields') or {}).get('source_association_quarantined'):continue
+        if record.get('expected_sha256') and record['expected_sha256']!=donor['sha256']:continue
+        if record.get('expected_size') is not None and record['expected_size']!=donor['size']:continue
+        path=store.root/donor['path']
+        if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to((store.root/'files').resolve()):continue
+        claim=store.root/'.claims'/(hashlib.sha256(donor['id'].encode()).hexdigest()+'.lock')
+        try:
+            with exclusive_file(claim,blocking=False):pass
+        except BlockingIOError:return True
+    return False
+
+
 def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", profile="hf", site="both",
                   limit=None, keep_local=False, reserve_bytes=16 * 1024**3, checkpoint_every=10, retry_failed=False, shards=1, shard_index=0, runner_upload=False):
     if shards < 1 or not 0 <= shard_index < shards:
@@ -152,6 +179,10 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
                 stats["reused"] += 1
             else:
                 record = json.loads(row["data"])
+                if equivalent_upload_active(store,row,namespace,bucket):
+                    stats["busy"] += 1
+                    print("batch download deferred equivalent upload",row["id"],flush=True)
+                    continue
                 required = (record.get("expected_size") or 4 * 1024**3) + reserve_bytes
                 if not keep_local and shutil.disk_usage(store.root).free < required:
                     for candidate in store.rows():

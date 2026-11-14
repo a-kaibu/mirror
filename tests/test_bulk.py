@@ -73,6 +73,40 @@ class BulkTests(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(self.store.db.execute("SELECT status FROM items WHERE id='a'").fetchone()[0], "archived")
 
+    def test_active_equivalent_defers_download_until_public_proof_exists(self):
+        from archive_lock import exclusive_file
+        self.add("donor");self.add("waiting")
+        path=self.store.root/'files'/'donor.zip';path.parent.mkdir();path.write_bytes(PAYLOAD)
+        sha=hashlib.sha256(PAYLOAD).hexdigest()
+        self.store.update('donor',status='verified',path='files/donor.zip',sha256=sha,md5=hashlib.md5(PAYLOAD).hexdigest(),size=len(PAYLOAD))
+        claim=self.store.root/'.claims'/(hashlib.sha256(b'donor').hexdigest()+'.lock')
+        with exclusive_file(claim,blocking=False),patch.object(bulk,'download',side_effect=AssertionError('duplicate origin download')),patch.object(bulk,'publish_metadata'):
+            result=bulk.archive_batch(self.store,Fetch([]),reserve_bytes=0)
+        self.assertEqual(result['busy'],2)
+        self.assertEqual(self.store.db.execute("SELECT status FROM items WHERE id='waiting'").fetchone()[0],'pending')
+        self.mark_public('donor',path='files/donor.zip')
+        with patch.object(bulk,'download',side_effect=AssertionError('already public')),patch.object(bulk,'publish_metadata'):
+            result=bulk.archive_batch(self.store,Fetch([]),reserve_bytes=0)
+        self.assertEqual(result['reused'],1)
+        self.assertEqual(self.store.db.execute("SELECT status FROM items WHERE id='waiting'").fetchone()[0],'archived')
+
+    def test_equivalent_deferral_needs_owner_brand_and_consistent_constraints(self):
+        from archive_lock import exclusive_file
+        self.add('donor');record=self.add('waiting')
+        path=self.store.root/'files'/'donor.zip';path.parent.mkdir();path.write_bytes(PAYLOAD)
+        self.store.update('donor',status='verified',path='files/donor.zip',sha256=hashlib.sha256(PAYLOAD).hexdigest(),md5=hashlib.md5(PAYLOAD).hexdigest(),size=len(PAYLOAD))
+        get=lambda:self.store.db.execute("SELECT * FROM items WHERE id='waiting'").fetchone()
+        self.assertFalse(bulk.equivalent_upload_active(self.store,get(),'vn-archive','mirrors'))
+        claim=self.store.root/'.claims'/(hashlib.sha256(b'donor').hexdigest()+'.lock')
+        with exclusive_file(claim,blocking=False):
+            self.assertTrue(bulk.equivalent_upload_active(self.store,get(),'vn-archive','mirrors'))
+            for change in [dict(brand='Different Brand'),dict(expected_size=len(PAYLOAD)+1),dict(expected_sha256='0'*64),dict(fields={'source_association_quarantined':True}),dict(expected_md5=None)]:
+                with self.subTest(change=change):
+                    self.store.add({**record,**change})
+                    self.assertFalse(bulk.equivalent_upload_active(self.store,get(),'vn-archive','mirrors'))
+            self.store.add(record);path.unlink()
+            self.assertFalse(bulk.equivalent_upload_active(self.store,get(),'vn-archive','mirrors'))
+
     def test_cli_forwards_batch_runner_option(self):
         for enabled in [False, True]:
             args = ["--root", self.tmp.name, "archive-batch", "--site", "suezou", "--limit", "1"]
