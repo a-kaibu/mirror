@@ -19,6 +19,19 @@ class WatchRecoveryTests(unittest.TestCase):
         store=a.Store(self.root)
         record=a.parse_detail(HTML,'https://source.test/item','lathercraft')[0];record['id']='target';store.add(record);store.db.close()
         self.factory=a.Store
+    def test_watch_forwards_explicit_runner_choice_and_keeps_source_claim(self):
+        for enabled in [False, True]:
+            stop=SimpleNamespace(is_set=lambda:False,wait=lambda delay:True)
+            def transfer(store,*args,**kwargs):
+                self.assertEqual(kwargs['runner_upload'],enabled)
+                self.assertEqual(kwargs['site'],'lathercraft')
+                with self.assertRaises(BlockingIOError):
+                    with exclusive_file(Path(self.root)/'.claims/watch-lathercraft.lock',blocking=False):pass
+            with self.subTest(enabled=enabled),patch.object(w,'ready',return_value=1),patch.object(w,'archive_batch',side_effect=transfer) as batch:
+                w.watch(self.root,'lathercraft',stop,runner_upload=enabled)
+                batch.assert_called_once()
+            with exclusive_file(Path(self.root)/'.claims/watch-lathercraft.lock',blocking=False):pass
+
     def test_busy_snapshot_is_closed_and_next_iteration_uses_fresh_connection(self):
         stores=[];waits=[];calls=[];codes=[]
         writer=sqlite3.connect(self.root+'/index.sqlite3',timeout=.1)

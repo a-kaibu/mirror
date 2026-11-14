@@ -70,7 +70,7 @@ def ready(store,site):
     return store.db.execute("SELECT count(*) FROM items WHERE site=? AND status IN ('pending','verified')",(site,)).fetchone()[0]
 
 
-def watch(root,site,stop,interval=60):
+def watch(root,site,stop,interval=60,runner_upload=False):
     with exclusive_file(Path(root)/'.claims'/('watch-'+site+'.lock')):
         store=None
         try:
@@ -80,7 +80,7 @@ def watch(root,site,stop,interval=60):
                     if store is None:store=a.Store(root)
                     if ready(store,site):
                         print('archive watcher work',site,flush=True)
-                        archive_batch(store,a.Fetcher(delay=10,timeout=30,retries=2,tls_pins=a.source_tls_pins()),site=site,checkpoint_every=25)
+                        archive_batch(store,a.Fetcher(delay=10,timeout=30,retries=2,tls_pins=a.source_tls_pins()),site=site,checkpoint_every=25,runner_upload=runner_upload)
                 except Exception as error:
                     print('archive watcher failed',site,type(error).__name__,str(error),flush=True)
                     if store is not None:
@@ -99,12 +99,13 @@ def watch(root,site,stop,interval=60):
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',default='archive');parser.add_argument('--site',action='append');args=parser.parse_args()
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',default='archive');parser.add_argument('--site',action='append');parser.add_argument("--runner-upload",action="store_true",help="opt selected sources into bounded delegated uploads");args=parser.parse_args()
+    if args.runner_upload and not args.site:parser.error("--runner-upload requires explicit --site")
     sites=args.site or [key for key,source in m.definitions().items() if source['adapter']!='native']
     invalid=set(sites)-set(m.definitions())-{'official'}
     if invalid:parser.error('unregistered source: '+','.join(sorted(invalid)))
     stop=threading.Event();pool=ThreadPoolExecutor(max_workers=max(1,len(sites)),thread_name_prefix='archive-watch')
-    jobs=[pool.submit(watch,args.root,site,stop) for site in dict.fromkeys(sites)]
+    jobs=[pool.submit(watch,args.root,site,stop,runner_upload=args.runner_upload) for site in dict.fromkeys(sites)]
     try:
         for job in jobs:job.result()
     except KeyboardInterrupt:

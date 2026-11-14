@@ -261,6 +261,16 @@ can opt in to the same transport:
 uv run python archiver.py archive-batch --site suezou --runner-upload --limit 25
 ```
 
+For continuous collection from an explicitly selected source:
+
+```sh
+uv run python archive_watch.py --site lathercraft --runner-upload
+```
+
+The watcher keeps the source supervisor claim and retries after publication
+errors with its existing cooldown. Delegation requires explicit `--site` selection;
+default watchers retain host uploads.
+
 It delegates files from 8 MiB through 2 GiB with an eligible public HTTP(S) source
 URL; smaller files, larger files and unsupported source URLs use the normal host
 transport. Each source is still downloaded and verified locally first. A delegated
