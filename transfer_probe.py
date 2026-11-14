@@ -35,11 +35,11 @@ def gh(arguments):
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
-def client():
+def client(profile="hf"):
     import boto3
     from botocore.config import Config
     # Explicit SigV4 also governs presigning; the SDK may otherwise choose V2.
-    return boto3.Session(profile_name='hf').client('s3',endpoint_url='https://vn-archive.s3.hf.co',
+    return boto3.Session(profile_name=profile).client('s3',endpoint_url='https://vn-archive.s3.hf.co',
         config=Config(signature_version='s3v4',region_name='us-east-1',s3={'addressing_style':'path'},
             request_checksum_calculation='when_required',response_checksum_validation='when_required',
             connect_timeout=10,read_timeout=60,retries={'total_max_attempts':2}))

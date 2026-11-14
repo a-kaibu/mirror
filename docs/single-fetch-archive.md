@@ -3,7 +3,9 @@
 Status: design selected; staging worker and combined public hash read-back are
 implemented and unit tested. Staged completion, conditional promotion, public
 proof and source CAS are implemented and unit tested in `staged_archive.py`.
-Job orchestration, collector integration and production migration remain.
+Durable job orchestration is implemented in `single_fetch.py`, including source
+and equivalent claims, frozen-spec identity, timeout resume, failed-run abort
+and promotion recovery. Collector integration and production migration remain.
 Existing collection stays active during implementation. This replaces the double
 origin read for new eligible files; existing verified-local upload remains usable.
 

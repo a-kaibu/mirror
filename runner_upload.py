@@ -16,6 +16,42 @@ from transfer_probe import gh,save,now,REPO
 WORKFLOW='runner-upload.yml'
 
 
+class RunnerIdentityMismatch(ValueError):
+    pass
+
+
+def execute_job(state,spec,journal,*,timeout=1500):
+    if not state.get('dispatch_attempted_at'):
+        state['dispatch_attempted_at']=now();save(journal,state)
+        with tempfile.TemporaryDirectory(prefix='mirror-runner-dispatch-') as folder:
+            request=Path(folder)/'request.json';save(request,{'ref':'main','inputs':{'nonce':state['nonce'],'spec':encode_spec(spec)}})
+            try:gh(['api','repos/'+REPO+'/actions/workflows/'+WORKFLOW+'/dispatches','--method','POST','--input',str(request)])
+            except RuntimeError:pass  # Observe the same nonce after a lost acknowledgement.
+    deadline=time.monotonic()+timeout;last=None
+    while time.monotonic()<deadline:
+        observed=None
+        try:
+            if not state.get('run_id'):
+                runs=gh(['api','repos/'+REPO+'/actions/workflows/'+WORKFLOW+'/runs?per_page=30'])['workflow_runs']
+                matches=[r for r in runs if r.get('display_title')=='Runner upload '+state['nonce']]
+                if matches:
+                    state['run_id']=matches[0]['id'];save(journal,state)
+            if state.get('run_id'):observed=gh(['api','repos/'+REPO+'/actions/runs/'+str(state['run_id'])])
+        except RuntimeError:pass  # Poll failure is not job completion or permission to redispatch.
+        if observed:
+            if observed['head_sha']!=state['head_sha']:raise RunnerIdentityMismatch('runner commit identity changed')
+            if observed['status']!=last:print('runner upload',state['run_id'],observed['status'],flush=True);last=observed['status']
+            if observed['status']=='completed':
+                state['conclusion']=observed['conclusion'];save(journal,state)
+                if state['conclusion']!='success':raise RuntimeError('runner transfer failed')
+                break
+        time.sleep(15)
+    else:raise TimeoutError('runner transfer observation deadline')
+    with tempfile.TemporaryDirectory(prefix='mirror-runner-receipt-') as folder:
+        gh(['run','download',str(state['run_id']),'--repo',REPO,'--name','runner-upload','--dir',folder])
+        return json.loads((Path(folder)/'runner-upload.json').read_text())
+
+
 class PartClient:
     delegated_uploads=True
 
@@ -83,35 +119,7 @@ class PartClient:
         finally:db.close()
 
     def _execute(self,state,spec,journal):
-        if not state.get('dispatch_attempted_at'):
-            state['dispatch_attempted_at']=now();save(journal,state)
-            with tempfile.TemporaryDirectory(prefix='mirror-runner-dispatch-') as folder:
-                request=Path(folder)/'request.json';save(request,{'ref':'main','inputs':{'nonce':state['nonce'],'spec':encode_spec(spec)}})
-                try:gh(['api','repos/'+REPO+'/actions/workflows/'+WORKFLOW+'/dispatches','--method','POST','--input',str(request)])
-                except RuntimeError:pass  # Observe the same nonce after a lost acknowledgement.
-        deadline=time.monotonic()+self.timeout;last=None
-        while time.monotonic()<deadline:
-            observed=None
-            try:
-                if not state.get('run_id'):
-                    runs=gh(['api','repos/'+REPO+'/actions/workflows/'+WORKFLOW+'/runs?per_page=30'])['workflow_runs']
-                    matches=[r for r in runs if r.get('display_title')=='Runner upload '+state['nonce']]
-                    if matches:
-                        state['run_id']=matches[0]['id'];save(journal,state)
-                if state.get('run_id'):observed=gh(['api','repos/'+REPO+'/actions/runs/'+str(state['run_id'])])
-            except RuntimeError:pass  # Poll failure is not job completion or permission to redispatch.
-            if observed:
-                if observed['head_sha']!=state['head_sha']:raise ValueError('runner commit identity changed')
-                if observed['status']!=last:print('runner upload',state['run_id'],observed['status'],flush=True);last=observed['status']
-                if observed['status']=='completed':
-                    state['conclusion']=observed['conclusion'];save(journal,state)
-                    if state['conclusion']!='success':raise RuntimeError('runner transfer failed')
-                    break
-            time.sleep(15)
-        else:raise TimeoutError('runner transfer observation deadline')
-        with tempfile.TemporaryDirectory(prefix='mirror-runner-receipt-') as folder:
-            gh(['run','download',str(state['run_id']),'--repo',REPO,'--name','runner-upload','--dir',folder])
-            return json.loads((Path(folder)/'runner-upload.json').read_text())
+        return execute_job(state,spec,journal,timeout=self.timeout)
 
     def _verify_and_seed(self,state,receipt,manifest):
         if (receipt.get('nonce')!=state['nonce'] or receipt.get('sha256')!=self.sha or receipt.get('size')!=self.size
