@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 import archiver as a
-from mirror_reparse import reparse,parser_archiver_source,parser_versions,parser_portals_source
+from mirror_reparse import reparse,parser_archiver_source,parser_versions,parser_portals_source,parser_mirror_source
 import portals
 
 
@@ -135,3 +135,15 @@ class HtmlFileCacheTests(unittest.TestCase):
         with patch.object(Path,'read_bytes',racing_read):self.assertEqual(reparse(self.store),(1,1,0))
         self.assertEqual(reparse(self.store),(1,1,0))
         self.assertEqual(len(self.store.rows()),2)
+
+
+class NavigationFingerprintTests(unittest.TestCase):
+    def test_navigation_only_changes_do_not_invalidate_saved_html(self):
+        source=b'def navigable(url): return 1\ndef crawl(url): return navigable(url)\ndef add_record(record): return record\n'
+        self.assertEqual(parser_mirror_source(source),parser_mirror_source(source.replace(b'return 1',b'return 2')))
+        self.assertNotEqual(parser_mirror_source(source),parser_mirror_source(source.replace(b'return record',b'return None')))
+
+    def test_parser_dependency_and_dynamic_lookup_retain_full_fingerprint(self):
+        for body in [b'return navigable(record)',b'return globals()["navigable"](record)',b'return getattr(module,"navigable")(record)']:
+            source=b'def navigable(url): return 1\ndef add_record(record): '+body+b'\n'
+            self.assertNotEqual(parser_mirror_source(source),parser_mirror_source(source.replace(b'return 1',b'return 2')))

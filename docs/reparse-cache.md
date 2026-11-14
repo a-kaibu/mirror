@@ -21,3 +21,17 @@ reads, measured independently of SQLite I/O. Receipts are private under
 `archive/.work/reparse-file-cache-html-live.json`. Tests cover file replacement at
 the same size/mtime, deletion and restoration, changes during reading, parser
 updates, old-cache migration and unchanged HTML requiring no read.
+
+
+Navigation-only edits to `mirror_sources.navigable` also retain the extraction
+fingerprint. Other source changes still invalidate it; a direct or dynamic
+reference to that helper outside the crawler conservatively restores the full
+module fingerprint. During the live cutover, equality of all non-navigation AST
+nodes was checked against the previous committed source before promoting 55,209
+exact old parser identities. Original hashes and parse times were retained.
+
+DMM product-review URLs are now observation-only navigation. Existing observed
+links and captured HTML are kept. The 1,232 pending review targets were marked
+`excluded_navigation`; product pages and review query parameters on product URLs
+remain eligible. This reduces traversal work without narrowing the distribution
+file archive or deleting source evidence.

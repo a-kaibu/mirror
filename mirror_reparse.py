@@ -47,10 +47,29 @@ def parser_portals_source(source,site):
     return ast.dump(tree,include_attributes=False).encode()
 
 
+def parser_mirror_source(source):
+    # Navigation selects future captures; it does not change extraction from
+    # HTML already saved. Retain the full fingerprint if extraction gains a
+    # direct or dynamic dependency on this otherwise isolated function.
+    tree=ast.parse(source)
+    others=[node for node in tree.body if not (isinstance(node,ast.FunctionDef) and node.name=='navigable')]
+    for node in others:
+        if isinstance(node,ast.FunctionDef) and node.name=='crawl':continue
+        for part in ast.walk(node):
+            if ((isinstance(part,ast.Name) and part.id=='navigable')
+                    or (isinstance(part,ast.Attribute) and part.attr=='navigable')
+                    or (isinstance(part,ast.Constant) and part.value=='navigable')
+                    or (isinstance(part,ast.Call) and isinstance(part.func,ast.Name)
+                        and part.func.id in {'getattr','globals','locals','vars','__import__','eval','exec'})):
+                return source
+    tree.body=others
+    return ast.dump(tree,include_attributes=False).encode()
+
+
 def parser_versions(site=None):
     portal_source=Path(portals.__file__).read_bytes();mirror_source=Path(m.__file__).read_bytes()
     source=Path(a.__file__).read_bytes()
-    current=hashlib.sha256(parser_portals_source(portal_source,site)+mirror_source+parser_archiver_source(source)).hexdigest()
+    current=hashlib.sha256(parser_portals_source(portal_source,site)+parser_mirror_source(mirror_source)+parser_archiver_source(source)).hexdigest()
     legacy=hashlib.sha256(portal_source+mirror_source+source).hexdigest()
     return current,legacy
 

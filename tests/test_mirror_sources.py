@@ -848,3 +848,25 @@ class MultiInsideJnodeTests(unittest.TestCase):
         html=html.replace('<a name="20030401">[2003/04/01公開]</a>','[2003/04/01公開]')
         rows=parse_multi_inside(html,self.page)
         self.assertEqual([(r['brand'],r['filename'],r['expected_md5']) for r in rows],[('ブランドA','a.zip','a'*32),('ブランドB','b.zip','b'*32)])
+
+
+class DmmNavigationTests(unittest.TestCase):
+    def test_reviews_are_observed_without_becoming_crawl_targets(self):
+        home='https://www.dmm.co.jp/';product=home+'mono/pcgame/-/detail/=/cid=example/'
+        review=home+'mono/pcgame/-/detail/review/=/cid=example/?rating=4'
+        source={**m.definitions()['dmm'],'seeds':[],'homes':[home]}
+        html='<a href="'+product+'">作品</a><a href="'+review+'">レビュー</a>'
+        with tempfile.TemporaryDirectory() as tmp:
+            store=a.Store(tmp)
+            try:
+                m.crawl(store,source,Fetch([Response(html.encode(),url=home)]),mode='live',max_pages=1)
+                self.assertIsNotNone(store.db.execute("SELECT 1 FROM mirror_frontier WHERE site='dmm' AND url=?",(product,)).fetchone())
+                self.assertIsNone(store.db.execute("SELECT 1 FROM mirror_frontier WHERE site='dmm' AND url=?",(review,)).fetchone())
+                self.assertIsNotNone(store.db.execute("SELECT 1 FROM mirror_links WHERE site='dmm' AND url=?",(review,)).fetchone())
+            finally:store.db.close()
+
+    def test_product_review_query_and_archived_product_remain_navigable(self):
+        source=m.definitions()['dmm'];product='https://www.dmm.co.jp/mono/pcgame/-/detail/=/cid=review/?review=1'
+        self.assertTrue(m.navigable(source,product))
+        self.assertTrue(m.navigable(source,a.replay(product,'20180101000000')))
+        self.assertFalse(m.navigable(source,a.replay('https://www.dmm.co.jp/mono/pcgame/-/detail/review/=/cid=test/','20180101000000')))

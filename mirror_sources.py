@@ -74,7 +74,7 @@ def navigable(source,url):
     if key=="alicefree":return path in {"/","/index.html"}
     if key=="moepedia":return path=="/" or path.startswith("/trial/") or bool(re.fullmatch(r"/game/\d+/?",path))
     if key=="getchu":return path=="/" or path=="/all/demo.html" or path.endswith("/soft.phtml") or bool(re.fullmatch(r"/item/\d+/?",path))
-    if key=="dmm":return path=="/" or "/detail/" in path
+    if key=="dmm":return (path=="/" or "/detail/" in path) and not re.search(r"/detail/review(?:/|$)",path)
     if key=="dlsite":return path=="/" or "/work/" in path
     return True
 
