@@ -2,6 +2,7 @@
 import argparse
 import ast
 import hashlib
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -56,24 +57,46 @@ def parser_versions(site=None):
 
 def reparse(store,site='both'):
     m.initialize(store)
-    versions={key:parser_versions(key) for key in PARSERS}
-    global_version=parser_versions()[0]
+    # All non-Suezo adapters share the same filtered source identity. Compute
+    # it once instead of rereading and parsing every module for each adapter.
+    shared_version=parser_versions('dlsite');suezou_version=parser_versions('suezou')
+    versions={key:suezou_version if key=='suezou' else shared_version for key in PARSERS}
+    global_version=suezou_version[0]
     store.db.execute('CREATE TABLE IF NOT EXISTS mirror_reparse(site TEXT,url TEXT,parser_version TEXT,source_hash TEXT,parsed_at TEXT,files INTEGER,error TEXT,PRIMARY KEY(site,url))');store.db.commit()
+    store.db.execute('CREATE TABLE IF NOT EXISTS mirror_reparse_files(site TEXT,url TEXT,path TEXT,source_hash TEXT,signature TEXT,PRIMARY KEY(site,url))');store.db.commit()
     # Exact legacy hashes prove these same parser sources already ran. Promote
     # their identity without rewriting the capture time or reparsing the HTML.
     for key,(version,legacy) in versions.items():
         store.db.execute('UPDATE mirror_reparse SET parser_version=? WHERE site=? AND parser_version IN (?,?)',(version,key,legacy,global_version))
     store.db.commit()
     pages=store.db.execute("SELECT site,url,path FROM pages WHERE status='ok' AND (?='both' OR site=?)",(site,site)).fetchall()
-    processed=found=failed=0
+    processed=found=failed=0;pending_cache=[]
+    def flush_cache():
+        if pending_cache:
+            with store.db:
+                store.db.executemany('INSERT OR REPLACE INTO mirror_reparse_files VALUES(?,?,?,?,?)',pending_cache)
+            pending_cache.clear()
+    def remember(row,source_hash,signature):
+        pending_cache.append((row['site'],row['url'],row['path'],source_hash,signature))
+        if len(pending_cache)>=128:flush_cache()
     for row in pages:
         if row['site'] not in PARSERS:continue
         version=versions[row['site']][0]
         path=store.root/row['path']
         try:
-            raw=path.read_bytes();source_hash=hashlib.sha256(raw).hexdigest()
+            stat=path.stat()
+            signature=json.dumps([stat.st_dev,stat.st_ino,stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns])
             saved=store.db.execute('SELECT * FROM mirror_reparse WHERE site=? AND url=?',(row['site'],row['url'])).fetchone()
-            if saved and saved['parser_version']==version and saved['source_hash']==source_hash and not saved['error']:continue
+            cached=store.db.execute('SELECT * FROM mirror_reparse_files WHERE site=? AND url=?',(row['site'],row['url'])).fetchone()
+            current=saved and saved['parser_version']==version and not saved['error']
+            if (current and cached and cached['path']==row['path']
+                    and cached['source_hash']==saved['source_hash'] and cached['signature']==signature):continue
+            raw=path.read_bytes();source_hash=hashlib.sha256(raw).hexdigest()
+            after=path.stat()
+            stable=signature==json.dumps([after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns])
+            if current and saved['source_hash']==source_hash:
+                if stable:remember(row,source_hash,signature)
+                continue
             records=getattr(portals,PARSERS[row['site']])(a.decode_html(raw,None),row['url'])
             for record in records:
                 m.add_record(store,record)
@@ -82,11 +105,13 @@ def reparse(store,site='both'):
             if records:
                 store.db.execute("UPDATE mirror_frontier SET status='captured',error=NULL WHERE site=? AND status='review' AND path=? AND (url=? OR capture_url=?)",(row['site'],row['path'],row['url'],row['url']))
             store.db.execute('INSERT OR REPLACE INTO mirror_reparse VALUES(?,?,?,?,?,?,?)',(row['site'],row['url'],version,source_hash,a.now(),len(records),None));store.db.commit()
+            if stable:remember(row,source_hash,signature)
             processed+=1;found+=len(records)
             if records:print('reparsed',row['site'],len(records),row['url'],flush=True)
         except (OSError,ValueError) as error:
             store.db.rollback();failed+=1
             store.db.execute('INSERT OR REPLACE INTO mirror_reparse VALUES(?,?,?,?,?,?,?)',(row['site'],row['url'],version,None,a.now(),0,str(error)));store.db.commit();print('reparse failed',row['url'],error,flush=True)
+    flush_cache()
     # Background updates commit to SQLite; Pages builds the JSON derivative.
     return processed,found,failed
 

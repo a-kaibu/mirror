@@ -1,5 +1,6 @@
 from pathlib import Path
 import tempfile
+import os
 import unittest
 from unittest.mock import patch
 import archiver as a
@@ -76,3 +77,61 @@ class IndependentSourceVersionTests(unittest.TestCase):
         before=b'def helper(html): return 1\ndef parse_suezou(html): return 2\n'
         after=before.replace(b'return 1',b'return 3')
         self.assertNotEqual(parser_portals_source(before,'dlsite'),parser_portals_source(after,'dlsite'))
+
+
+class HtmlFileCacheTests(unittest.TestCase):
+    def setUp(self):
+        tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup)
+        self.store=a.Store(tmp.name);self.addCleanup(self.store.db.close)
+        self.path=Path(tmp.name)/'saved.html'
+        self.html='<h1>作品A</h1><table><tr><th>サークル名</th><td>ブランドA</td></tr></table><a href="https://trial.dlsite.com/doujin/RJ1000/RJ123_trial.zip">体験版</a>'
+        self.path.write_text(self.html)
+        self.url='https://www.dlsite.com/maniax/work/=/product_id/RJ123.html'
+        self.store.db.execute('INSERT INTO pages(url,site,path,status) VALUES(?,?,?,?)',(self.url,'dlsite','saved.html','ok'));self.store.db.commit()
+
+    def test_unchanged_html_is_not_read_again(self):
+        self.assertEqual(reparse(self.store),(1,1,0));read=Path.read_bytes
+        def guarded(path):
+            if path==self.path:raise AssertionError('unchanged HTML reread')
+            return read(path)
+        with patch.object(Path,'read_bytes',guarded):self.assertEqual(reparse(self.store),(0,0,0))
+
+    def test_atomic_replacement_with_same_size_and_mtime_is_reparsed(self):
+        self.assertEqual(reparse(self.store),(1,1,0));before=self.path.stat()
+        replacement=self.path.with_suffix('.new');replacement.write_text(self.html.replace('RJ123_trial.zip','RJ124_trial.zip'))
+        os.utime(replacement,ns=(before.st_atime_ns,before.st_mtime_ns));replacement.replace(self.path)
+        self.assertEqual(self.path.stat().st_size,before.st_size)
+        self.assertEqual(reparse(self.store),(1,1,0));self.assertEqual(len(self.store.rows()),2)
+
+    def test_missing_html_is_reported_and_restored_file_retried(self):
+        self.assertEqual(reparse(self.store),(1,1,0));self.path.unlink()
+        self.assertEqual(reparse(self.store),(0,0,1))
+        self.path.write_text(self.html);self.assertEqual(reparse(self.store),(1,1,0))
+
+    def test_parser_change_does_not_reuse_unchanged_file_signature(self):
+        self.assertEqual(reparse(self.store),(1,1,0))
+        self.store.db.execute("UPDATE mirror_reparse SET parser_version='changed'");self.store.db.commit()
+        with patch.object(portals,'parse_dlsite',wraps=portals.parse_dlsite) as parser:
+            self.assertEqual(reparse(self.store),(1,1,0))
+        parser.assert_called_once()
+
+    def test_older_cache_gets_signature_without_rewriting_parse_time(self):
+        self.assertEqual(reparse(self.store),(1,1,0))
+        before=self.store.db.execute('SELECT parsed_at FROM mirror_reparse').fetchone()[0]
+        self.store.db.execute('DELETE FROM mirror_reparse_files');self.store.db.commit()
+        with patch.object(portals,'parse_dlsite',side_effect=AssertionError('existing source reparsed')):
+            self.assertEqual(reparse(self.store),(0,0,0))
+        self.assertEqual(self.store.db.execute('SELECT parsed_at FROM mirror_reparse').fetchone()[0],before)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM mirror_reparse_files').fetchone()[0],1)
+
+
+    def test_html_changed_during_read_is_checked_again_next_pass(self):
+        original=Path.read_bytes;changed=[]
+        def racing_read(path):
+            raw=original(path)
+            if path==self.path and not changed:
+                self.path.write_text(self.html.replace('RJ123_trial.zip','RJ124_trial.zip'));changed.append(True)
+            return raw
+        with patch.object(Path,'read_bytes',racing_read):self.assertEqual(reparse(self.store),(1,1,0))
+        self.assertEqual(reparse(self.store),(1,1,0))
+        self.assertEqual(len(self.store.rows()),2)
