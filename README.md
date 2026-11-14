@@ -593,6 +593,15 @@ ranges without changing the server's limits. Ranges and composite-key cursors
 are committed with each batch. Text ranges require a verified binary collation;
 unsupported key types fail explicitly. Source row counts and the existing full
 SQLite publication gate still have to pass before replacing the public snapshot.
+When a finished integer-keyed range export encounters count drift, supported
+scalar tables use `erogamescape_repair.py`: per-game row counts and ordered
+content fingerprints locate changes, unchanged bodies are reused, and changed
+groups replace their previous rows only after durable staging matches the source.
+Network failures resume staging. Source changes defer completion and recheck the
+summaries rather than restarting the entire text export. The
+[repair design](docs/erogamescape-repair.md) records the representation checks,
+limits and the absence of a remote transaction snapshot.
+
 For keyless history tables with one non-null timestamp, the exporter also
 uses `erogamescape_timestamp.py`. It verifies that the finite timestamp domain
 covers the source, recursively splits costly or large indexed ranges, and

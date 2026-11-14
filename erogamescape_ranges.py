@@ -117,6 +117,9 @@ def _capture_ranges(db,table,request=f.e.query,delay=3,max_pages=None):
     state=db.execute('SELECT * FROM _capture_state WHERE name=?',(name,)).fetchone()
     if state and state['status']=='complete':return
     if not state:raise ValueError('initialize the regular table capture before range export')
+    from erogamescape_repair import supported,active,repair
+    if supported(table) and (active(db,name) or (state['error'] or '').startswith(('count drift:','range repair:'))):
+        return repair(db,table,request,delay,max_pages)
     cursor=json.loads(state['cursor']) if state['cursor'] else None;offset=state['rows']
     if db.execute('SELECT count(*) FROM '+f.quote(name)).fetchone()[0]!=offset:raise ValueError('local row count differs from capture state')
     key,kind,domain_lower,domain_upper=key_domain(table,request)
