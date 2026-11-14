@@ -1180,20 +1180,35 @@ def parse_suezou(html,page):
         if len(set(digests))!=1:continue
         filename,digest=digests[0];filename=filename.strip()
         if not a.EXT.search(filename) or Path(filename).name!=filename:continue
-        first=next((node for node in block.children if isinstance(node,a.Node)),None)
-        if first is None or first.tag!='font':continue
-        brand=normalize(first.text())
+        # Some live pages use plain text rather than a font wrapper. Read
+        # only the leading logical line, never a later copyright/title label.
+        leading=[]
+        for node in block.children:
+            if isinstance(node,a.Node) and node.tag=='br':
+                if normalize(' '.join(leading)):break
+                continue
+            leading.append(node.text() if isinstance(node,a.Node) else node)
+        publisher_label=' '.join(leading).strip()
+        brand=normalize(publisher_label)
         if not brand:continue
-        credit=re.search(r'【\s*著作権\s+Copyright\s+(.+?)\s+All\s+Rights?\s+Reserved\.?\s*】',normalize(text),re.I)
+        credit=re.search(r'【\s*著作権\s+Copyright\s+(.+?)\s+All\s+Rights?\s+Reserved\.?',normalize(text),re.I)
         if not credit:continue
         copyright_matches=normalize(credit[1]).casefold()==brand.casefold()
         permissions=re.findall(r'このホームページは、\s*(.+?)様より素材使用の許諾',normalize(text))
         permission_names={normalize(name).casefold() for name in permissions}
-        # Localized brands can differ from the English copyright holder. The
-        # permission statement must name this exact block's publisher instead.
-        if not copyright_matches and permission_names!={brand.casefold()}:continue
-        evidence={'method':'download_block_publisher','published_name':first.text()}
+        # Localized publishers and their subdivisions can differ from the
+        # English copyright holder. Only this same single-file block can bind
+        # the exact permission name to its leading publisher label.
+        sub_brand=None
+        if not copyright_matches and permission_names!={brand.casefold()}:
+            if len(permission_names)!=1:continue
+            publisher=normalize(permissions[0])
+            subdivision=re.fullmatch(re.escape(publisher)+r'\s+(.+)',brand,re.I)
+            if not subdivision:continue
+            brand=publisher;sub_brand=subdivision[1]
+        evidence={'method':'download_block_publisher','published_name':publisher_label}
         if not copyright_matches:evidence['permission_name']=permissions[0]
+        if sub_brand:evidence['sub_brand']=sub_brand
         table=block.parent
         while table is not None and table.tag!='table':table=table.parent
         if table is None:continue
@@ -1201,7 +1216,7 @@ def parse_suezou(html,page):
         if len(titles)!=1:continue
         title=titles.pop()
         prefix=normalize(text).split('【',1)[0].strip()
-        description=re.fullmatch(re.escape(brand)+r'\s+'+re.escape(normalize(title))+r'\s+(.+?)\s*([0-9]+(?:\.[0-9]+)?\s*[KMGT]i?B)',prefix,re.I)
+        description=re.fullmatch(re.escape(normalize(publisher_label))+r'\s+'+re.escape(normalize(title))+r'\s+(.+?)\s*([0-9]+(?:\.[0-9]+)?\s*[KMGT]i?B)',prefix,re.I)
         if not description:continue
         mirrors=[]
         for link in block.all({'a'}):

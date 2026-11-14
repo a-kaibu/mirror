@@ -38,7 +38,6 @@ def recover(store,namespace='vn-archive',bucket='mirrors'):
                 if reuse_verified(store,row,namespace,bucket):stats['reused']+=1
                 else:stats['unresolved']+=1
         except BlockingIOError:stats['deferred']+=1
-    if stats['reused']:store.export()
     return stats
 
 

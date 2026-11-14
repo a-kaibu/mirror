@@ -1,7 +1,13 @@
 # Delegated part uploads
 
-Status: finite opt-in part transport implemented, 2026-11-14; a real archive-file
-pilot is still required. Existing collectors retain their local upload path.
+Status: finite opt-in part transport implemented and a real archive-file pilot
+passed, 2026-11-14. Existing collectors retain their local upload path.
+
+The Suezo-origin `otosen3_trial_setup.exe` (638,504,629 bytes) was refetched in
+320.552 seconds and uploaded as 77 accepted parts in 77.169 seconds, run
+43591699596. The host completed the upload and verified the complete anonymous
+public read-back against SHA-256 before updating SQLite. Pages visibility remains
+a separate pending catalogue-publication check.
 
 ## Evidence and intended outcome
 
@@ -60,8 +66,8 @@ normal host completion, anonymous whole-object read-back and source CAS unchange
 Require an explicit source ID for the initial CLI option. Do not turn this on for
 all watchers before a real eligible source passes the complete end-to-end gate.
 The diagnostic currently limits its source to an existing HF object and 64 MiB;
-production refetch from a successful original mirror is a separate, unimplemented
-integration and must add appropriate public-source/TLS and resource bounds.
+production refetch uses the separate bounded runner-file workflow with
+public-source/TLS checks and the resource bounds below.
 
 ## Alternatives and trade-offs
 

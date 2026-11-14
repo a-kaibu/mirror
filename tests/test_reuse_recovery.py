@@ -20,7 +20,8 @@ class ReuseRecoveryTests(unittest.TestCase):
 
     def test_new_public_donor_recovers_failed_observation_without_network(self):
         self.add('target');self.store.update('target',status='failed',error='old mirror closed')
-        self.assertEqual(r.recover(self.store),{'reused':1,'deferred':0,'unresolved':0})
+        with patch.object(self.store,'export',side_effect=AssertionError('background recovery must not render the catalogue')):
+            self.assertEqual(r.recover(self.store),{'reused':1,'deferred':0,'unresolved':0})
         row=self.row('target');self.assertEqual(row['status'],'archived');self.assertEqual(row['sha256'],self.sha)
         self.assertEqual(row['reused_from'],'donor');self.assertIsNone(row['error'])
         self.assertEqual(r.recover(self.store)['reused'],0)

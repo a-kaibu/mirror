@@ -57,3 +57,36 @@ class SuezouTests(unittest.TestCase):
         html=block('作品A','trial.exe','1'*32).replace('Copyright Purple software','Copyright Different company')
         permissions=''.join('このホームページは、'+name+'様より素材使用の許諾。' for name in ['Purple software','Other brand'])
         self.assertEqual(parse_suezou(html.replace('【 MD5',permissions+'【 MD5'),PAGE),[])
+
+
+    def test_leading_breaks_do_not_hide_the_block_publisher(self):
+        html=block('作品A','trial.exe','1'*32).replace('<td><font>','<td><br><br><font>')
+        row=parse_suezou(html,PAGE)[0]
+        self.assertEqual(row['brand'],'Purple software');self.assertEqual(row['expected_md5'],'1'*32)
+
+    def test_missing_copyright_closing_bracket_keeps_single_file_scope(self):
+        html=block('作品A','trial.exe','1'*32).replace('Reserved.】','Reserved.')
+        self.assertEqual(parse_suezou(html,PAGE)[0]['expected_md5'],'1'*32)
+        self.assertEqual(parse_suezou(html.replace('All Right Reserved.','unrelated notice'),PAGE),[])
+
+    def test_explicit_parent_publisher_keeps_subdivision_as_evidence(self):
+        html=block('作品A','trial.exe','1'*32).replace('Ｐｕｒｐｌｅ ｓｏｆｔｗａｒｅ','アトリエかぐや Honky-Tonk Pumpkin')
+        html=html.replace('Copyright Purple software','Copyright (c)2019 KAGUYA')
+        html=html.replace('【 MD5','このホームページは、アトリエかぐや様より素材使用の許諾。<br>【 MD5')
+        row=parse_suezou(html,PAGE)[0]
+        self.assertEqual(row['brand'],'アトリエかぐや');self.assertEqual(row['fields']['brand_evidence']['sub_brand'],'Honky-Tonk Pumpkin')
+        self.assertEqual(row['filename'],'trial.exe');self.assertEqual(row['expected_md5'],'1'*32)
+        self.assertEqual(parse_suezou(html.replace('アトリエかぐや様より','別会社様より'),PAGE),[])
+
+    def test_subdivision_cannot_borrow_permission_from_another_file(self):
+        html=block('作品A','trial.exe','1'*32).replace('Ｐｕｒｐｌｅ ｓｏｆｔｗａｒｅ','アトリエかぐや Honky-Tonk Pumpkin')
+        html=html.replace('Copyright Purple software','Copyright (c)2019 KAGUYA')
+        other=block('作品B','movie.zip','2'*32).replace('【 MD5','このホームページは、アトリエかぐや様より素材使用の許諾。<br>【 MD5')
+        self.assertEqual([r['filename'] for r in parse_suezou(html+other,PAGE)],['movie.zip'])
+
+
+    def test_plain_leading_publisher_line_is_confirmed_in_same_block(self):
+        html=block('作品A','trial.exe','1'*32).replace('<font>','').replace('</font>','')
+        row=parse_suezou(html,PAGE)[0]
+        self.assertEqual(row['brand'],'Purple software');self.assertEqual(row['expected_md5'],'1'*32)
+        self.assertEqual(parse_suezou(html.replace('Ｐｕｒｐｌｅ ｓｏｆｔｗａｒｅ','Unrelated studio'),PAGE),[])

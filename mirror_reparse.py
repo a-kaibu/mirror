@@ -28,25 +28,47 @@ def parser_archiver_source(source):
     return ast.dump(tree,include_attributes=False).encode()
 
 
-def parser_versions():
-    shared=Path(portals.__file__).read_bytes()+Path(m.__file__).read_bytes()
+def parser_portals_source(source,site):
+    if site is None or site=='suezou':return source
+    tree=ast.parse(source)
+    others=[node for node in tree.body if not (isinstance(node,ast.FunctionDef) and node.name=='parse_suezou')]
+    # This parser is independent. If another parser gains a direct or dynamic
+    # dependency, conservatively retain the complete module fingerprint.
+    for node in others:
+        for part in ast.walk(node):
+            if ((isinstance(part,ast.Name) and part.id=='parse_suezou')
+                    or (isinstance(part,ast.Attribute) and part.attr=='parse_suezou')
+                    or (isinstance(part,ast.Constant) and part.value=='parse_suezou')
+                    or (isinstance(part,ast.Call) and isinstance(part.func,ast.Name)
+                        and part.func.id in {'getattr','globals','locals','vars','__import__','eval','exec'})):
+                return source
+    tree.body=others
+    return ast.dump(tree,include_attributes=False).encode()
+
+
+def parser_versions(site=None):
+    portal_source=Path(portals.__file__).read_bytes();mirror_source=Path(m.__file__).read_bytes()
     source=Path(a.__file__).read_bytes()
-    current=hashlib.sha256(shared+parser_archiver_source(source)).hexdigest()
-    legacy=hashlib.sha256(shared+source).hexdigest()
+    current=hashlib.sha256(parser_portals_source(portal_source,site)+mirror_source+parser_archiver_source(source)).hexdigest()
+    legacy=hashlib.sha256(portal_source+mirror_source+source).hexdigest()
     return current,legacy
 
 
 def reparse(store,site='both'):
     m.initialize(store)
-    version,legacy=parser_versions()
+    versions={key:parser_versions(key) for key in PARSERS}
+    global_version=parser_versions()[0]
     store.db.execute('CREATE TABLE IF NOT EXISTS mirror_reparse(site TEXT,url TEXT,parser_version TEXT,source_hash TEXT,parsed_at TEXT,files INTEGER,error TEXT,PRIMARY KEY(site,url))');store.db.commit()
     # Exact legacy hashes prove these same parser sources already ran. Promote
     # their identity without rewriting the capture time or reparsing the HTML.
-    store.db.execute('UPDATE mirror_reparse SET parser_version=? WHERE parser_version=?',(version,legacy));store.db.commit()
+    for key,(version,legacy) in versions.items():
+        store.db.execute('UPDATE mirror_reparse SET parser_version=? WHERE site=? AND parser_version IN (?,?)',(version,key,legacy,global_version))
+    store.db.commit()
     pages=store.db.execute("SELECT site,url,path FROM pages WHERE status='ok' AND (?='both' OR site=?)",(site,site)).fetchall()
     processed=found=failed=0
     for row in pages:
         if row['site'] not in PARSERS:continue
+        version=versions[row['site']][0]
         path=store.root/row['path']
         try:
             raw=path.read_bytes();source_hash=hashlib.sha256(raw).hexdigest()
