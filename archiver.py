@@ -1307,6 +1307,11 @@ def _publish_snapshot(store, namespace, bucket, profile="hf"):
     from boto3.s3.transfer import TransferConfig
     client = s3_client(namespace, profile)
     config = TransferConfig(multipart_threshold=256 * 1024**2, multipart_chunksize=256 * 1024**2, max_concurrency=2)
+    import snapshot_upload
+    from multipart_upload import PART_SIZE
+    size=store.db.execute('PRAGMA page_count').fetchone()[0]*store.db.execute('PRAGMA page_size').fetchone()[0]
+    if size>=PART_SIZE or snapshot_upload.has_pending(store.root,namespace,bucket):
+        return snapshot_upload.publish(store,client,namespace,bucket)
     store.export()
     # Consistent SQLite backup, not a copy of a live DB/WAL. Pages builds derive
     # HTML and their single JSON export from this same source of truth.

@@ -22,6 +22,11 @@ resumes only parts matching both the local digest and the server's size and opaq
 ETag. Network failures retain local files and remote parts. A complete anonymous
 SHA-256 and size check plus the source metadata CAS still gate publication. The
 operational cache is excluded from the public SQLite snapshot.
+Large catalogue checkpoints also keep one immutable SQLite staging copy across
+failed passes and resume its acknowledged parts at the existing `index.sqlite3`
+URL. A newer canonical generation retires an older pending copy. Private staging
+and part receipts never enter the public catalogue; the full public SHA-256 and
+size check still gates successful publication. Existing transfers are left running.
 A real process restart and full public read-back have been verified; see the
 [design and validation boundaries](docs/resumable-upload.md).
 

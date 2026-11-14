@@ -61,6 +61,25 @@ def transfer_and_readback(store,client,namespace,bucket,key,path,sha256,size,rea
         return _transfer_and_readback(cache,client,namespace,bucket,key,path,sha256,size,readback,part_size)
 
 
+def snapshot_path(root,namespace,bucket,sha256):
+    slot=hashlib.sha256(json_identity(namespace,bucket).encode()).hexdigest()
+    return Path(root)/'.work'/'snapshots'/slot/sha256/'index.sqlite3'
+
+
+def json_identity(namespace,bucket):
+    import json
+    return json.dumps([namespace,bucket,'index.sqlite3'],separators=(',', ':'))
+
+
+def transfer_snapshot_and_readback(store,client,namespace,bucket,path,sha256,size,readback):
+    expected=snapshot_path(store.root,namespace,bucket,sha256)
+    if Path(path).absolute()!=expected.absolute() or any(p.is_symlink() for p in (expected.parent,expected.parent.parent,expected.parent.parent.parent,expected.parent.parent.parent.parent)):
+        raise ValueError('snapshot must be an immutable managed staging file')
+    if store.db.in_transaction:raise ValueError('snapshot upload requires a committed SQLite connection')
+    with _checkpoints(store.root) as cache:
+        return _transfer_and_readback(cache,client,namespace,bucket,'index.sqlite3',expected,sha256,size,readback,snapshot=True)
+
+
 def _code(error):
     return getattr(error,'response',{}).get('Error',{}).get('Code')
 
@@ -100,11 +119,11 @@ def _object_exists(client,bucket,key,size):
         raise
 
 
-def _transfer_and_readback(store,client,namespace,bucket,key,path,sha256,size,readback,part_size=PART_SIZE):
+def _transfer_and_readback(store,client,namespace,bucket,key,path,sha256,size,readback,part_size=PART_SIZE,*,snapshot=False):
     """Return a full public digest; never update source records or evict bodies."""
     path=Path(path)
     if (not isinstance(sha256,str) or not re.fullmatch('[a-f0-9]{64}',sha256)
-            or key!='files/'+sha256 or type(size) is not int or size<=0
+            or (key!='files/'+sha256 and not (snapshot and key=='index.sqlite3')) or type(size) is not int or size<=0
             or type(part_size) is not int or not MIN_PART_SIZE<=part_size<=MAX_PART_SIZE
             or ((size+part_size-1)//part_size)>MAX_PARTS):
         raise ValueError('invalid immutable multipart upload parameters')
