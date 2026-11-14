@@ -1220,7 +1220,7 @@ def parse_suezou(html,page):
         titles={node.text().strip() for node in table.all({'a'}) if node.attrs.get('name') and node.text().strip()}
         if len(titles)!=1:continue
         title=titles.pop()
-        prefix=normalize(text).split('【',1)[0].strip()
+        prefix=normalize(text)[:credit.start()].strip()
         description=re.fullmatch(re.escape(normalize(publisher_label))+r'\s+'+re.escape(normalize(title))+r'\s+(.+?)\s*([0-9]+(?:\.[0-9]+)?\s*[KMGT]i?B)',prefix,re.I)
         if not description:continue
         mirrors=[]

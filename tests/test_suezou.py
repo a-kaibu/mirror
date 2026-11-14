@@ -116,3 +116,11 @@ class SuezouTests(unittest.TestCase):
         html=html.replace('【 MD5','このホームページは、Ｆ＆Ｃ様より素材使用の許諾。<br>【 MD5')
         row=parse_suezou(html,PAGE)[0]
         self.assertEqual(row['brand'],'F&C');self.assertEqual(row['fields']['brand_evidence']['sub_brand'],'FC01')
+
+
+    def test_bracketed_release_notes_do_not_end_the_metadata_prefix(self):
+        html=block('作品A','trial.exe','1'*32,release='紹介ムービー【 TOPCAT 】')
+        row=parse_suezou(html,PAGE)[0]
+        self.assertEqual(row['release_name'],'紹介ムービー【 TOPCAT 】')
+        self.assertEqual(row['expected_md5'],'1'*32)
+        self.assertEqual(row['title'],'作品A')
