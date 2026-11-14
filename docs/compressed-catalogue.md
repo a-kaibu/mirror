@@ -150,3 +150,20 @@ fails restoration and preserves the deployed site. Tests exercise actual
 multipart reception for small synthetic catalogues as well as large stages;
 publication tests restore the resulting gzip and check SQLite integrity and
 source-publication proofs instead of assuming a raw upload_file call.
+
+
+## Live activation evidence
+
+The first gzip generation completed anonymous full-byte verification at
+2026-11-14 14:39:38 UTC. A separate public restore recovered 1,256,566,784 raw bytes
+with SHA-256 `2293e1f9cb215cffd40803ecfd9b9a334957a13fb91d7225bd29ff0faba37879`,
+validated SQLite, and confirmed the first delegated archive-file publication
+proof. Restore elapsed time was 29.169 seconds with 31,504 KiB peak RSS. Its
+private receipt is `archive/.work/first-public-gzip-restore.json`.
+
+After this gate, commit 7f77d35 activated the canonical gzip publisher and Pages
+restore. Both hosted Tests and Pages succeeded (runs 43607224232 and 43607224267).
+A catalogue-only mode in `provenance_watch.py` now uses its own supervisor/pass
+claims and calls nonblocking metadata publication without waiting for HTML. The
+live supervisor runs with `--catalogue-only --interval 1800`; ordinary HTML
+publication retains its existing independent supervisor and claims.

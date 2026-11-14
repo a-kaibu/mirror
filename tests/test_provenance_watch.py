@@ -45,4 +45,23 @@ class ProvenanceWatchTests(unittest.TestCase):
         store.db.close.assert_called_once()
 
 
+    def test_catalogue_only_does_not_wait_for_provenance_pass(self):
+        store=Mock()
+        with exclusive_file(self.root/'.claims/provenance-pass.lock'),patch.object(p.a,'Store',return_value=store),patch.object(p.a,'publish_metadata',return_value=True) as publish:
+            self.assertTrue(p.publish_once(self.root,catalogue_only=True))
+        publish.assert_called_once_with(store,'vn-archive','mirrors',include_html=False,blocking=False)
+        store.db.close.assert_called_once()
+
+    def test_busy_catalogue_pass_does_not_create_another_store(self):
+        with exclusive_file(self.root/'.claims/catalogue-pass.lock'),patch.object(p.a,'Store') as store:
+            with self.assertRaises(BlockingIOError):p.publish_once(self.root,catalogue_only=True)
+        store.assert_not_called()
+
+    def test_catalogue_supervisor_reloads_mode_and_obeys_interval(self):
+        with patch.object(p.subprocess,'run',side_effect=[subprocess.CompletedProcess([],0),KeyboardInterrupt]) as run,patch.object(p.time,'sleep') as sleep:
+            with self.assertRaises(KeyboardInterrupt):p.watch(self.root,1800,catalogue_only=True)
+        self.assertTrue(all(call.args[0][-1]=='--catalogue-only' for call in run.call_args_list))
+        sleep.assert_called_once_with(1800)
+
+
 if __name__=='__main__':unittest.main()

@@ -36,6 +36,9 @@ HTML discovery batches, transient-failure recovery and catalogue checkpoint uplo
 commit/copy SQLite directly;
 they do not materialize the complete JSON catalogue after each small batch.
 `build-site` generates the JSON when the static catalogue is built.
+For independent catalogue checkpoints, run
+`python provenance_watch.py --root archive --catalogue-only --interval 1800`. This keeps the catalogue moving while saved
+HTML is published separately; each pass loads current code in a new process.
 
 `archive/index.sqlite3` is the only source of truth. `items` stores source records
 and download progress; `manufacturers`, `manufacturer_aliases`, `products` and
@@ -183,7 +186,7 @@ archive/                         # local, ignored by Git
   files/<source>/<record-id>/...  # local verified downloads
 
 HF vn-archive/mirrors/
-  index.sqlite3                  # consistent backup of SQLite for Pages builds
+  index.sqlite3.gz               # canonical compressed SQLite backup for Pages
   html/<page-id>.html
   files/<sha256>                 # ID only, no Japanese or original filename
 ```
