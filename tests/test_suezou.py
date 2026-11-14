@@ -90,3 +90,29 @@ class SuezouTests(unittest.TestCase):
         row=parse_suezou(html,PAGE)[0]
         self.assertEqual(row['brand'],'Purple software');self.assertEqual(row['expected_md5'],'1'*32)
         self.assertEqual(parse_suezou(html.replace('Ｐｕｒｐｌｅ ｓｏｆｔｗａｒｅ','Unrelated studio'),PAGE),[])
+
+
+    def test_adjacent_font_title_does_not_enter_publisher_label(self):
+        html=block('作品A','trial.exe','1'*32).replace('</font><br>作品A<br>','</font><font>作品A<br>').replace('【著作権','</font>【著作権')
+        row=parse_suezou(html,PAGE)[0]
+        self.assertEqual(row['brand'],'Purple software');self.assertEqual(row['title'],'作品A')
+
+    def test_copyright_symbol_and_year_are_not_part_of_the_publisher_name(self):
+        for prefix in ['(c)','(C)2017 ','©2006-2007 ']:
+            html=block('作品A','trial.exe','1'*32).replace('Copyright Purple software','Copyright '+prefix+'Purple software')
+            self.assertEqual(parse_suezou(html,PAGE)[0]['brand'],'Purple software')
+        self.assertEqual(parse_suezou(block('作品A','trial.exe','1'*32).replace('Copyright Purple software','Copyright (C)2017 Unrelated publisher'),PAGE),[])
+
+    def test_permission_maker_prefix_is_not_part_of_a_brand_name(self):
+        html=block('作品A','trial.exe','1'*32).replace('Copyright Purple software','Copyright Typo holder')
+        html=html.replace('【 MD5','このホームページは、メーカーPurple software様より素材使用の許諾。<br>【 MD5')
+        row=parse_suezou(html,PAGE)[0]
+        self.assertEqual(row['brand'],'Purple software')
+        self.assertEqual(row['fields']['brand_evidence']['permission_name'],'メーカーPurple software')
+        self.assertEqual(parse_suezou(html.replace('メーカーPurple software様','メーカーOther brand様'),PAGE),[])
+
+    def test_middle_dot_subdivision_uses_explicit_same_block_parent(self):
+        html=block('作品A','trial.exe','1'*32).replace('Ｐｕｒｐｌｅ ｓｏｆｔｗａｒｅ','Ｆ＆Ｃ・ＦＣ０１').replace('Copyright Purple software','Copyright (c)FC01/SLP')
+        html=html.replace('【 MD5','このホームページは、Ｆ＆Ｃ様より素材使用の許諾。<br>【 MD5')
+        row=parse_suezou(html,PAGE)[0]
+        self.assertEqual(row['brand'],'F&C');self.assertEqual(row['fields']['brand_evidence']['sub_brand'],'FC01')

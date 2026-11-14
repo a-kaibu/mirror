@@ -1188,22 +1188,27 @@ def parse_suezou(html,page):
                 if normalize(' '.join(leading)):break
                 continue
             leading.append(node.text() if isinstance(node,a.Node) else node)
-        publisher_label=' '.join(leading).strip()
+        first=next((node for node in block.children if normalize(node.text() if isinstance(node,a.Node) else node)),None)
+        # Older malformed pages put title/release in the next font with no
+        # intervening br. The first font still bounds the publisher exactly.
+        publisher_label=first.text().strip() if isinstance(first,a.Node) and first.tag=='font' else ' '.join(leading).strip()
         brand=normalize(publisher_label)
         if not brand:continue
         credit=re.search(r'【\s*著作権\s+Copyright\s+(.+?)\s+All\s+Rights?\s+Reserved\.?',normalize(text),re.I)
         if not credit:continue
-        copyright_matches=normalize(credit[1]).casefold()==brand.casefold()
+        holder=normalize(credit[1])
+        holder=re.sub(r'^(?:\(c\)|©)\s*(?:[0-9]{4}(?:\s*[-–]\s*[0-9]{4})?\s*)?', '',holder,flags=re.I).strip()
+        copyright_matches=holder.casefold()==brand.casefold()
         permissions=re.findall(r'このホームページは、\s*(.+?)様より素材使用の許諾',normalize(text))
-        permission_names={normalize(name).casefold() for name in permissions}
+        permission_names={re.sub(r'^メーカー\s*','',normalize(name)).casefold() for name in permissions}
         # Localized publishers and their subdivisions can differ from the
         # English copyright holder. Only this same single-file block can bind
         # the exact permission name to its leading publisher label.
         sub_brand=None
         if not copyright_matches and permission_names!={brand.casefold()}:
             if len(permission_names)!=1:continue
-            publisher=normalize(permissions[0])
-            subdivision=re.fullmatch(re.escape(publisher)+r'\s+(.+)',brand,re.I)
+            publisher=re.sub(r'^メーカー\s*','',normalize(permissions[0]))
+            subdivision=re.fullmatch(re.escape(publisher)+r'(?:\s+|[・･])(.+)',brand,re.I)
             if not subdivision:continue
             brand=publisher;sub_brand=subdivision[1]
         evidence={'method':'download_block_publisher','published_name':publisher_label}
