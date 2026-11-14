@@ -66,10 +66,13 @@ and BAT joiners when their companion volumes or installer appear in the same
 product block and directory. Parts keep their own published checksums; missing
 checksums are left absent. Files are preserved without running the joiners.
 
-`manifest.json` is the **single JSON export**. It contains manufacturers, products,
-files, nested sources/attempts, and saved-page records. It is generated atomically
-from SQLite, ignored by Git, and never edited or imported as the source of truth.
-There are no separate JSONL or search catalogs.
+`manifest.json` is the **single JSON export**, generated atomically from SQLite,
+ignored by Git, and never edited or imported as the source of truth. `build-site`
+uses a compact public view containing every manufacturer, product and file with
+source links, filenames, size hints, checksums, download availability and current
+errors. Raw source fields, historical attempts, saved-page inventories and full
+linked external metadata remain in SQLite and the complete export; they are not
+duplicated into the public view. There are no separate JSONL or search catalogs.
 
 Source matching streams a compact ID index and loads full donor records from
 SQLite only when needed, rechecking their current checksum, URL and quarantine.

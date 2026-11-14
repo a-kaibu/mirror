@@ -29,11 +29,11 @@ class ConcurrentCollectionTests(unittest.TestCase):
                 finally:writer.db.close();done.set()
             thread=threading.Thread(target=produce);thread.start()
             original=catalog.manifest
-            def during_snapshot(store):
+            def during_snapshot(store,**options):
                 store.db.execute("SELECT count(*) FROM items").fetchone()
                 start.set()
                 self.assertTrue(done.wait(5),"WAL writer was blocked by export")
-                return original(store)
+                return original(store,**options)
             with patch.object(catalog,"manifest",side_effect=during_snapshot):data=reader.export()
             thread.join(5)
             self.assertFalse(errors,errors)

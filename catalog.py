@@ -160,12 +160,12 @@ def alias_maker(store, alias, name):
         store.db.execute("DELETE FROM manufacturers WHERE id NOT IN (SELECT manufacturer_id FROM products) AND id NOT IN (SELECT manufacturer_id FROM manufacturer_aliases)")
 
 
-def manifest(store):
+def manifest(store, *, public=False):
     from archiver import now, public_url
     db = store.db
     makers = [dict(r) for r in db.execute("SELECT * FROM manufacturers WHERE id IN (SELECT manufacturer_id FROM products WHERE id IN (SELECT product_id FROM item_catalog)) ORDER BY name,id")]
     products = [dict(r) for r in db.execute("SELECT * FROM products WHERE id IN (SELECT product_id FROM item_catalog) ORDER BY title,id")]
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata_links'").fetchone():
+    if not public and db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata_links'").fetchone():
         for entity, entries in [("brand", makers), ("game", products)]:
             linked = {}
             for row in db.execute("""SELECT l.local_id,l.external_id,l.method,m.data,m.fetched_at
@@ -191,32 +191,35 @@ def manifest(store):
             item.update(download_url=public_url(namespace, bucket, key, download=True), remote_key=r["remote_key"], public_verified_at=r["remote_verified_at"])
         if not item["filename"] and data["filename"]:
             item["filename"] = data["filename"]
-        item["sources"].append({"id": r["id"], "site": r["site"], "page_url": data["page_url"],
+        source = {"id": r["id"], "site": r["site"], "page_url": data["page_url"],
             "release_name": data.get("release_name"), "kind": r["kind"], "version": r["version"],
             "platform": r["platform"], "requirements": r["requirements"],
             "reused_from": r["reused_from"],
             "original_page_url": data.get("original_page_url"), "filename": data["filename"],
             "published_at": data.get("published_at"), "mirrors": data["mirrors"], "expected_md5": data.get("expected_md5"),
-            "expected_sha256": data.get("expected_sha256"), "expected_size": data.get("expected_size"), "size_text": data.get("size_text"), "fields": data.get("fields", {}),
-            "status": r["status"], "fetched_at": r["fetched_at"], "source_url": r["source_url"], "error": r["error"],
-            "attempts": [dict(a) for a in db.execute("SELECT url,attempted_at,error,tls_pin FROM attempts WHERE item_id=? ORDER BY id", (r["id"],))]})
+            "expected_sha256": data.get("expected_sha256"), "expected_size": data.get("expected_size"), "size_text": data.get("size_text"),
+            "status": r["status"], "fetched_at": r["fetched_at"], "source_url": r["source_url"], "error": r["error"]}
+        if not public:
+            source.update(fields=data.get("fields", {}), attempts=[dict(a) for a in db.execute(
+                "SELECT url,attempted_at,error,tls_pin FROM attempts WHERE item_id=? ORDER BY id", (r["id"],))])
+        item["sources"].append(source)
     return {"schema_version": 1, "generated_at": now(), "manufacturers": makers, "products": products,
         "files": sorted(files.values(), key=lambda f: (PRIORITY[f["kind"]], f["product_id"], f["id"])),
-        "pages": [dict(r) for r in db.execute("SELECT * FROM pages ORDER BY url")]}
+        "pages": [] if public else [dict(r) for r in db.execute("SELECT * FROM pages ORDER BY url")]}
 
 
-def export_manifest(store):
+def export_manifest(store, *, public=False):
     # Keep related catalog tables in one read snapshot while the crawler adds
     # new rows. WAL lets the producer continue without waiting for JSON output.
     store.db.execute("BEGIN")
     try:
-        data = manifest(store)
+        data = manifest(store, public=public)
     finally:
         store.db.rollback()
     path = store.root / "manifest.json"
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=store.root, prefix="manifest-", suffix=".tmp", delete=False) as stream:
         temporary = Path(stream.name)
-        json.dump(data, stream, ensure_ascii=False, indent=2)
+        json.dump(data, stream, ensure_ascii=False, indent=None if public else 2, separators=(",", ":") if public else None)
         stream.write("\n")
     temporary.replace(path)
     return data
@@ -235,7 +238,7 @@ def build_site(store, output):
     output = Path(output)
     if output.resolve() == store.root.resolve() or store.root.resolve().is_relative_to(output.resolve()):
         raise ValueError("site output must be separate from archive storage")
-    data = export_manifest(store)
+    data = export_manifest(store, public=True)
     output.mkdir(parents=True, exist_ok=True)
     for path in (Path(__file__).parent / "web").iterdir():
         if path.is_file():

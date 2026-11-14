@@ -318,6 +318,29 @@ class CatalogTests(unittest.TestCase):
         self.assertNotIn("元のファイル名で保存", page)
         self.assertTrue((out / "sw.js").exists())
 
+    def test_site_json_keeps_public_metadata_and_leaves_full_history_in_sqlite(self):
+        record=self.record('public');record['fields']['capture_note']='x'*65536
+        self.store.add(record);self.store.update('public',status='failed',error='origin unavailable')
+        self.store.db.execute('INSERT INTO attempts(item_id,url,attempted_at,error) VALUES(?,?,?,?)',('public',record['mirrors'][0],a.now(),'diagnostic '*1000))
+        self.store.db.execute('INSERT INTO pages(url,site,path,status) VALUES(?,?,?,?)',('https://source.test/catalogue','lathercraft','html/saved.html','ok'));self.store.db.commit()
+        complete=self.store.export();out=Path(self.tmp.name)/'public-site'
+        c.build_site(self.store,out)
+        compact=json.loads((out/'manifest.json').read_text())
+        self.assertEqual(len(compact['files']),len(complete['files']))
+        self.assertEqual(compact['manufacturers'],complete['manufacturers'])
+        source=compact['files'][0]['sources'][0]
+        self.assertEqual(source['mirrors'],record['mirrors'])
+        self.assertEqual(source['expected_md5'],record['expected_md5'])
+        self.assertEqual(source['error'],'origin unavailable')
+        self.assertEqual(source['filename'],record['filename'])
+        self.assertNotIn('fields',source);self.assertNotIn('attempts',source)
+        self.assertEqual(compact['pages'],[])
+        self.assertLess((out/'manifest.json').stat().st_size,len(json.dumps(complete).encode())//10)
+        restored=self.store.export()
+        self.assertEqual(restored['files'][0]['sources'][0]['fields']['capture_note'],'x'*65536)
+        self.assertEqual(len(restored['files'][0]['sources'][0]['attempts']),1)
+        self.assertEqual(len(restored['pages']),1)
+
     def test_migrates_old_sqlite_without_losing_progress(self):
         legacy = Path(self.tmp.name) / "legacy"
         legacy.mkdir()

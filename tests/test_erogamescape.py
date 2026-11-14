@@ -57,6 +57,11 @@ class ErogameScapeTests(unittest.TestCase):
             self.assertEqual(manifest["manufacturers"][0]["erogamescape"][0]["id"],1)
             self.assertEqual(manifest["products"][0]["erogamescape"][0]["data"]["trial_url"],"https://official.test/trial.html")
             self.assertEqual(store.db.execute("SELECT method FROM metadata_links WHERE entity='game'").fetchone()[0],"brand_and_title")
+            from catalog import export_manifest
+            public=export_manifest(store,public=True)
+            self.assertEqual(public['products'][0]['title'],manifest['products'][0]['title'])
+            self.assertNotIn('erogamescape',public['products'][0])
+            self.assertEqual(store.export()['products'][0]['erogamescape'][0]['data']['trial_url'],'https://official.test/trial.html')
             store.db.close()
 
     def test_export_refuses_incomplete_import_and_checks_snapshot(self):
