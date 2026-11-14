@@ -124,3 +124,12 @@ class SuezouTests(unittest.TestCase):
         self.assertEqual(row['release_name'],'紹介ムービー【 TOPCAT 】')
         self.assertEqual(row['expected_md5'],'1'*32)
         self.assertEqual(row['title'],'作品A')
+
+
+    def test_parenthesized_subdivision_requires_explicit_same_block_parent(self):
+        html=block('作品A','trial.exe','1'*32).replace('Ｐｕｒｐｌｅ ｓｏｆｔｗａｒｅ','Ｆ＆Ｃ（ＦＣ０１）').replace('Copyright Purple software','Copyright FC01 / HQ / FANDC.CO.JP')
+        html=html.replace('【 MD5','このホームページは、Ｆ＆Ｃ様より素材使用の許諾。<br>【 MD5')
+        row=parse_suezou(html,PAGE)[0]
+        self.assertEqual(row['brand'],'F&C');self.assertEqual(row['fields']['brand_evidence']['sub_brand'],'FC01')
+        self.assertEqual(parse_suezou(html.replace('Ｆ＆Ｃ様','Other brand様'),PAGE),[])
+        self.assertEqual(parse_suezou(html.replace('（ＦＣ０１）','（ＦＣ０１'),PAGE),[])

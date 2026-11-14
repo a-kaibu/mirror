@@ -1208,9 +1208,9 @@ def parse_suezou(html,page):
         if not copyright_matches and permission_names!={brand.casefold()}:
             if len(permission_names)!=1:continue
             publisher=re.sub(r'^メーカー\s*','',normalize(permissions[0]))
-            subdivision=re.fullmatch(re.escape(publisher)+r'(?:\s+|[・･])(.+)',brand,re.I)
+            subdivision=re.fullmatch(re.escape(publisher)+r'(?:(?:\s+|[・･])(.+)|\(([^()]+)\))',brand,re.I)
             if not subdivision:continue
-            brand=publisher;sub_brand=subdivision[1]
+            brand=publisher;sub_brand=subdivision[1] or subdivision[2]
         evidence={'method':'download_block_publisher','published_name':publisher_label}
         if not copyright_matches:evidence['permission_name']=permissions[0]
         if sub_brand:evidence['sub_brand']=sub_brand
