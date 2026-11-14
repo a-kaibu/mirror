@@ -236,3 +236,38 @@ class SingleFetchTests(unittest.TestCase):
         probe=Mock(side_effect=OSError('HEAD refused'))
         self.assertIsNone(controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,probe=probe))
         self.assertEqual(probe.call_count,3);self.assertEqual(self.client.created,0)
+    def test_new_jobs_pin_the_worker_branch_instead_of_main(self):
+        self.run_file()
+        state=controller._load(self.store,'target')
+        self.assertEqual(state['dispatch_ref'],jobs.RUNNER_REF)
+        jobs.gh.assert_any_call(['api','repos/'+jobs.REPO+'/git/ref/heads/'+jobs.RUNNER_REF])
+
+    def test_dispatch_request_preserves_the_pinned_reference(self):
+        from test_runner_upload import specification
+        state=dict(nonce='pinned-fixture',head_sha='a'*40,dispatch_ref=jobs.RUNNER_REF)
+        journal=self.store.root/'pinned-job.json';seen=[]
+        def api(args):
+            if '/dispatches' in args[1]:
+                import json
+                from pathlib import Path
+                seen.append(json.loads(Path(args[args.index('--input')+1]).read_text()));return None
+            if '/runs?' in args[1]:return {'workflow_runs':[dict(id=123,display_title='Runner upload pinned-fixture')]}
+            if args[:2]==['run','download']:
+                from pathlib import Path
+                (Path(args[args.index('--dir')+1])/'runner-upload.json').write_text('{}');return None
+            return dict(status='completed',conclusion='success',head_sha='a'*40)
+        with patch.object(jobs,'gh',side_effect=api):jobs.execute_job(state,specification(),journal)
+        self.assertEqual(seen[0]['ref'],jobs.RUNNER_REF);self.assertEqual(state['run_id'],123)
+
+    def test_unconfigured_dispatch_reference_is_rejected_before_intent(self):
+        state=dict(nonce='pinned-fixture',head_sha='a'*40,dispatch_ref='unconfigured')
+        with self.assertRaisesRegex(ValueError,'unconfigured'):
+            jobs.execute_job(state,{},self.store.root/'job.json')
+        self.assertNotIn('dispatch_attempted_at',state)
+    def test_identity_abort_retries_same_healthy_source_instead_of_rotating(self):
+        self.store.add({**self.record,'mirrors':[self.url,'https://fallback.test/demo.zip']})
+        with self.assertRaises(jobs.RunnerIdentityMismatch):
+            self.run_file(Mock(side_effect=jobs.RunnerIdentityMismatch('changed')))
+        result=controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,readback=self.readback)
+        self.assertEqual(result['accepted_id'],'target');self.assertEqual(self.row()['source_url'],self.url)
+        self.assertEqual(self.client.aborts,1)

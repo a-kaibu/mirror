@@ -114,11 +114,11 @@ def _prepare(store,source,source_url,size,client):
     if size is None:size=record.get('expected_size')
     if type(size) is not int or not 0<size<=MAX_BYTES:raise ValueError('bounded exact transport size required')
     if record.get('expected_size') is not None and record['expected_size']!=size:raise ValueError('published size differs')
-    head=jobs.gh(['api','repos/'+jobs.REPO+'/git/ref/heads/main'])['object']['sha']
+    head=jobs.gh(['api','repos/'+jobs.REPO+'/git/ref/heads/'+jobs.RUNNER_REF])['object']['sha']
     if not isinstance(head,str) or not re.fullmatch('[a-f0-9]{40}|[a-f0-9]{64}',head):raise ValueError('invalid workflow commit identity')
     state=dict(item_id=source['id'],source=dict(source),data_sha256=hashlib.sha256(source['data'].encode()).hexdigest(),
         nonce=uuid.uuid4().hex,staging_key='staging/'+uuid.uuid4().hex+uuid.uuid4().hex,
-        size=size,part_size=PART_SIZE,source_url=source_url,head_sha=head,phase='preparing',created_at=a.now())
+        size=size,part_size=PART_SIZE,source_url=source_url,head_sha=head,dispatch_ref=jobs.RUNNER_REF,phase='preparing',created_at=a.now())
     _save(store,state)
     response=client.create_multipart_upload(Bucket=staged.BUCKET,Key=state['staging_key'])
     upload_id=response.get('UploadId')
@@ -212,7 +212,7 @@ def _archive_candidate_once(store,row,*,profile='hf',client=None,execute=None,re
     if not eligible:return None
     eligible=[url for url in eligible if url not in excluded]
     if not eligible:raise SourceTransferFailed('all eligible observed mirrors failed')
-    if state and state['phase']=='aborted' and state.get('source_url') in eligible:
+    if state and state['phase']=='aborted' and state.get('conclusion') not in (None,'success') and state.get('source_url') in eligible:
         offset=(eligible.index(state['source_url'])+1)%len(eligible)
         eligible=eligible[offset:]+eligible[:offset]
     if size is None:

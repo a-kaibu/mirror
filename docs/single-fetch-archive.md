@@ -152,3 +152,22 @@ SQLite acceptance with no publisher size and no local body. Origin fetch took
 3.670 s and delegated upload 0.434 s. Safe evidence:
 `.work/single-fetch-head-official-verified-20261115.json`. This does not establish
 that every official source supports HEAD; refused/invalid HEAD retains fallback.
+
+## Stable runner source reference
+
+A real Suezo job was safely aborted when a main-branch push raced dispatch: its
+run head differed from the frozen expected head, delaying the service restart.
+New jobs now bind both dispatch_ref and head_sha to the dedicated archive-runner
+branch, initially provisioned at tested commit 4bbcb0cc661f990c983bf1f03fcf0cafff7d2a14.
+Main-branch changes no longer move that reference. Existing journals without
+explicit dispatch_ref retain main and their original identity checks; do not
+rewrite an already dispatched job onto a different reference. A changed runner
+head still aborts the exact upload rather than accepting a mismatched receipt.
+
+GitHub documents workflow_dispatch ref as a branch or tag name:
+https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event
+Do not assume a raw commit SHA is a supported dispatch reference. The separate
+worker branch is deliberately updated only for a tested worker release after
+its pending/running delegated jobs have drained. It is not automatically moved
+by main pushes. Runner-source updates must retain this release gate and inspect
+actual workflow run head identities during rollout.

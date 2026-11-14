@@ -14,6 +14,7 @@ from runner_file_upload import MAX_BYTES,encode_spec,validate_spec
 from transfer_probe import gh,save,now,REPO
 
 WORKFLOW='runner-upload.yml'
+RUNNER_REF='archive-runner'
 
 
 class RunnerIdentityMismatch(ValueError):
@@ -43,10 +44,12 @@ def find_run(state):
 
 
 def execute_job(state,spec,journal,*,timeout=1500):
+    dispatch_ref=state.get('dispatch_ref','main')
+    if dispatch_ref not in {'main',RUNNER_REF}:raise ValueError('unconfigured runner reference')
     if not state.get('dispatch_attempted_at'):
         state['dispatch_attempted_at']=now();save(journal,state)
         with tempfile.TemporaryDirectory(prefix='mirror-runner-dispatch-') as folder:
-            request=Path(folder)/'request.json';save(request,{'ref':'main','inputs':{'nonce':state['nonce'],'spec':encode_spec(spec)}})
+            request=Path(folder)/'request.json';save(request,{'ref':dispatch_ref,'inputs':{'nonce':state['nonce'],'spec':encode_spec(spec)}})
             try:gh(['api','repos/'+REPO+'/actions/workflows/'+WORKFLOW+'/dispatches','--method','POST','--input',str(request)])
             except RuntimeError:pass  # Observe the same nonce after a lost acknowledgement.
     deadline=time.monotonic()+timeout;last=None
@@ -191,9 +194,8 @@ class PartClient:
             spec={'sha256':self.sha,'size':self.size,'part_size':part_size,'parts':parts,
                   'source_url':self.source_url,'referer':self.referer}
             validate_spec(spec)
-            head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
-            if gh(['api','repos/'+REPO+'/git/ref/heads/main'])['object']['sha']!=head:raise ValueError('runner checkout does not match main')
-            state={'nonce':uuid.uuid4().hex,'sha256':self.sha,'size':self.size,'upload_id':upload_id,'head_sha':head,
+            head=gh(['api','repos/'+REPO+'/git/ref/heads/'+RUNNER_REF])['object']['sha']
+            state={'nonce':uuid.uuid4().hex,'sha256':self.sha,'size':self.size,'upload_id':upload_id,'head_sha':head,'dispatch_ref':RUNNER_REF,
                    'numbers':missing,'created_at':now(),'spec':spec}
             self._mark_delegated(upload_id)
             try:save(journal,state)
