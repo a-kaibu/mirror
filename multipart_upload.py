@@ -153,6 +153,8 @@ def _transfer_and_readback(store,client,namespace,bucket,key,path,sha256,size,re
                     if _code(error)!='NoSuchUpload':raise
                     completed=_object_exists(client,bucket,key,size)
                     if not completed:_discard(store,*identity,sha256);state=None
+        if state and not completed and state['phase']=='delegated' and getattr(client,'delegated_uploads',False) is not True:
+            raise BlockingIOError('delegated upload requires runner resume or cleanup')
         if state is None:
             response=client.create_multipart_upload(Bucket=bucket,Key=key,Metadata={'sha256':sha256})
             upload_id=response.get('UploadId')

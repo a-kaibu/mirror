@@ -1,4 +1,4 @@
-"""Finite transfer diagnostic using single-upload part capabilities, never credentials."""
+"""Finite transfer diagnostic with short-lived part capabilities and no reusable S3 keys."""
 import argparse
 import hashlib
 import json
@@ -22,8 +22,13 @@ def validate_spec(spec):
     if spec.get('source_url')!=source:raise ValueError('invalid diagnostic source')
     urls=spec.get('part_urls')
     if not isinstance(urls,list) or len(urls)!=(size+part_size-1)//part_size:raise ValueError('invalid part count')
+    validate_capabilities(sha,enumerate(urls,1))
+    return sha,size,part_size,urls
+
+
+def validate_capabilities(sha,numbered_urls):
     upload_id=None
-    for number,url in enumerate(urls,1):
+    for number,url in numbered_urls:
         if not isinstance(url,str):raise ValueError('invalid capability')
         parts=urlsplit(url);query=parse_qs(parts.query)
         if (parts.scheme!='https' or parts.hostname!='vn-archive.s3.hf.co' or parts.port not in (None,443)
@@ -37,7 +42,6 @@ def validate_spec(spec):
         if len(expires)!=1 or not expires[0].isdigit() or not 0<int(expires[0])<=1800:raise ValueError('invalid expiry')
         signature=query.get('X-Amz-Signature',[])
         if len(signature)!=1 or not re.fullmatch('[a-f0-9]{64}',signature[0]):raise ValueError('invalid signature')
-    return sha,size,part_size,urls
 
 
 def run_probe(spec,open_url=urlopen,clock=time.monotonic):

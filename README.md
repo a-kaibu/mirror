@@ -221,7 +221,7 @@ exactly matching legacy fingerprints migrate without changing capture timestamps
 SHA-256-verified 8–64 MiB object using the manually dispatched `Transfer probe`
 workflow. It requires the local `hf` S3 profile and authenticated `gh`; the checkout
 must match remote `main`. The runner receives only 30-minute, size-bound part
-capabilities for one temporary upload. It receives no S3 credentials and cannot
+capabilities for one temporary upload. Reusable S3 access/secret keys remain on the host, and the runner cannot
 complete an object. Inputs are read from the event file, never interpolated into
 shell commands or printed environment blocks. Results contain no capability URLs.
 
@@ -231,6 +231,29 @@ network diagnostic, not a scheduled collector. Private state is kept under
 `archive/.work/transfer-probe.json`. After an interrupted controller use `--resume`
 to follow the same job or `--cleanup-only` to abort that exact upload. A successful
 workflow alone is not treated as a completed archive-file publication.
+
+## Opt-in delegated archive upload
+
+For one verified local file, up to 2 GiB, with a successfully used public HTTP(S)
+source URL:
+
+```sh
+uv run python archiver.py upload --id SOURCE_ID --runner-upload --files-only
+```
+
+The runner refetches that source and checks its complete SHA-256 and size before
+sending only the missing parts. The host retains completion, anonymous full public
+read-back, source metadata comparison and SQLite publication proof. Existing source
+and object claims remain held. Reusable S3 keys stay local. A runner receipt alone
+never enables a download link or local eviction. This command skips the full JSON
+export; Pages still derives its one JSON catalogue from SQLite.
+
+Default collectors are unchanged until the finite pilot is validated. A failed
+refetch retains the local body. Failures abort that exact delegated upload before
+local fallback can reuse the source; an interrupted active delegation must be
+resumed with the same opt-in command, rather than writing locally over a live job.
+Private journals are under `archive/.work/runner-uploads/`. The design and remaining
+live verification gate are in [docs/runner-uploads.md](docs/runner-uploads.md).
 
 ## Static Pages and original download names
 

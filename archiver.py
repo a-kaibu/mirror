@@ -1122,7 +1122,8 @@ def init_bucket(namespace, bucket, profile="hf"):
     print(f"bucket ready: https://huggingface.co/buckets/{namespace}/{bucket}")
 
 
-def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ident=None, metadata=True, recheck=False, resumable=None):
+def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ident=None, metadata=True, recheck=False, resumable=None, via_runner=False):
+    if via_runner and (not ident or metadata):raise ValueError('runner upload requires one source ID and files-only publication')
     from boto3.s3.transfer import TransferConfig
     from botocore.exceptions import ClientError
     client = s3_client(namespace, profile)
@@ -1151,7 +1152,7 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
         result = validate(path, json.loads(row["data"]), dict(row)) if path else {"sha256": row["sha256"], "size": row["size"]}
         key = "files/" + result["sha256"]
         from multipart_upload import PART_SIZE,MAX_PARTS
-        retain_parts = resumable if resumable is not None else PART_SIZE <= result["size"] <= PART_SIZE * MAX_PARTS
+        retain_parts = via_runner or (resumable if resumable is not None else PART_SIZE <= result["size"] <= PART_SIZE * MAX_PARTS)
         count += 1
         # Full anonymous read-back proves an immutable object, not each source
         # observation. Reuse only a matching accepted proof; retain its original
@@ -1170,8 +1171,13 @@ def publish(store, namespace, bucket, profile="hf", site="both", limit=None, ide
                 raise ValueError("local file unavailable for unpublished object: " + row["id"])
             if retain_parts:
                 from multipart_upload import transfer_and_readback,PublicReadbackMismatch
+                transfer_client=client
+                if via_runner:
+                    from runner_upload import PartClient
+                    transfer_client=PartClient(store,client,namespace,bucket,profile,path,result['sha256'],result['size'],
+                                               row['source_url'],json.loads(row['data']).get('page_url'))
                 try:
-                    checked[key]=transfer_and_readback(store,client,namespace,bucket,key,path,result['sha256'],result['size'],
+                    checked[key]=transfer_and_readback(store,transfer_client,namespace,bucket,key,path,result['sha256'],result['size'],
                         lambda:public_digest(namespace,bucket,key))
                 except PublicReadbackMismatch:
                     store.update(row['id'],remote_sha256=None,remote_verified_at=None)
@@ -1411,6 +1417,7 @@ def main(argv=None):
         if command == "upload":
             p.add_argument("--id", help="upload one catalog source record")
             p.add_argument("--resumable", action="store_true", default=None, help="force resumable upload even for small files; requires --id")
+            p.add_argument("--runner-upload", action="store_true", help="delegate parts for one verified file; requires --id and --files-only")
             p.add_argument("--files-only", action="store_true", help="publish binary only, without a catalogue/provenance checkpoint")
             p.add_argument("--namespace", default="vn-archive")
             p.add_argument("--bucket", default="mirrors")
@@ -1419,6 +1426,8 @@ def main(argv=None):
     if hasattr(args,"site") and args.site not in {"both","official"}:
         from mirror_sources import definitions
         if args.site not in definitions():parser.error("unregistered source: "+args.site)
+    if args.command=='upload' and args.runner_upload and (not args.id or not args.files_only):
+        parser.error('--runner-upload requires --id and --files-only')
     if args.command=='upload' and args.resumable and not args.id:
         parser.error('--resumable requires --id for an explicit single-file override')
     if args.command == "archive-batch" and not 0 <= args.shard_index < args.shards:
@@ -1466,16 +1475,20 @@ def main(argv=None):
                     if args.id:
                         claims.enter_context(exclusive_file(store.root/'.claims'/(hashlib.sha256(args.id.encode()).hexdigest()+'.lock'),blocking=False))
                     publish(store,args.namespace,args.bucket,args.profile,args.site,args.limit,ident=args.id,
-                        metadata=not args.files_only,resumable=args.resumable)
+                        metadata=not args.files_only,resumable=args.resumable,via_runner=args.runner_upload)
             except BlockingIOError:
                 print('source record is busy; upload deferred',file=sys.stderr)
+                return 1
+            except Exception as error:
+                if not args.runner_upload:raise
+                print('runner publication deferred',type(error).__name__,file=sys.stderr)
                 return 1
         if args.command == "status":
             for row in store.db.execute("SELECT site,status,count(*) FROM items WHERE (?='both' OR site=?) GROUP BY site,status", (args.site, args.site)):
                 print(*row)
         return 0
     finally:
-        store.export()
+        if not (args.command=='upload' and args.runner_upload):store.export()
         store.db.close()
 
 

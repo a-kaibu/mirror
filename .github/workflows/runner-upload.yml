@@ -1,0 +1,32 @@
+name: Runner upload
+run-name: Runner upload ${{ inputs.nonce }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      nonce:
+        type: string
+        required: true
+      spec:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Refetch and transfer selected verified parts
+        run: python runner_file_upload.py --event "$GITHUB_EVENT_PATH" --output "$RUNNER_TEMP/runner-upload.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: runner-upload
+          path: ${{ runner.temp }}/runner-upload.json
+          retention-days: 1
