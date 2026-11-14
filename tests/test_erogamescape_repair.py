@@ -18,7 +18,7 @@ class Remote:
         self.db.execute('CREATE TABLE source(game INTEGER,uid TEXT,value TEXT,flag INTEGER,PRIMARY KEY(game,uid))')
         self.db.executemany('INSERT INTO source VALUES(?,?,?,?)',rows)
         self.db.execute('CREATE TABLE myuserview(uid TEXT,review_private INTEGER)')
-        self.queries=[];self.body_requests=0;self.fail_body=None;self.summary_limit=None;self.mutate_body=None;self.final_count_delta=0
+        self.queries=[];self.body_requests=0;self.fail_body=None;self.summary_limit=None;self.mutate_body=None;self.final_count_delta=0;self.summary_requests=0;self.on_summary=None
     def rows(self,where):
         where=re.sub(r"E'((?:[^']|'')*)'",lambda m:"'"+m[1].replace("\\\\","\\")+"'",where)
         rows=self.db.execute('SELECT * FROM source src WHERE '+where+' ORDER BY game,uid').fetchall()
@@ -30,6 +30,8 @@ class Remote:
             predicate=sql.split(' WHERE ',1)[1] if ' WHERE ' in sql else 'TRUE'
             return count(len(self.rows(predicate))+self.final_count_delta)
         if 'string_agg' in sql:
+            self.summary_requests+=1
+            if self.on_summary:self.on_summary(self.summary_requests)
             where=sql.split(' src WHERE ',1)[1].split(' GROUP BY ',1)[0]
             grouped={}
             for row in self.rows(where):grouped.setdefault(row['game'],[]).append(row)
@@ -103,6 +105,38 @@ class GroupRepairTests(unittest.TestCase):
         self.assertEqual(self.db.execute('SELECT value FROM source WHERE game=3').fetchone()[0],'old')
         self.run_repair();self.assertEqual(self.state()['status'],'complete')
         self.assertEqual(self.db.execute('SELECT value FROM source WHERE game=3').fetchone()[0],'newer')
+
+    def test_change_after_group_repairs_splits_range_and_captures_earlier_insert(self):
+        def mutate(number):
+            if number==2:self.remote.db.execute("INSERT INTO source VALUES(0,'u','late early key',1)")
+        self.remote.on_summary=mutate;self.run_repair()
+        self.assertEqual(self.state()['status'],'complete');self.assertEqual(self.state()['rows'],4)
+        self.assertEqual(self.values()[0],(0,'u','late early key',1))
+        self.assertTrue(self.db.execute("SELECT 1 FROM _capture_requests WHERE error='source range changed; split for recheck'").fetchone())
+        # The already verified new group is retained while its range is narrowed.
+        self.assertEqual(len([q for q in self.remote.queries if 'SELECT src.*' in q and '"game" = 1' in q]),2)
+
+    def test_equal_count_update_during_range_check_repairs_only_changed_group(self):
+        def mutate(number):
+            if number==2:self.remote.db.execute("UPDATE source SET value='latest' WHERE game=2")
+        self.remote.on_summary=mutate;self.run_repair()
+        self.assertEqual(self.state()['status'],'complete');self.assertEqual(self.state()['source_count'],3)
+        self.assertEqual(self.db.execute('SELECT value FROM source WHERE game=2').fetchone()[0],'latest')
+        self.assertEqual(len([q for q in self.remote.queries if 'SELECT src.*' in q and '"game" = 3' in q]),2)
+
+    def test_continuously_changing_singleton_defers_without_unbounded_splitting(self):
+        self.db.execute('DELETE FROM source');self.db.execute("INSERT INTO source VALUES(1,'u','old',1)")
+        self.db.execute("UPDATE _capture_state SET rows=1,offset=1");self.db.commit()
+        self.remote.db.execute('DELETE FROM source');self.remote.db.execute("INSERT INTO source VALUES(1,'u','new',1)")
+        repair.repair(self.db,self.table,self.remote,delay=0,max_pages=0)
+        self.db.execute("UPDATE _group_repair_ranges SET lower_key=1,upper_key='2'");self.db.commit()
+        def mutate(number):
+            if number==2:self.remote.db.execute("UPDATE source SET value='newer' WHERE game=1")
+        self.remote.on_summary=mutate;self.run_repair()
+        self.assertEqual(self.state()['status'],'failed')
+        self.assertIn('source range changed',self.state()['error'])
+        self.assertEqual(self.remote.summary_requests,2)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM _group_repair_ranges').fetchone()[0],1)
 
     def test_final_count_drift_rechecks_summaries_without_redownloading_unchanged_rows(self):
         self.remote.final_count_delta=1;self.run_repair()

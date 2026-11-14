@@ -13,3 +13,11 @@ A range is complete only when its source summary is identical before and after p
 Alternatives: repeating count checks cannot repair missing/deleted keys; whole-table text rebuilds discard the reuse opportunity and fail broad cost limits; keys alone miss content updates; timestamp-only comparisons assume every update advances a timestamp. Content fingerprints cost server hashing and one local pass, but transfer only summaries plus changed groups. This is the accepted tradeoff for the roughly 2.2 million review rows.
 
 A remote atomic snapshot across HTTP requests is unavailable. Receipts describe the collection/check interval, not a PostgreSQL transaction snapshot. A continuously changing game can defer completion; bounded retries leave the goal active rather than accepting mismatched rows. The implementation must prove additions before the old cursor, deletions, equal-count content updates, network restart, schema/type rejection, visibility predicates and cost-driven range splits. Actual full-table completion and publication remain unproven until the live checks finish. No user decision blocks implementation; broader type support waits until a real need and matching serialization evidence exist.
+
+Live range checks twice observed a changed source after verified group repairs.
+Such a range now splits into smaller intervals and rechecks them in the same
+bounded worker, retaining repaired groups. This avoids the normal five-minute
+network/error cooldown for a changing multi-game range. Children cover the exact
+parent interval; no completed range is accepted from a changed summary. A hot
+singleton still defers, so continual edits cannot cause unbounded subdivision or
+a tight request loop. SQL request pacing and full final count checks remain.

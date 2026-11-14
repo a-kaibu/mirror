@@ -127,6 +127,14 @@ def repair_group(db,table,group,request,delay):
     print('full metadata group repaired',name,'key',key,'rows',group['rows'],flush=True)
 
 
+def split_segment(db,name,path,lo,hi,pivot):
+    if not lo<pivot<hi:raise ValueError('group summary range did not split')
+    with db:
+        db.execute("UPDATE _group_repair_ranges SET status='split' WHERE name=? AND path=?",(name,path))
+        for suffix,left,right in [('0',lo,pivot),('1',pivot,hi)]:
+            db.execute("INSERT INTO _group_repair_ranges VALUES(?,?,?,?,'pending')",(name,path+suffix,left,str(right)))
+
+
 def repair(db,table,request=f.e.query,delay=3,max_pages=None):
     name=table['table_name']
     if not supported(table):raise ValueError('group fingerprint repair does not support this schema')
@@ -170,11 +178,7 @@ def repair(db,table,request=f.e.query,delay=3,max_pages=None):
                 if hi-lo<=1:raise
                 pivot=(lo+hi)//2;groups=None
             if pivot is not None:
-                if not lo<pivot<hi:raise ValueError('group summary range did not split')
-                with db:
-                    db.execute("UPDATE _group_repair_ranges SET status='split' WHERE name=? AND path=?",(name,path))
-                    for suffix,left,right in [('0',lo,pivot),('1',pivot,hi)]:
-                        db.execute("INSERT INTO _group_repair_ranges VALUES(?,?,?,?,'pending')",(name,path+suffix,left,str(right)))
+                split_segment(db,name,path,lo,hi,pivot)
                 pages+=1;time.sleep(delay);continue
             keys={g['group_key'] for g in groups};last=None
             while True:
@@ -187,8 +191,20 @@ def repair(db,table,request=f.e.query,delay=3,max_pages=None):
                     if value not in keys:repair_group(db,table,{'group_key':value,'rows':0,'digest':hashlib.md5(b'').hexdigest()},request,delay)
                 last=local[-1][0]
             for group in groups:repair_group(db,table,group,request,delay)
-            after,_,_=summary(table,lo,hi,request)
-            if after!=groups:raise ValueError('source range changed during repair')
+            after,after_sql,after_response=summary(table,lo,hi,request)
+            if after!=groups:
+                if hi-lo<=1:raise ValueError('source range changed during repair')
+                # Retain verified group replacements and narrow only the hot
+                # interval. A singleton still defers instead of a tight loop.
+                keys=sorted({group['group_key'] for group in groups+after})
+                pivot=keys[len(keys)//2] if keys else (lo+hi)//2
+                if not lo<pivot<hi:pivot=(lo+hi)//2
+                split_segment(db,name,path,lo,hi,pivot)
+                with db:
+                    db.execute('INSERT INTO _capture_requests(name,sql,response_sha256,row_count,fetched_at,error) VALUES(?,?,?,?,?,?)',
+                               (name,after_sql,after_response,len(after),a.now(),'source range changed; split for recheck'))
+                print('full metadata changed range split',name,lo,hi,'at',pivot,flush=True)
+                pages+=1;time.sleep(delay);continue
             with db:
                 db.execute("UPDATE _group_repair_ranges SET status='complete' WHERE name=? AND path=?",(name,path))
                 db.execute('INSERT INTO _capture_requests(name,sql,response_sha256,row_count,fetched_at) VALUES(?,?,?,?,?)',(name,sql,response,len(groups),a.now()))
