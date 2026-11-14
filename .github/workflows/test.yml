@@ -11,5 +11,9 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install .
+      - name: Check installed package outside source imports
+        run: |
+          python -I -c "import archiver, multipart_upload, snapshot_upload, erogamescape_repair"
+          python -I -m archiver --help
       - run: python -m unittest discover -s tests -v
       - run: node --test tests/search.test.mjs
