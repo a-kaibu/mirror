@@ -14,7 +14,9 @@ from runner_file_upload import MAX_BYTES,encode_spec,validate_spec
 from transfer_probe import gh,save,now,REPO
 
 WORKFLOW='runner-upload.yml'
-RUNNER_REF='archive-runner'
+RUNNER_REF='archive-runner-v2'
+# Retained journals keep their exact saved release and commit identity.
+TRUSTED_RUNNER_REFS=frozenset({'main','archive-runner',RUNNER_REF})
 
 
 class RunnerIdentityMismatch(ValueError):
@@ -45,7 +47,7 @@ def find_run(state):
 
 def execute_job(state,spec,journal,*,timeout=1500):
     dispatch_ref=state.get('dispatch_ref','main')
-    if dispatch_ref not in {'main',RUNNER_REF}:raise ValueError('unconfigured runner reference')
+    if dispatch_ref not in TRUSTED_RUNNER_REFS:raise ValueError('unconfigured runner reference')
     if not state.get('dispatch_attempted_at'):
         state['dispatch_attempted_at']=now();save(journal,state)
         with tempfile.TemporaryDirectory(prefix='mirror-runner-dispatch-') as folder:

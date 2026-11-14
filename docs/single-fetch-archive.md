@@ -261,3 +261,24 @@ acknowledgements, canonical read-back, SQLite CAS and staging cleanup. Pages
 visibility remains a separate publication gate. Limits above 4 GiB and longer
 job/capability lifetimes remain undecided until that evidence exists; they are
 not prerequisites for implementing the bounded 4 GiB path.
+
+
+Implementation update: the worker validates up to 4 GiB and new jobs select
+`archive-runner-v2`. The previous `archive-runner` and saved `main` jobs remain
+permitted with their original exact head checks. The old ref is not advanced.
+A realistic synthetic 512-part SigV4 spec encoded to 34,572 characters and
+316,450 decoded bytes, within the existing bounds. Boundary, rejected-before-GET,
+legacy-resume and frozen-head rejection tests pass. The worker emits source byte
+progress and acknowledged selected-part byte counts without source or capability
+URLs; its memory buffering remains unchanged.
+
+The 908,505,423-byte official trial completed runner origin download in 349.299 s
+and upload in 33.875 s, then passed host public canonical verification and staging
+cleanup. A transient receipt request failure was recovered using the same job,
+without a second source download. Its accepted proof is in SQLite. The 1.23 GB
+trial remains queued; it has not supplied another throughput result. The first
+completed pilot and bounded-memory code permit the 2.58 GB pilot to proceed
+without waiting for that second result. At the measured rates its transfer could
+approach the unchanged 20-minute job deadline; that timing remains a pilot risk,
+not a guarantee. A terminal timeout must abort the exact upload before any later
+source attempt, and no source is accepted from partial transfer progress.

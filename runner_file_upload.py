@@ -15,7 +15,7 @@ import zlib
 
 from runner_transfer_probe import validate_capabilities,MIN_PART
 
-MAX_BYTES=2*1024**3
+MAX_BYTES=4*1024**3
 MAX_SPEC=1024**2
 
 
@@ -88,7 +88,8 @@ def transfer(spec,source_open=None,part_open=urlopen,clock=time.monotonic):
         source_open=fetcher.open
     with tempfile.TemporaryDirectory(prefix='mirror-runner-upload-') as folder:
         if shutil.disk_usage(folder).free<size+1024**3:raise OSError('runner disk reserve')
-        path=Path(folder)/'body';digest=hashlib.sha256();md5=hashlib.md5();count=0;start=clock()
+        path=Path(folder)/'body';digest=hashlib.sha256();md5=hashlib.md5();count=0;start=clock();report_at=128*1024**2
+        print('runner source download started',size,'bytes',flush=True)
         headers={'Referer':spec['referer']} if spec.get('referer') else {}
         with source_open(spec['source_url'],headers=headers) as response,path.open('wb') as target:
             if response.status!=200:raise ValueError('source HTTP status')
@@ -99,10 +100,13 @@ def transfer(spec,source_open=None,part_open=urlopen,clock=time.monotonic):
                 count+=len(chunk)
                 if count>size:raise ValueError('source exceeded expected size')
                 digest.update(chunk);md5.update(chunk);target.write(chunk)
+                if count>=report_at:
+                    print('runner source bytes received',count,'of',size,flush=True);report_at+=128*1024**2
         actual_sha=digest.hexdigest();actual_md5=md5.hexdigest()
         if count!=size or (sha is not None and actual_sha!=sha):raise ValueError('refetched source digest or size mismatch')
         if spec.get('md5') is not None and actual_md5!=spec['md5']:raise ValueError('published MD5 mismatch')
-        downloaded=clock()-start;start=clock();accepted=[]
+        downloaded=clock()-start;start=clock();accepted=[];acknowledged=0
+        print('runner source verified',count,'bytes','download seconds',round(downloaded,3),flush=True)
         with path.open('rb') as source:
             for part in parts:
                 number=part['number'];expected=min(part_size,size-(number-1)*part_size)
@@ -114,6 +118,9 @@ def transfer(spec,source_open=None,part_open=urlopen,clock=time.monotonic):
                     etag=response.headers.get('ETag')
                     if not isinstance(etag,str) or not etag:raise ValueError('part ETag missing')
                 accepted.append({'number':number,'size':expected,'sha256':hashlib.sha256(payload).hexdigest(),'etag':etag})
+                acknowledged+=expected
+                if len(accepted)%16==0 or len(accepted)==len(parts):
+                    print('runner selected parts acknowledged',len(accepted),'bytes',acknowledged,flush=True)
                 del payload
         return {'sha256':actual_sha,'md5':actual_md5,'size':size,'parts':accepted,'download_seconds':round(downloaded,3),
                 'upload_seconds':round(clock()-start,3),'completed_public_object':False}
