@@ -186,9 +186,13 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
                     print("batch download deferred equivalent upload",row["id"],flush=True)
                     continue
                 if single_fetch:
-                    from single_fetch import archive_candidate
+                    from single_fetch import archive_candidate,SourceTransferFailed
                     try:
                         result=archive_candidate(store,row,profile=profile)
+                    except SourceTransferFailed:
+                        stats['failed']+=1
+                        print('single-fetch exhausted observed mirrors',row['id'],flush=True)
+                        continue
                     except (BlockingIOError,TimeoutError):
                         stats['busy']+=1
                         print('single-fetch deferred; source job retained',row['id'],flush=True)

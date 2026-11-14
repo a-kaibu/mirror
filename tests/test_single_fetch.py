@@ -150,3 +150,47 @@ class SingleFetchTests(unittest.TestCase):
     def test_duplicate_nonce_is_not_silently_assigned_to_a_run(self):
         with patch.object(jobs,'gh',return_value={'workflow_runs':[dict(id=i,display_title='Runner upload target') for i in [1,2]]}):
             with self.assertRaises(jobs.RunnerIdentityMismatch):jobs.find_run({'nonce':'target'})
+    def test_terminal_failure_is_recorded_and_tries_next_observed_mirror(self):
+        self.store.add({**self.record,'mirrors':[self.url,'https://fallback.test/demo.zip']})
+        seen=[]
+        def execute(state,spec,journal,**kwargs):
+            seen.append(spec['source_url'])
+            if len(seen)==1:
+                state.update(run_id=123,conclusion='failure');controller._save(self.store,state);raise RuntimeError('source unavailable')
+            return self.execute(state,spec,journal,**kwargs)
+        result=controller.archive_candidate(self.store,self.row(),client=self.client,execute=execute,readback=self.readback)
+        self.assertEqual(result['accepted_id'],'target');self.assertEqual(seen,[self.url,'https://fallback.test/demo.zip'])
+        self.assertEqual(self.client.aborts,1);self.assertEqual(self.origins,1)
+        attempts=self.store.db.execute("SELECT url,error FROM attempts WHERE item_id='target'").fetchall()
+        self.assertEqual(len(attempts),1);self.assertEqual(attempts[0]['url'],self.url)
+        self.assertIn('failure',attempts[0]['error'])
+
+    def test_exhausted_mirrors_stop_without_retrying_same_source_in_one_pass(self):
+        self.store.add({**self.record,'mirrors':[self.url,'https://fallback.test/demo.zip']});seen=[]
+        def failed(state,spec,journal,**kwargs):
+            seen.append(spec['source_url']);state.update(run_id=123,conclusion='failure');controller._save(self.store,state);raise RuntimeError('source failure')
+        with self.assertRaises(controller.SourceTransferFailed):
+            controller.archive_candidate(self.store,self.row(),client=self.client,execute=failed)
+        self.assertEqual(seen,[self.url,'https://fallback.test/demo.zip']);self.assertEqual(self.client.aborts,2)
+        self.assertEqual(self.row()['status'],'failed');self.assertIsNone(self.row()['remote_verified_at'])
+        self.assertEqual(self.store.db.execute("SELECT count(*) FROM attempts WHERE item_id='target'").fetchone()[0],2)
+
+    def test_abort_failure_does_not_start_fallback(self):
+        self.store.add({**self.record,'mirrors':[self.url,'https://fallback.test/demo.zip']});seen=[]
+        def failed(state,spec,journal,**kwargs):
+            seen.append(spec['source_url']);state.update(run_id=123,conclusion='failure');controller._save(self.store,state);raise RuntimeError('failed')
+        with patch.object(self.client,'abort_multipart_upload',side_effect=TimeoutError('abort uncertain')):
+            with self.assertRaises(TimeoutError):controller.archive_candidate(self.store,self.row(),client=self.client,execute=failed)
+        self.assertEqual(seen,[self.url]);self.assertEqual(self.client.created,1)
+        self.assertEqual(controller._load(self.store,'target')['phase'],'job')
+    def test_batch_continues_other_files_after_exhausted_source(self):
+        import bulk
+        self.store.add({**self.record,'id':'zz-second'})
+        def execute(state,spec,journal,**kwargs):
+            if state['item_id']=='target':
+                state.update(run_id=123,conclusion='failure');controller._save(self.store,state);raise RuntimeError('source failure')
+            return self.execute(state,spec,journal,**kwargs)
+        with patch.object(jobs,'execute_job',side_effect=execute),patch.object(controller,'make_client',return_value=self.client),patch.object(controller.staged,'digest_hashes',side_effect=lambda *args,**kwargs:self.readback('files/'+hashlib.sha256(PAYLOAD).hexdigest())),patch.object(bulk,'download',side_effect=AssertionError('unexpected host download')),patch.object(bulk,'publish_metadata'):
+            stats=bulk.archive_batch(self.store,a.Fetcher(),single_fetch=True,reserve_bytes=0)
+        self.assertEqual(stats['failed'],1);self.assertEqual(stats['published'],1)
+        self.assertEqual(self.row()['status'],'failed');self.assertEqual(self.origins,1)

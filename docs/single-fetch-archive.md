@@ -128,3 +128,9 @@ That fallback does not enable delegated refetch after the host download. An
 observation timeout preserves its journal and defers the source without falling
 back to a second origin downloader. Existing collectors keep their previous
 behavior until explicitly migrated after bounded real batch validation.
+
+Terminal runner failures now enter SQLite attempts with the observed source URL
+and job identity. Only acknowledged exact-upload abort permits mirror failover.
+One pass attempts each eligible observed URL at most once; exhausted sources are
+marked failed without stopping independent files. An uncertain abort, observation
+timeout or failed receipt retrieval cannot start a fallback origin download.

@@ -17,6 +17,19 @@ from transfer_probe import client as make_client, save
 PART_SIZE=8*1024**2
 
 
+class SourceTransferFailed(RuntimeError):
+    """A terminal runner failed; its exact multipart upload has been aborted."""
+
+
+def _record_failure(store,state):
+    error='Runner transfer failed; job '+state['nonce']+'; conclusion '+str(state.get('conclusion'))
+    with store.db:
+        store.db.execute("""INSERT INTO attempts(item_id,url,attempted_at,error,tls_pin)
+            SELECT ?,?,?,?,NULL WHERE NOT EXISTS(
+                SELECT 1 FROM attempts WHERE item_id=? AND url=? AND error=?)""",
+            (state['item_id'],state['source_url'],a.now(),error,state['item_id'],state['source_url'],error))
+
+
 def _load(store,ident):
     path=staged.journal_path(store,ident)
     if not path.exists():return None
@@ -157,15 +170,18 @@ def run_claimed(store,ident,source_url=None,size=None,*,profile='hf',client=None
             except TimeoutError:
                 # Preserve the same run and capability identity on observation expiry.
                 raise
-            except Exception:
-                if state.get('conclusion') not in (None,'success'):_abort(store,client,state)
+            except Exception as error:
+                if state.get('conclusion') not in (None,'success'):
+                    _abort(store,client,state)
+                    _record_failure(store,state)
+                    raise SourceTransferFailed('terminal source transfer failed') from error
                 raise
             if state.get('conclusion')!='success' or type(state.get('run_id')) is not int or state['run_id']<=0:raise ValueError('terminal verified runner required')
             state.update(receipt=receipt,phase='parts',fetched_at=a.now());_save(store,state)
         return staged.promote(store,client,source,state,state['receipt'],readback=readback)
 
 
-def archive_candidate(store,row,*,profile='hf',client=None,execute=None,readback=None):
+def _archive_candidate_once(store,row,*,profile='hf',client=None,execute=None,readback=None,excluded=()):
     """Return None for the host route; never fall back while a job can still run."""
     state=_load(store,row['id'])
     if state and state['phase'] not in {'aborted','cleaned'}:
@@ -188,10 +204,29 @@ def archive_candidate(store,row,*,profile='hf',client=None,execute=None,readback
         if host in {'drive.google.com','docs.google.com','mega.nz','mega.co.nz'}:continue
         eligible.append(url)
     if not eligible:return None
+    eligible=[url for url in eligible if url not in excluded]
+    if not eligible:raise SourceTransferFailed('all eligible observed mirrors failed')
     if state and state['phase']=='aborted' and state.get('source_url') in eligible:
         offset=(eligible.index(state['source_url'])+1)%len(eligible)
         eligible=eligible[offset:]+eligible[:offset]
     return run_claimed(store,row['id'],eligible[0],size,profile=profile,client=client,execute=execute,readback=readback)
+
+
+def archive_candidate(store,row,**kwargs):
+    """Fail over only after terminal failure and acknowledged multipart abort."""
+    failed=set()
+    while True:
+        try:return _archive_candidate_once(store,row,excluded=failed,**kwargs)
+        except SourceTransferFailed:
+            state=_load(store,row['id'])
+            if not state or state['phase']!='aborted':raise
+            url=state['source_url']
+            if url in failed:
+                with store.db:
+                    store.db.execute("UPDATE items SET status='failed',error=? WHERE id=? AND data=? AND remote_verified_at IS NULL",
+                        ('All eligible observed mirrors failed in delegated transfer',row['id'],row['data']))
+                raise
+            failed.add(url)
 
 
 def run(store,ident,source_url=None,size=None,**kwargs):
