@@ -2,6 +2,8 @@
 import argparse
 import hashlib
 import json
+import sqlite3
+from contextlib import suppress
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
@@ -70,20 +72,30 @@ def ready(store,site):
 
 def watch(root,site,stop,interval=60):
     with exclusive_file(Path(root)/'.claims'/('watch-'+site+'.lock')):
-        store=a.Store(root)
+        store=None
         try:
             while not stop.is_set():
+                retry_delay=interval
                 try:
+                    if store is None:store=a.Store(root)
                     if ready(store,site):
                         print('archive watcher work',site,flush=True)
                         archive_batch(store,a.Fetcher(delay=10,timeout=30,retries=2,tls_pins=a.source_tls_pins()),site=site,checkpoint_every=25)
                 except Exception as error:
                     print('archive watcher failed',site,type(error).__name__,str(error),flush=True)
-                    # Publication errors preserve verified working copies; retry
-                    # after cooldown instead of downloading an unpublishable queue.
-                    if stop.wait(max(interval,300)):break
-                if stop.wait(interval):break
-        finally:store.db.close()
+                    if store is not None:
+                        with suppress(sqlite3.Error):store.db.rollback()
+                        # A failed snapshot upgrade remains unusable after the
+                        # other writer exits. Reopen SQLite before retrying.
+                        if isinstance(error,sqlite3.Error):
+                            with suppress(sqlite3.Error):store.db.close()
+                            store=None
+                    retry_delay=max(interval,300)
+                # Leave the exception scope before waiting: its traceback can
+                # retain large payloads and live read cursors across cooldown.
+                if stop.wait(retry_delay):break
+        finally:
+            if store is not None:store.db.close()
 
 
 if __name__=='__main__':
