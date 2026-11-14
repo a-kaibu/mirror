@@ -265,7 +265,8 @@ It delegates files from 8 MiB through 2 GiB with an eligible public HTTP(S) sour
 URL; smaller files, larger files and unsupported source URLs use the normal host
 transport. Each source is still downloaded and verified locally first. A delegated
 failure stops the batch and retains the local body; it does not start a competing
-local upload. Default collectors keep the host transport. A failed
+local upload. A busy object claim defers that source, retains its verified body
+and lets the batch continue with other files; a later pass retries it. Default collectors keep the host transport. A failed
 refetch retains the local body. Failures abort that exact delegated upload before
 local fallback can reuse the source; an interrupted active delegation must be
 resumed with the same opt-in command, rather than writing locally over a live job.

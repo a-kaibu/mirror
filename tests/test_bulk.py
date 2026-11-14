@@ -45,6 +45,34 @@ class BulkTests(unittest.TestCase):
         self.assertEqual(ranking.call_count, 1)
         self.assertEqual(download.call_args.kwargs["ident"], "waiting")
 
+    def test_busy_object_keeps_verified_body_and_retries_after_other_work(self):
+        self.add("a"); self.add("b", brand="Other Brand")
+        client, objects = Mock(), {}
+        client.upload_file.side_effect = lambda path, bucket, key, **kw: objects.update({key: Path(path).read_bytes()})
+        from test_snapshot_upload import bind_snapshot_gateway
+        bind_snapshot_gateway(client, objects)
+        def publish(store, namespace, bucket, profile, site, ident=None, **kwargs):
+            if ident == "a": raise BlockingIOError("object already owned")
+            return a.publish(store, namespace, bucket, profile, site, ident=ident, **kwargs)
+        with patch.object(a, "s3_client", return_value=client), patch.object(a, "public_digest", side_effect=lambda ns, bucket, key: (hashlib.sha256(objects[key]).hexdigest(), len(objects[key]))):
+            with patch.object(bulk, "publish", side_effect=publish):
+                result = bulk.archive_batch(self.store, Fetch([Response(PAYLOAD), Response(PAYLOAD)]), reserve_bytes=0)
+            self.assertEqual(result["processed"], 2)
+            self.assertEqual(result["published"], 1)
+            self.assertEqual(result["busy"], 1)
+            first = self.store.db.execute("SELECT * FROM items WHERE id='a'").fetchone()
+            self.assertEqual(first["status"], "verified")
+            path = self.store.root / first["path"]
+            self.assertEqual(path.read_bytes(), PAYLOAD)
+            self.assertIsNone(first["remote_verified_at"])
+            self.assertEqual(self.store.db.execute("SELECT status FROM items WHERE id='b'").fetchone()[0], "archived")
+            # An accepted donor now permits publication without fetching again.
+            resumed = bulk.archive_batch(self.store, Fetch([]), reserve_bytes=0)
+            self.assertEqual(resumed["processed"], 1)
+            self.assertEqual(resumed["published"], 1)
+            self.assertFalse(path.exists())
+            self.assertEqual(self.store.db.execute("SELECT status FROM items WHERE id='a'").fetchone()[0], "archived")
+
     def test_cli_forwards_batch_runner_option(self):
         for enabled in [False, True]:
             args = ["--root", self.tmp.name, "archive-batch", "--site", "suezou", "--limit", "1"]

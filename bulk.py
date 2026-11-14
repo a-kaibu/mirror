@@ -163,8 +163,8 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
                 if download(store, fetcher, site, ident=row["id"], export=False):
                     stats["failed"] += 1
                     continue
-                # Publishing failures stop the batch; do not fill disk with a queue
-                # that cannot be uploaded. Source failures above remain retryable.
+                # Publishing failures other than claim contention stop the batch;
+                # do not accumulate bodies when the destination is unavailable.
                 options = {}
                 if runner_upload:
                     from runner_file_upload import MAX_BYTES, public_source
@@ -177,7 +177,14 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
                             pass
                         else:
                             options["via_runner"] = True
-                stats["published"] += publish(store, namespace, bucket, profile, site, ident=row["id"], metadata=False, **options)
+                try:
+                    stats["published"] += publish(store, namespace, bucket, profile, site, ident=row["id"], metadata=False, **options)
+                except BlockingIOError:
+                    # Another source/controller owns this byte object. Keep its
+                    # verified local copy and leave the remote upload untouched.
+                    stats["busy"] += 1
+                    print("batch publication deferred busy object", row["id"], flush=True)
+                    continue
                 if not keep_local:
                     stats["evicted_bytes"] += evict_verified(store, row["id"], namespace, bucket)
             print("batch", now(), json.dumps(stats), flush=True)
