@@ -165,6 +165,35 @@ def run_claimed(store,ident,source_url=None,size=None,*,profile='hf',client=None
         return staged.promote(store,client,source,state,state['receipt'],readback=readback)
 
 
+def archive_candidate(store,row,*,profile='hf',client=None,execute=None,readback=None):
+    """Return None for the host route; never fall back while a job can still run."""
+    state=_load(store,row['id'])
+    if state and state['phase'] not in {'aborted','cleaned'}:
+        return run_claimed(store,row['id'],profile=profile,client=client,execute=execute,readback=readback)
+    record=json.loads(row['data']);size=record.get('expected_size')
+    if row['path'] or type(size) is not int or not 0<size<=MAX_BYTES:return None
+    if (record.get('fields') or {}).get('source_association_quarantined'):return None
+    # A managed partial from an earlier host attempt retains its resume route.
+    directory=store.root/'files'/row['site']/row['id']
+    if directory.exists() and any(directory.iterdir()):return None
+    urls=list(dict.fromkeys(record.get('mirrors',[])+a.matching_mirrors(store,row,record)))
+    from urllib.parse import urlsplit
+    urls.sort(key=lambda url:urlsplit(url).hostname!='storage1.lathercraft.net')
+    eligible=[]
+    for url in urls:
+        try:public_source(url)
+        except ValueError:continue
+        host=urlsplit(url).hostname
+        # These need the host's public download adapter, not a direct GET.
+        if host in {'drive.google.com','docs.google.com','mega.nz','mega.co.nz'}:continue
+        eligible.append(url)
+    if not eligible:return None
+    if state and state['phase']=='aborted' and state.get('source_url') in eligible:
+        offset=(eligible.index(state['source_url'])+1)%len(eligible)
+        eligible=eligible[offset:]+eligible[:offset]
+    return run_claimed(store,row['id'],eligible[0],size,profile=profile,client=client,execute=execute,readback=readback)
+
+
 def run(store,ident,source_url=None,size=None,**kwargs):
     path=store.root/'.claims'/(hashlib.sha256(ident.encode()).hexdigest()+'.lock')
     with exclusive_file(path,blocking=False):return run_claimed(store,ident,source_url,size,**kwargs)

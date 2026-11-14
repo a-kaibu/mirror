@@ -117,3 +117,27 @@ class SingleFetchTests(unittest.TestCase):
         with self.assertRaises(BlockingIOError):
             controller.run(self.store,'alias',self.url,len(PAYLOAD),client=self.client,execute=self.execute)
         self.assertEqual((self.client.created,self.origins),(1,0))
+    def test_batch_single_fetch_never_calls_host_download(self):
+        import bulk
+        with patch.object(jobs,'execute_job',side_effect=self.execute),patch.object(controller,'make_client',return_value=self.client),patch.object(controller.staged,'digest_hashes',side_effect=lambda *args,**kw:self.readback('files/'+hashlib.sha256(PAYLOAD).hexdigest())),patch.object(bulk,'download',side_effect=AssertionError('host download')),patch.object(bulk,'publish',side_effect=AssertionError('local upload')),patch.object(bulk,'publish_metadata'):
+            stats=bulk.archive_batch(self.store,a.Fetcher(),single_fetch=True,reserve_bytes=0)
+        self.assertEqual(stats['published'],1);self.assertEqual(self.origins,1);self.assertIsNone(self.row()['path'])
+
+    def test_batch_timeout_never_falls_back_to_host_download(self):
+        import bulk
+        def timeout(state,*args,**kwargs):
+            state.update(run_id=123,dispatch_attempted_at=a.now());controller._save(self.store,state);raise TimeoutError()
+        with patch.object(jobs,'execute_job',side_effect=timeout),patch.object(controller,'make_client',return_value=self.client),patch.object(bulk,'download',side_effect=AssertionError('duplicate host download')),patch.object(bulk,'publish_metadata'):
+            stats=bulk.archive_batch(self.store,a.Fetcher(),single_fetch=True,reserve_bytes=0)
+        self.assertEqual(stats['busy'],1);self.assertEqual(stats['published'],0);self.assertEqual(self.client.created,1)
+
+    def test_candidate_preserves_existing_host_partial(self):
+        directory=self.store.root/'files'/self.row()['site']/'target';directory.mkdir(parents=True)
+        (directory/'body.part').write_bytes(b'partial')
+        self.assertIsNone(controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute))
+        self.assertEqual(self.client.created,0)
+
+    def test_candidate_keeps_adapter_sources_on_host_route(self):
+        self.store.add({**self.record,'mirrors':['https://drive.google.com/uc?id=fixture']})
+        self.assertIsNone(controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute))
+        self.assertEqual(self.client.created,0)

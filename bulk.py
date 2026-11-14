@@ -122,7 +122,9 @@ def equivalent_upload_active(store, row, namespace, bucket):
 
 
 def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", profile="hf", site="both",
-                  limit=None, keep_local=False, reserve_bytes=16 * 1024**3, checkpoint_every=10, retry_failed=False, shards=1, shard_index=0, runner_upload=False):
+                  limit=None, keep_local=False, reserve_bytes=16 * 1024**3, checkpoint_every=10, retry_failed=False, shards=1, shard_index=0, runner_upload=False, single_fetch=False):
+    if single_fetch and (keep_local or (namespace,bucket)!=('vn-archive','mirrors')):
+        raise ValueError('single-fetch requires the configured bucket and remote-only storage')
     if shards < 1 or not 0 <= shard_index < shards:
         raise ValueError("invalid shard assignment")
     stats = {"processed": 0, "published": 0, "reused": 0, "failed": 0, "evicted_bytes": 0, "busy": 0}
@@ -183,6 +185,20 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
                     stats["busy"] += 1
                     print("batch download deferred equivalent upload",row["id"],flush=True)
                     continue
+                if single_fetch:
+                    from single_fetch import archive_candidate
+                    try:
+                        result=archive_candidate(store,row,profile=profile)
+                    except (BlockingIOError,TimeoutError):
+                        stats['busy']+=1
+                        print('single-fetch deferred; source job retained',row['id'],flush=True)
+                        continue
+                    if result is not None:
+                        stats['reused' if result.get('reused') else 'published']+=int(bool(result.get('accepted_id')))
+                        print('batch',now(),json.dumps(stats),flush=True)
+                        if (stats['published']+stats['reused'])%checkpoint_every==0:
+                            publish_metadata(store,namespace,bucket,profile,include_html=False,blocking=False)
+                        continue
                 required = (record.get("expected_size") or 4 * 1024**3) + reserve_bytes
                 if not keep_local and shutil.disk_usage(store.root).free < required:
                     for candidate in store.rows():
@@ -197,7 +213,7 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
                 # Publishing failures other than claim contention stop the batch;
                 # do not accumulate bodies when the destination is unavailable.
                 options = {}
-                if runner_upload:
+                if runner_upload and not single_fetch:
                     from runner_file_upload import MAX_BYTES, public_source
                     from multipart_upload import PART_SIZE
                     verified = store.db.execute("SELECT size,source_url FROM items WHERE id=?", (row["id"],)).fetchone()

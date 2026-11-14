@@ -5,7 +5,8 @@ implemented and unit tested. Staged completion, conditional promotion, public
 proof and source CAS are implemented and unit tested in `staged_archive.py`.
 Durable job orchestration is implemented in `single_fetch.py`, including source
 and equivalent claims, frozen-spec identity, timeout resume, failed-run abort
-and promotion recovery. Collector integration and production migration remain.
+and promotion recovery. Opt-in batch integration (`archive-batch --single-fetch` and selected-site
+`archive_watch.py --single-fetch`) is implemented. Production migration remains.
 Existing collection stays active during implementation. This replaces the double
 origin read for new eligible files; existing verified-local upload remains usable.
 
@@ -106,3 +107,24 @@ Runtime bounds remain at the proven pilot limits initially. Raising size or
 concurrency is deferred until the implementing agent measures source time, queue
 wait, upload/read-back time, disk and peak memory on the real single-fetch path.
 That decision does not block implementing the bounded path.
+
+## First real single-fetch proof
+
+The 14,288,847-byte `yakin_re_update1.0.1.zip` patch passed the complete pipeline
+on workflow run 43626025396 at commit 9ea3d8d. Runner origin GET took 5.136 s,
+part upload 0.770 s. Public canonical read-back accepted publisher MD5
+`ff9d9ebd5a39e8a33752db374b2dd923`, SHA-256
+`0714717221f2162534acc6db4ff28dcbcc86764f6216dc239d81ae69bb38b287`
+and exact size. SQLite has archived status and no local path; canonical HEAD
+matched and the exact staging key returned missing after cleanup. Safe evidence:
+`.work/single-fetch-pilot-verified-20261115.json` (under the archive root).
+The earlier STORAGE2 attempt ended in URLError after 60 seconds and its known
+multipart upload was aborted before trying observed STORAGE1. This is evidence
+for the new route, not proof that all remaining sources or Pages are complete.
+
+The opt-in batch route uses published exact sizes initially. Unknown-size,
+protocol/adapter-only and existing host partials retain the normal host route.
+That fallback does not enable delegated refetch after the host download. An
+observation timeout preserves its journal and defers the source without falling
+back to a second origin downloader. Existing collectors keep their previous
+behavior until explicitly migrated after bounded real batch validation.
