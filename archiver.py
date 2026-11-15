@@ -809,8 +809,21 @@ def transfer(fetcher, url, destination, record):
             and urlsplit(source).hostname == "retropc.net"
             and re.fullmatch(r"/alice/\d+\.html", urlsplit(source).path)):
         headers["Referer"] = source
+    def open_response(request_headers):
+        try:
+            return open_download(fetcher, url, request_headers)
+        except (URLError,ConnectionRefusedError) as error:
+            reason=error.reason if isinstance(error,URLError) else error
+            # A URL-bound prefix must keep its checkpoint when the same
+            # capture is reachable only on its other public port. Never
+            # downgrade unknown bytes or retry a denial/certificate failure.
+            if (not offset or not isinstance(reason,ConnectionRefusedError) or not binary_archive_capture(url)
+                    or urlsplit(url).scheme=='https' and not expected_digest):raise
+            parts=urlsplit(url)
+            alternate=urlunsplit(('http' if parts.scheme=='https' else 'https',parts.netloc,parts.path,parts.query,''))
+            return open_download(fetcher, alternate, request_headers)
     try:
-        response = open_download(fetcher, url, headers)
+        response = open_response(headers)
     except HTTPError as e:
         if e.code != 416 or not offset:
             raise
@@ -818,7 +831,7 @@ def transfer(fetcher, url, destination, record):
         # verify the full response rather than accepting a truncated .part.
         e.close()
         offset = 0
-        response = open_download(fetcher, url, {k:v for k,v in headers.items() if k not in {"Range", "If-Range"}} or None)
+        response = open_response({k:v for k,v in headers.items() if k not in {"Range", "If-Range"}} or None)
     with response:
         if response.headers.get("Content-Encoding", "identity") != "identity":
             raise ValueError("unexpected content encoding for binary transfer")
