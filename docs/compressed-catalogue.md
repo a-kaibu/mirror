@@ -248,3 +248,24 @@ snapshot; the next successful publication or the existing hourly Pages schedule
 can build the latest canonical view. Trigger errors log only their type. This
 trigger starts site generation; deployment and actual JSON visibility still
 need separate verification.
+
+## Stronger compression for new generations (2026-11-15)
+
+A whole immutable production checkpoint (raw 1,641,091,072 bytes) measured
+283,206,565 bytes at gzip level 1 and 246,372,930 bytes at level 6: 36,833,635
+fewer transferred bytes, approximately 13.0%. Level-6 encoding took 17.521
+seconds, including reading/decompressing the existing transport. Its complete
+raw SHA-256 and size matched before compression and after a separate full
+decompression. The comparison ran in a fresh process limited to 256 MiB address
+space and 120 CPU seconds. Four 4 MiB windows had suggested an 18.3% reduction;
+the whole-file measurement supersedes that sample estimate.
+
+New gzip generations use level 6 with the same streaming buffers, deterministic
+headers, reserve checks and complete digest gates. This increases compression
+CPU work to reduce traffic on the measured slow upload route. Saved generations
+retain their exact bytes and SHA-256; accepted parts and their upload identities
+are never discarded or recompressed because the default changed. A regression
+test builds and interrupts a real level-1 stream, changes live SQLite data,
+then resumes those exact old bytes while forbidding compression. The current
+in-flight production generation remains level 1; the setting applies only when
+constructing a later generation.

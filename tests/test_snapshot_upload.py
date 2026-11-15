@@ -197,6 +197,24 @@ class CompressedSnapshotTests(unittest.TestCase):
         self.assertEqual(self.client.sent,sent);self.assertEqual(self.values()[0],["a"])
         self.assertFalse(m.snapshot_path(self.store.root,"vn-archive","mirrors",first["sha256"],self.key).exists())
 
+    def test_pending_level_one_generation_resumes_exact_bytes_after_compression_change(self):
+        import catalogue_transport as c
+        original=c.gzip.GzipFile
+        def legacy_gzip(*args,**kwargs):
+            kwargs['compresslevel']=1
+            return original(*args,**kwargs)
+        self.client.fail_part=1
+        with patch.object(c.gzip,'GzipFile',side_effect=legacy_gzip),self.assertRaises(TimeoutError):
+            self.publish()
+        state=json.loads(self.pointer().read_text())
+        frozen=m.snapshot_path(self.store.root,'vn-archive','mirrors',state['sha256'],self.key).read_bytes()
+        self.assertEqual(frozen[8],4)  # A real gzip level-1 stream, not the new default.
+        self.store.add(dict(self.record,id='b'))
+        with patch.object(c,'compress',side_effect=AssertionError('pending generation was recompressed')):
+            self.publish()
+        self.assertEqual(self.client.objects[self.key],frozen)
+        self.assertEqual(self.client.created,1);self.assertEqual(self.values()[0],['a'])
+
     def test_compressed_destination_claim_is_independent_and_exclusive(self):
         raw=hashlib.sha256(m.json_identity("vn-archive","mirrors").encode()).hexdigest()
         gz=hashlib.sha256(m.json_identity("vn-archive","mirrors",self.key).encode()).hexdigest()

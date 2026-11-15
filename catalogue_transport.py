@@ -45,7 +45,7 @@ def compress(source,destination,*,reserve=RESERVE,pages=False):
     try:
         with tempfile.NamedTemporaryFile(prefix=".catalogue-",dir=destination.parent,delete=False) as output:
             temporary=Path(output.name)
-            with source.open("rb") as incoming,gzip.GzipFile(filename="",mode="wb",compresslevel=1,mtime=0,fileobj=output) as encoded:
+            with source.open("rb") as incoming,gzip.GzipFile(filename="",mode="wb",compresslevel=6,mtime=0,fileobj=output) as encoded:
                 while data:=incoming.read(CHUNK):
                     if shutil.disk_usage(destination.parent).free<len(data)+reserve:
                         raise OSError("disk reserve reached during catalogue compression")
