@@ -431,3 +431,31 @@ failed passes cool down for at least 300 seconds. Parent shutdown waits for a ch
 to finish its existing pass; it does not kill productive body work. The default
 legacy mode remains available. This rollout is limited to observed idle sources;
 the broad active collectors remain running with their existing claims.
+
+
+## Snapshot request bodies and write deadlines
+
+Two independent full-checkpoint attempts ended in ConnectionClosedError. The
+underlying exception was TLS write timeout, not read timeout. The installed
+urllib3 connection pool applies its connect timeout during request transmission
+and switches to read timeout after sending. Snapshot parts were raw bytes, so
+urllib3 passed one entire 8 MiB part to socket.sendall on this slow host route.
+
+Use a seekable in-memory stream for each snapshot part. This makes urllib3 send
+bounded blocks while retaining exact Content-Length and SDK retry rewind support.
+Keep at most two current part payloads and close streams after each request,
+including failure. Do not change upload IDs, part numbers, part geometry, stored
+acknowledgements, immutable snapshot bytes or the independent public read-back.
+
+Alternatives were increasing connection deadlines for all requests (also delays
+actual connection failures) or shrinking multipart geometry (would require a new
+generation/upload for already acknowledged parts). The stream boundary fix keeps
+the existing transfer identity and ordinary connection policy. Native/delegated
+file-body upload adapters retain their existing byte-input contract.
+
+A regression using the installed urllib3 HTTPConnection reproduces the oversized
+sendall failure before the change, checks small wire writes afterward, and verifies
+exact wire bytes, Content-Length framing, rewind and stream closure. Existing
+parallel-resume tests still require successful sibling ACKs to survive a failure.
+Live network improvement remains to be measured on the same paused snapshot;
+this change cannot guarantee against an independent remote connection failure.

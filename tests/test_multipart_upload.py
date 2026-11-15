@@ -27,7 +27,7 @@ class Gateway:
     def create_multipart_upload(self,**kw):
         self.created+=1;ident='opaque-upload-'+str(self.created);self.uploads[ident]={};return {'UploadId':ident}
     def upload_part(self,**kw):
-        number=kw['PartNumber'];self.sent.append(number);body=kw['Body'];self.assert_length(body,kw['ContentLength'])
+        number=kw['PartNumber'];self.sent.append(number);body=kw['Body'];body=body.read() if hasattr(body,'read') else body;self.assert_length(body,kw['ContentLength'])
         if number==self.fail_part and not self.fail_after_store:self.fail_part=None;raise TimeoutError('fixture lost connection')
         etag='opaque-part-'+hashlib.sha256(body).hexdigest();self.uploads[kw['UploadId']][number]={'Body':body,'Size':len(body),'ETag':etag,'PartNumber':number}
         if number==self.fail_part:self.fail_part=None;raise TimeoutError('fixture lost acknowledgement')

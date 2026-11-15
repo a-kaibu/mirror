@@ -127,6 +127,13 @@ def _snapshot_parts(store,client,identity,path,sha256,size,state,remote,part_siz
     count=(size+part_size-1)//part_size
     parts={};pending={};failure=None;assembled=hashlib.sha256()
     pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix='catalogue-part')
+    def send_part(number,expected,payload):
+        # Raw bytes become one large TLS write under the connection timeout.
+        # A seekable stream gives urllib3 small writes and SDK retry rewinds.
+        import io
+        with io.BytesIO(payload) as body:
+            return client.upload_part(Bucket=bucket,Key=key,UploadId=state['upload_id'],
+                PartNumber=number,Body=body,ContentLength=expected)
     def drain(all_parts=False):
         nonlocal failure
         while pending:
@@ -157,7 +164,7 @@ def _snapshot_parts(store,client,identity,path,sha256,size,state,remote,part_siz
                     and observed['Size']==expected and observed['ETag']==saved['etag'])
                 if reuse:parts[number]={'PartNumber':number,'ETag':saved['etag']}
                 else:
-                    future=pool.submit(client.upload_part,Bucket=bucket,Key=key,UploadId=state['upload_id'],PartNumber=number,Body=payload,ContentLength=expected)
+                    future=pool.submit(send_part,number,expected,payload)
                     pending[future]=(number,expected,local_sha)
                 del payload
             if stream.read(1):raise ValueError('multipart local body grew')
