@@ -74,6 +74,7 @@ class ParallelSnapshotTests(unittest.TestCase):
 
     def test_snapshot_wire_writes_are_small_and_sdk_retries_can_rewind(self):
         from urllib3.connection import HTTPConnection
+        from botocore.httpsession import BUFFER_SIZE
         self.payload=b'x'*(128*1024+31);self.body.write_bytes(self.payload)
         self.sha=hashlib.sha256(self.payload).hexdigest();base=self.client.upload_part
         streams=[];wire_lengths=[]
@@ -90,7 +91,8 @@ class ParallelSnapshotTests(unittest.TestCase):
             # the exact bytes and Content-Length without one giant sendall.
             if hasattr(body,'read'):
                 self.assertEqual(body.read(5),self.payload[:5]);body.seek(0)
-            socket=BoundedSocket();connection=HTTPConnection('fixture.invalid',blocksize=8192)
+                self.assertEqual(hashlib.sha256(body.read()).hexdigest(),self.sha);body.seek(0)
+            socket=BoundedSocket();connection=HTTPConnection('fixture.invalid',blocksize=BUFFER_SIZE or 16384)
             connection.sock=socket
             try:connection.request('PUT','/fixture',body=body,headers={'Content-Length':str(kwargs['ContentLength'])})
             finally:connection.close()
@@ -103,5 +105,5 @@ class ParallelSnapshotTests(unittest.TestCase):
             result=m._transfer_and_readback(cache,self.client,'vn-archive','mirrors','index.sqlite3.gz',
                 self.body,self.sha,len(self.payload),self.readback,len(self.payload),snapshot=True)
         self.assertEqual(result,(self.sha,len(self.payload)))
-        self.assertLessEqual(max(wire_lengths),8192)
+        self.assertLessEqual(max(wire_lengths),16384)
         self.assertTrue(all(body.closed for body in streams))

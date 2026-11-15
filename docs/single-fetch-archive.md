@@ -473,3 +473,13 @@ before network access, and only observed source URLs enter the CDX query. The
 existing network-query limit, cached-index evidence, exact URL matching and
 per-capture timestamps remain unchanged. Source rows are selected in SQLite
 without first materializing the entire JSON catalogue.
+
+
+The first stream-only change still encountered a live ConnectionClosedError.
+The SDK pool config overrides urllib3 default blocks with 128 KiB, which the
+initial 8 KiB HTTPConnection regression did not reproduce. Snapshot streams now
+return at most 16 KiB for positive read requests; read-all, seek, tell and total
+Content-Length semantics stay intact for signing and retries. The regression
+uses botocore.httpsession.BUFFER_SIZE and fails without this short-read bound.
+Live throughput and any remaining independent connection failures remain under
+observation; no receive ACK or public-body verification is inferred from tests.

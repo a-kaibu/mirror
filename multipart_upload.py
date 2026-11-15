@@ -1,5 +1,6 @@
 """Immutable-file uploads with durable, independently verified parts."""
 import hashlib
+import io
 from contextlib import contextmanager
 import sqlite3
 from types import SimpleNamespace
@@ -13,6 +14,15 @@ PART_SIZE=8*1024**2
 MIN_PART_SIZE=5*1024**2
 MAX_PART_SIZE=64*1024**2
 MAX_PARTS=10000
+
+
+class _SnapshotBody(io.BytesIO):
+    def read(self,size=-1):
+        # Botocore asks urllib3 for 128 KiB blocks. On a slow shared route
+        # even that can exceed the connection deadline for one TLS write.
+        # Short positive reads are valid stream behavior; read-all stays intact.
+        if size is not None and size>16*1024:size=16*1024
+        return super().read(size)
 
 
 class PublicReadbackMismatch(ValueError):
@@ -130,8 +140,7 @@ def _snapshot_parts(store,client,identity,path,sha256,size,state,remote,part_siz
     def send_part(number,expected,payload):
         # Raw bytes become one large TLS write under the connection timeout.
         # A seekable stream gives urllib3 small writes and SDK retry rewinds.
-        import io
-        with io.BytesIO(payload) as body:
+        with _SnapshotBody(payload) as body:
             return client.upload_part(Bucket=bucket,Key=key,UploadId=state['upload_id'],
                 PartNumber=number,Body=body,ContentLength=expected)
     def drain(all_parts=False):
