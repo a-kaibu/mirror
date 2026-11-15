@@ -16,7 +16,7 @@ MAX_PART_SIZE=64*1024**2
 MAX_PARTS=10000
 
 
-class _SnapshotBody(io.BytesIO):
+class _PartBody(io.BytesIO):
     def read(self,size=-1):
         # Botocore asks urllib3 for 128 KiB blocks. On a slow shared route
         # even that can exceed the connection deadline for one TLS write.
@@ -140,7 +140,7 @@ def _snapshot_parts(store,client,identity,path,sha256,size,state,remote,part_siz
     def send_part(number,expected,payload):
         # Raw bytes become one large TLS write under the connection timeout.
         # A seekable stream gives urllib3 small writes and SDK retry rewinds.
-        with _SnapshotBody(payload) as body:
+        with _PartBody(payload) as body:
             return client.upload_part(Bucket=bucket,Key=key,UploadId=state['upload_id'],
                 PartNumber=number,Body=body,ContentLength=expected)
     def drain(all_parts=False):
@@ -250,7 +250,11 @@ def _transfer_and_readback(store,client,namespace,bucket,key,path,sha256,size,re
                                and observed['Size']==expected and observed['ETag']==saved['etag'])
                         if reuse:etag=saved['etag']
                         else:
-                            response=client.upload_part(Bucket=bucket,Key=key,UploadId=state['upload_id'],PartNumber=number,Body=payload,ContentLength=expected)
+                            # A raw bytes body becomes one TLS sendall. Share the
+                            # bounded, seekable stream used by snapshots so slow
+                            # routes can finish a part without one giant write.
+                            with _PartBody(payload) as body:
+                                response=client.upload_part(Bucket=bucket,Key=key,UploadId=state['upload_id'],PartNumber=number,Body=body,ContentLength=expected)
                             etag=response.get('ETag')
                             if not isinstance(etag,str) or not etag:raise ValueError('missing multipart part ETag')
                             with store.db:

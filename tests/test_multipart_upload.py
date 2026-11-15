@@ -175,12 +175,52 @@ class MultipartTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'committed'):self.send()
         finally:self.store.db.rollback()
         self.assertEqual(self.client.created,0)
+    def test_multipart_wire_writes_are_small_and_sdk_retries_can_rewind(self):
+        from urllib3.connection import HTTPConnection
+        from botocore.httpsession import BUFFER_SIZE
+        self.payload=b'x'*(128*1024+31);self.body.write_bytes(self.payload)
+        self.sha=hashlib.sha256(self.payload).hexdigest();base=self.client.upload_part
+        self.key='files/'+self.sha
+        streams=[];wire_lengths=[]
+        class BoundedSocket:
+            def __init__(self):self.writes=[]
+            def sendall(self,data):
+                if len(data)>64*1024:raise TimeoutError('one large TLS write exceeds the transport budget')
+                self.writes.append(bytes(data));wire_lengths.append(len(data))
+            def settimeout(self,value):pass
+            def close(self):pass
+        def send(**kwargs):
+            body=kwargs['Body'];streams.append(body)
+            # Botocore may rewind a seekable request body after a retry. Keep
+            # the exact bytes and Content-Length without one giant sendall.
+            if hasattr(body,'read'):
+                self.assertEqual(body.read(5),self.payload[:5]);body.seek(0)
+                self.assertEqual(hashlib.sha256(body.read()).hexdigest(),self.sha);body.seek(0)
+            socket=BoundedSocket();connection=HTTPConnection('fixture.invalid',blocksize=BUFFER_SIZE or 16384)
+            connection.sock=socket
+            try:connection.request('PUT','/fixture',body=body,headers={'Content-Length':str(kwargs['ContentLength'])})
+            finally:connection.close()
+            header,wire=b''.join(socket.writes).split(b'\r\n\r\n',1)
+            self.assertNotIn(b'Transfer-Encoding: chunked',header)
+            self.assertEqual(wire,self.payload)
+            return base(**{**kwargs,'Body':wire})
+        self.client.upload_part=send
+        result=self.send(part_size=len(self.payload))
+        self.assertEqual(result,(self.sha,len(self.payload)))
+        self.assertLessEqual(max(wire_lengths),16384)
+        self.assertTrue(all(body.closed for body in streams))
+
     def test_upload_memory_is_bounded_by_one_part(self):
         size=20*1024**2;chunk=b'x'*(5*1024**2)
         with self.body.open('wb') as f:
             for _ in range(4):f.write(chunk)
         sha=a.digest(self.body)['sha256'];maximum=[]
-        def send(**kw):maximum.append(len(kw['Body']));return {'ETag':'opaque-'+str(kw['PartNumber'])}
+        def send(**kw):
+            # Determine length the way a seekable SDK request body permits,
+            # without retaining or copying each part in the memory recorder.
+            body=kw['Body'];position=body.tell();body.seek(0,2)
+            maximum.append(body.tell());body.seek(position)
+            return {'ETag':'opaque-'+str(kw['PartNumber'])}
         # Mock.call_args_list would itself retain every body and measure the
         # test recorder rather than the uploader's live buffers.
         self.client.upload_part=send

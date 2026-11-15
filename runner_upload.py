@@ -218,6 +218,16 @@ class PartClient:
         if (kwargs['Bucket'],kwargs['Key'])!=(self.bucket,self.key):raise ValueError('runner upload target changed')
         if number not in self.responses:self._prepare(upload_id,number)
         part=self.responses.get(number)
-        if (not part or part['size']!=kwargs['ContentLength'] or part['sha256']!=hashlib.sha256(kwargs['Body']).hexdigest()):
+        if not part or part['size']!=kwargs['ContentLength']:
+            raise ValueError('runner result does not match current local payload')
+        body=kwargs['Body']
+        if hasattr(body,'read'):
+            position=body.tell();digest=hashlib.sha256()
+            try:
+                while chunk:=body.read(1024*1024):digest.update(chunk)
+            finally:body.seek(position)
+            actual=digest.hexdigest()
+        else:actual=hashlib.sha256(body).hexdigest()
+        if part['sha256']!=actual:
             raise ValueError('runner result does not match current local payload')
         return {'ETag':part['etag']}

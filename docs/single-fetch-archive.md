@@ -539,3 +539,12 @@ retain their original identities; only new jobs select v5.
 
 Dropbox's documented public link mechanism:
 https://help.dropbox.com/share/force-download
+
+
+## Normal file upload write size
+
+Ordinary immutable-file uploads use the same seekable part stream as snapshots.
+An 8 MiB multipart part keeps its size, number, SHA-256 and opaque ETag; positive SDK reads return at most 16 KiB so the HTTP client does not send the whole part in one TLS write.
+Existing multipart checkpoints remain valid and acknowledged parts are reused on resume.
+The delegated-upload adapter hashes seekable bodies in bounded reads and restores their initial position, including when the payload is rejected.
+The normal-upload regression test uses the real HTTP connection with a socket that rejects large writes; rewind, exact wire bytes, Content-Length and bounded upload memory are checked alongside resume tests.

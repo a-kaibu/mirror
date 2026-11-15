@@ -143,6 +143,20 @@ class IntegrationTests(unittest.TestCase):
         with patch.object(r.PartClient,'_execute',autospec=True,side_effect=self.execute):
             return a.publish(self.store,'vn-archive','mirrors',ident='target',metadata=False,via_runner=True,**kwargs)
 
+    def test_seekable_part_body_is_validated_and_rewound(self):
+        adapter=object.__new__(r.PartClient)
+        adapter.bucket='mirrors';adapter.key=self.key
+        adapter.responses={1:dict(size=len(self.payload),sha256=self.sha,etag='opaque-part')}
+        with io.BytesIO(b'prefix'+self.payload) as body:
+            body.seek(6)
+            kwargs=dict(Bucket='mirrors',Key=self.key,UploadId='fixture',PartNumber=1,
+                Body=body,ContentLength=len(self.payload))
+            self.assertEqual(adapter.upload_part(**kwargs),{'ETag':'opaque-part'})
+            self.assertEqual(body.tell(),6)
+            body.seek(0)
+            with self.assertRaisesRegex(ValueError,'current local payload'):adapter.upload_part(**kwargs)
+            self.assertEqual(body.tell(),0)
+
     def test_real_transfer_helper_keeps_completion_readback_and_source_proof(self):
         self.assertEqual(self.publish(),1)
         row=self.store.db.execute("SELECT * FROM items WHERE id='target'").fetchone()
