@@ -137,3 +137,19 @@ on 2026-11-14 and its actual download link was subsequently verified in the publ
 Pages catalogue. Finite subsequent trial and patch batches also passed public
 read-back. Default collectors do not opt in automatically. The batch flag does
 not raise the per-file size, capability expiry or observation deadlines.
+
+## HTTP failure diagnostics (2026-11-15)
+
+Three live jobs (43678722679, 43678706701 and 43678696026) failed with
+`HTTPError` after source-open started and before source verification. Their v3
+logs did not retain the response code, so they cannot establish whether the
+origin returned 403, 404 or another status. Do not attribute these failures to HF
+part uploads or infer a specific origin status.
+
+The v4 worker logs only a fixed phase (`source` or `upload-part`) and an integer
+HTTP status (100–599, otherwise null), then rethrows the original exception.
+It never prints the exception message, URL, response headers/body or upload
+capabilities. Failure still cannot produce a success receipt. New dispatches use
+a separate pinned `archive-runner-v4` release; the v3 ref and saved job identities
+remain unchanged. File bounds, part sizes, capability lifetime, checksum gates,
+host completion and full public read-back remain unchanged.

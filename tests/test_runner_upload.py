@@ -8,6 +8,7 @@ import sqlite3
 import tempfile
 import unittest
 from unittest.mock import Mock,patch
+from urllib.error import HTTPError
 from urllib.parse import urlencode,urlsplit,parse_qs
 import zlib
 
@@ -54,6 +55,34 @@ class WorkerTests(unittest.TestCase):
         send=Mock()
         with self.assertRaisesRegex(ValueError,'digest or size'):w.transfer(specification(),source_open=lambda *a,**k:Response(b'x'*len(PAYLOAD)),part_open=send)
         send.assert_not_called()
+
+    def test_source_http_failure_logs_status_without_sending_or_leaking_url(self):
+        error=HTTPError('https://source.test/private?token=secret',403,'secret-message',{},None)
+        send=Mock()
+        with patch('sys.stdout',new_callable=io.StringIO) as output:
+            with self.assertRaises(HTTPError) as caught:
+                w.transfer(specification(),source_open=Mock(side_effect=error),part_open=send)
+        self.assertIs(caught.exception,error);self.assertTrue(error.closed);send.assert_not_called()
+        text=output.getvalue()
+        self.assertIn('"phase": "source"',text);self.assertIn('"status": 403',text)
+        for private in ['secret','source.test','token=']:self.assertNotIn(private,text)
+
+    def test_part_http_failure_logs_status_and_never_returns_success(self):
+        error=HTTPError('https://vn-archive.s3.hf.co/private?signature=secret',503,'secret-message',{},None)
+        with patch('sys.stdout',new_callable=io.StringIO) as output:
+            with self.assertRaises(HTTPError) as caught:
+                w.transfer(specification(),source_open=lambda *a,**k:Response(PAYLOAD),part_open=Mock(side_effect=error))
+        self.assertIs(caught.exception,error);self.assertTrue(error.closed);text=output.getvalue()
+        self.assertIn('runner source verified',text)
+        self.assertIn('"phase": "upload-part"',text);self.assertIn('"status": 503',text)
+        for private in ['secret','s3.hf.co','signature=']:self.assertNotIn(private,text)
+
+    def test_http_failure_rejects_non_numeric_status_in_log(self):
+        error=HTTPError('https://source.test/private','secret-code','secret-message',{},None)
+        with patch('sys.stdout',new_callable=io.StringIO) as output:
+            with self.assertRaises(HTTPError):
+                w.transfer(specification(),source_open=Mock(side_effect=error))
+        self.assertTrue(error.closed);self.assertIn('"status": null',output.getvalue());self.assertNotIn('secret',output.getvalue())
 
     def test_bounded_encoded_specification(self):
         value=specification();self.assertEqual(w.decode_spec(w.encode_spec(value)),value)

@@ -1,6 +1,7 @@
 """Refetch one verified public source and send selected delegated parts only."""
 import argparse
 import base64
+from contextlib import contextmanager
 import hashlib
 import ipaddress
 import json
@@ -9,6 +10,7 @@ import re
 import shutil
 import tempfile
 import time
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request,urlopen
 import zlib
@@ -80,6 +82,19 @@ def validate_spec(spec):
     return sha,size,part_size,parts
 
 
+@contextmanager
+def http_response(opener,target,*,phase,**kwargs):
+    """Keep source and destination failures distinguishable without leaking URLs."""
+    try:
+        with opener(target,**kwargs) as response:
+            yield response
+    except HTTPError as error:
+        status=error.code if type(error.code) is int and 100<=error.code<=599 else None
+        error.close()
+        print('runner HTTP failure',json.dumps({'phase':phase,'status':status}),flush=True)
+        raise
+
+
 def transfer(spec,source_open=None,part_open=urlopen,clock=time.monotonic):
     sha,size,part_size,parts=validate_spec(spec)
     if source_open is None:
@@ -91,7 +106,7 @@ def transfer(spec,source_open=None,part_open=urlopen,clock=time.monotonic):
         path=Path(folder)/'body';digest=hashlib.sha256();md5=hashlib.md5();count=0;start=clock();report_at=128*1024**2
         print('runner source download started',size,'bytes',flush=True)
         headers={'Referer':spec['referer']} if spec.get('referer') else {}
-        with source_open(spec['source_url'],headers=headers) as response,path.open('wb') as target:
+        with http_response(source_open,spec['source_url'],phase='source',headers=headers) as response,path.open('wb') as target:
             if response.status!=200:raise ValueError('source HTTP status')
             if response.headers.get('Content-Encoding','identity')!='identity':raise ValueError('encoded source body')
             if 'html' in response.headers.get('Content-Type','').lower():raise ValueError('HTML source body')
@@ -113,7 +128,7 @@ def transfer(spec,source_open=None,part_open=urlopen,clock=time.monotonic):
                 source.seek((number-1)*part_size);payload=source.read(expected)
                 if len(payload)!=expected:raise ValueError('staged body changed')
                 request=Request(part['url'],data=payload,method='PUT',headers={'Content-Length':str(expected)})
-                with part_open(request,timeout=60) as response:
+                with http_response(part_open,request,phase='upload-part',timeout=60) as response:
                     if not 200<=response.status<300:raise ValueError('part HTTP status')
                     etag=response.headers.get('ETag')
                     if not isinstance(etag,str) or not etag:raise ValueError('part ETag missing')
