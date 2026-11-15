@@ -15,7 +15,7 @@ import zlib
 
 from runner_transfer_probe import validate_capabilities,MIN_PART
 
-MAX_BYTES=4*1024**3
+MAX_BYTES=5_000_000_000
 MAX_SPEC=1024**2
 
 

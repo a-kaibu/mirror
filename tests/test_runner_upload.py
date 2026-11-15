@@ -192,19 +192,19 @@ class IntegrationTests(unittest.TestCase):
             store.assert_not_called()
 
 
-class FourGiBWorkerBoundsTests(unittest.TestCase):
+class FiveGBWorkerBoundsTests(unittest.TestCase):
     def specification(self,size):
         key='staging/'+'a'*64;part_size=m.PART_SIZE
         parts=[dict(number=n,url=Signer().generate_presigned_url('upload_part',Params={'PartNumber':n,'UploadId':'fixture','Key':key})) for n in range(1,(size+part_size-1)//part_size+1)]
         return dict(mode='staging',staging_key=key,sha256=None,md5=None,published_size=None,size=size,part_size=part_size,parts=parts,source_url='https://publisher.test/trial.zip')
 
-    def test_above_two_gib_and_four_gib_boundary_use_bounded_part_descriptions(self):
-        self.assertEqual(w.MAX_BYTES,4*1024**3)
-        for size in (2*1024**3+1,w.MAX_BYTES):
+    def test_above_four_gib_and_five_gb_boundary_use_bounded_part_descriptions(self):
+        self.assertEqual(w.MAX_BYTES,5_000_000_000)
+        for size in (2*1024**3+1,4*1024**3+1,w.MAX_BYTES):
             with self.subTest(size=size):
                 spec=self.specification(size);w.validate_spec(spec)
                 self.assertEqual(w.decode_spec(w.encode_spec(spec)),spec)
-        self.assertEqual(len(self.specification(w.MAX_BYTES)['parts']),512)
+        self.assertEqual(len(self.specification(w.MAX_BYTES)['parts']),597)
 
     def test_oversized_body_and_invalid_part_size_are_rejected_before_origin(self):
         for change in [dict(size=w.MAX_BYTES+1),dict(part_size=64*1024**2+1),dict(part_size=w.MIN_PART-1)]:
@@ -213,7 +213,7 @@ class FourGiBWorkerBoundsTests(unittest.TestCase):
                 w.transfer(dict(self.specification(w.MAX_BYTES),**change),source_open=source,part_open=send)
             source.assert_not_called();send.assert_not_called()
 
-    def test_realistic_signed_four_gib_spec_fits_dispatch_and_decoded_limits(self):
+    def test_realistic_signed_five_gb_spec_fits_dispatch_and_decoded_limits(self):
         import boto3
         from botocore.config import Config
         signer=boto3.client('s3',endpoint_url='https://vn-archive.s3.hf.co',aws_access_key_id='synthetic-access-key',aws_secret_access_key='synthetic-secret-key',config=Config(signature_version='s3v4',region_name='us-east-1',s3={'addressing_style':'path'}))
@@ -239,5 +239,23 @@ class RetainedWorkerReleaseTests(unittest.TestCase):
 
     def test_legacy_release_still_requires_the_original_commit_identity(self):
         state=dict(nonce='legacy',head_sha='a'*40,dispatch_ref='archive-runner',run_id=123,dispatch_attempted_at='2026-11-14T00:00:00+00:00')
+        with tempfile.TemporaryDirectory() as tmp,patch.object(r,'gh',return_value=dict(status='completed',conclusion='success',head_sha='b'*40)):
+            with self.assertRaises(r.RunnerIdentityMismatch):r.execute_job(state,specification(),Path(tmp)/'job.json')
+
+
+class FourGiBReleaseRetentionTests(unittest.TestCase):
+    def test_saved_v2_release_resumes_without_dispatch_or_head_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal=Path(tmp)/'job.json';state=dict(nonce='legacy-v2',head_sha='a'*40,dispatch_ref='archive-runner-v2',run_id=123,dispatch_attempted_at='2026-11-14T00:00:00+00:00');calls=[]
+            def api(arguments):
+                calls.append(arguments)
+                if arguments[:2]==['run','download']:
+                    (Path(arguments[arguments.index('--dir')+1])/'runner-upload.json').write_text('{}');return None
+                return dict(status='completed',conclusion='success',head_sha='a'*40)
+            with patch.object(r,'gh',side_effect=api):self.assertEqual(r.execute_job(state,specification(),journal),{})
+            self.assertFalse(any('/dispatches' in call[1] for call in calls));self.assertEqual(state['head_sha'],'a'*40);self.assertEqual(state['dispatch_ref'],'archive-runner-v2')
+
+    def test_saved_v2_release_rejects_a_different_head(self):
+        state=dict(nonce='legacy-v2',head_sha='a'*40,dispatch_ref='archive-runner-v2',run_id=123,dispatch_attempted_at='2026-11-14T00:00:00+00:00')
         with tempfile.TemporaryDirectory() as tmp,patch.object(r,'gh',return_value=dict(status='completed',conclusion='success',head_sha='b'*40)):
             with self.assertRaises(r.RunnerIdentityMismatch):r.execute_job(state,specification(),Path(tmp)/'job.json')

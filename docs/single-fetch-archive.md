@@ -316,3 +316,48 @@ uv run python delegated_archive.py --site dlsite --watch
 Actions側の全ミラー試行が終了し、対応するmultipartの中止が確認できた候補は、失敗記録を残したまま通常取得へ戻す。
 `delegated_host_routes` に元のメタデータのSHA-256と最後のジョブIDを記録し、同じ観測をこの巡回から再委譲しない。
 元データが変更された候補は再検討する。終了を確認できないジョブや不明な中止結果は通常取得へ戻さず、同じジョブの復旧処理に残す。
+
+
+## 5 GB boundary and a third immutable worker release
+
+A live SQLite audit on 2026-11-15 found one pending known-size body above
+4 GiB: `kakyuusei_re_trial.zip`, 4,849,670,669 bytes. It has no managed partial
+and no current source claim. Three completed LatherCraft bodies of
+2,304,018,588 / 2,270,730,862 / 2,255,431,663 bytes took respectively
+110.072 / 151.621 / 153.456 seconds to download and 250.276 / 165.159 / 84.448
+seconds to upload. These measurements support a bounded larger pilot; they do
+not prove its completion time or public acceptance.
+
+Select a maximum of exactly **5,000,000,000 bytes**, not 5 GiB. Keep 8 MiB
+parts, the runner's 1 GiB disk reserve, 20-minute workflow and 30-minute
+capabilities, and existing independent public hash/size verification. This
+also stays within the documented [S3 single-operation copy boundary](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html).
+HF behavior at this size remains a live verification gate, rather than a
+claim derived from AWS documentation. A maximum-sized spec has 597 parts and
+must pass both encoded/decoded dispatch limits with synthetic real SigV4 URLs.
+
+Alternatives are retaining the slow ordinary host path, or introducing
+streaming/ranged workers and multipart server-side copy for larger objects.
+The ordinary path stays available. Streaming/ranged acquisition is unnecessary
+for this measured gap and would add new source-version and recovery contracts.
+Do not raise the bound above 5 GB until a separate design establishes copy,
+source identity, capability and runtime limits for the actual larger cohort.
+
+Use a detached worktree for implementation and tests. Publish the tested
+`archive-runner-v3` ref before making it the default in the running checkout.
+Keep `archive-runner`, `archive-runner-v2`, and saved `main` journals on their
+original exact heads, without redispatching or rewriting their identities.
+The pilot must additionally prove sufficient runner disk, origin digests/size,
+part acknowledgements, completion/copy, public read-back, SQLite CAS and cleanup.
+Queue/source delays may still exceed the existing budget; retain the same
+journal on observation timeout and use the ordinary route after confirmed
+terminal failure. There is no implementation blocker after boundary tests and
+pinned-ref checks pass. The implementing agent will select the actual pilot
+only after these gates; public acceptance and Pages visibility remain unproven
+until separately observed.
+
+Boundary-test result: a synthetic real-SigV4 specification for exactly
+5,000,000,000 bytes contains 597 parts, 40,108 encoded characters and 368,980
+decoded JSON bytes. Its round-trip succeeded within the existing 60,000 /
+1,048,576 limits. Both old pinned branch heads were independently checked before
+creating v3; neither is moved as part of this rollout.
