@@ -43,6 +43,22 @@ def specification(body=PAYLOAD,numbers=None,part_size=m.PART_SIZE):
 
 
 class WorkerTests(unittest.TestCase):
+    def test_default_fetcher_uses_public_dropbox_download_adapter(self):
+        spec=specification();original='https://www.dropbox.com/s/public-id/patch.zip?dl=0&rlkey=a%2Bb'
+        spec['source_url']=original;fetcher=Mock();fetcher.open.return_value=Response(PAYLOAD)
+        with patch.object(a,'Fetcher',return_value=fetcher):
+            result=w.transfer(spec,part_open=lambda *args,**kwargs:Response())
+        fetcher.open.assert_called_once_with('https://www.dropbox.com/s/public-id/patch.zip?rlkey=a%2Bb&dl=1',{'Referer':spec['referer']})
+        self.assertEqual(spec['source_url'],original)
+        self.assertEqual(result['sha256'],hashlib.sha256(PAYLOAD).hexdigest())
+
+    def test_default_download_adapter_still_rejects_changed_body_before_upload(self):
+        spec=specification();spec['source_url']='https://www.dropbox.com/s/public-id/patch.zip?dl=0'
+        fetcher=Mock();fetcher.open.return_value=Response(b'x'*len(PAYLOAD));send=Mock()
+        with patch.object(a,'Fetcher',return_value=fetcher),self.assertRaisesRegex(ValueError,'digest or size'):
+            w.transfer(spec,part_open=send)
+        send.assert_not_called()
+
     def test_selected_parts_do_not_rewrite_reused_prefix(self):
         body=b'x'*w.MIN_PART+b'last';spec=specification(body,[2],w.MIN_PART);calls=[]
         def send(request,**kwargs):calls.append(request);return Response()

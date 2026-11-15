@@ -11,8 +11,8 @@ def file_id(url):
     return ident if ident and re.fullmatch(r'[A-Za-z0-9_-]{10,200}',ident) else None
 
 
-def open_download(fetcher,url,headers=None):
-    import archiver as a
+def direct_download_url(url):
+    """Use the documented public Dropbox download URL without changing identity."""
     parts=urlsplit(url)
     # Dropbox documents dl=1 for public shared files; retain the original
     # link in provenance and preserve its access parameters (including rlkey).
@@ -22,7 +22,14 @@ def open_download(fetcher,url,headers=None):
             and re.fullmatch(r'/(?:s|scl/fi)/[^/]+/[^/]+',parts.path)):
         query=[(k,v) for k,v in parse_qsl(parts.query,keep_blank_values=True) if k not in {'dl','raw'}]
         target=urlunsplit((parts.scheme,parts.netloc,parts.path,urlencode(query+[('dl','1')]),parts.fragment))
-        return fetcher.open(target,headers)
+        return target
+    return url
+
+
+def open_download(fetcher,url,headers=None):
+    import archiver as a
+    target=direct_download_url(url)
+    if target!=url:return fetcher.open(target,headers)
     ident=file_id(url)
     if ident is None:return fetcher.open(url,headers)
     target='https://drive.usercontent.google.com/download?'+urlencode({'id':ident,'export':'download'})

@@ -100,7 +100,8 @@ def transfer(spec,source_open=None,part_open=urlopen,clock=time.monotonic):
     if source_open is None:
         import archiver as a
         fetcher=a.Fetcher(delay=0,timeout=60,retries=1,tls_pins=a.source_tls_pins())
-        source_open=fetcher.open
+        from drive_download import open_download
+        source_open=lambda url,headers=None:open_download(fetcher,url,headers)
     with tempfile.TemporaryDirectory(prefix='mirror-runner-upload-') as folder:
         if shutil.disk_usage(folder).free<size+1024**3:raise OSError('runner disk reserve')
         path=Path(folder)/'body';digest=hashlib.sha256();md5=hashlib.md5();count=0;start=clock();report_at=128*1024**2
