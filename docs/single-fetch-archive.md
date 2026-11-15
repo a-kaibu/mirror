@@ -414,3 +414,20 @@ after the first two. Finite fresh children keep memory bounded and pick up host
 code fixes on later visits. Large public read-backs can still occupy a slot for
 a while; existing collectors continue in parallel. No timeout kills a child
 with unaccepted body work, and no JSON manifest is generated on the host.
+
+
+## Release idle normal-watcher memory between passes
+
+The host audit on 2026-11-15 found 68 repository processes holding 2,974,364 KiB
+RSS and 3,618,144 KiB swapped pages (about 2.84 and 3.45 GiB respectively). Several
+legacy normal watchers retained hundreds of MiB while their current source queues
+were empty. Existing productive transfers are not interrupted to reclaim memory.
+
+`archive_watch.py --site alice_archives --site alicefree --site hanny --fresh-processes`
+retains normal-route acquisition but runs each current queue pass in a fresh finite
+`--once` child. The parent owns the existing per-source watch lock, so a replacement
+waits for the former watcher to exit. Children close SQLite on success and failure;
+failed passes cool down for at least 300 seconds. Parent shutdown waits for a child
+to finish its existing pass; it does not kill productive body work. The default
+legacy mode remains available. This rollout is limited to observed idle sources;
+the broad active collectors remain running with their existing claims.

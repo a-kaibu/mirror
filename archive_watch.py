@@ -3,6 +3,8 @@ import argparse
 import hashlib
 import json
 import sqlite3
+import subprocess
+import sys
 from contextlib import suppress
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -98,14 +100,44 @@ def watch(root,site,stop,interval=60,runner_upload=False,single_fetch=False):
             if store is not None:store.db.close()
 
 
+def once(root,site,runner_upload=False,single_fetch=False):
+    """Finish one current queue pass and release all SQLite/Python state."""
+    store=a.Store(root)
+    try:
+        if ready(store,site):
+            archive_batch(store,a.Fetcher(delay=10,timeout=30,retries=2,tls_pins=a.source_tls_pins()),
+                site=site,checkpoint_every=25,runner_upload=runner_upload,single_fetch=single_fetch)
+    finally:store.db.close()
+
+
+def watch_fresh(root,site,stop,interval=60,runner_upload=False,single_fetch=False):
+    # Own the same watch lock as the legacy process. Children remain finite;
+    # source/object claims inside archive_batch still protect active transfers.
+    with exclusive_file(Path(root)/'.claims'/('watch-'+site+'.lock')):
+        while not stop.is_set():
+            command=[sys.executable,'-u',str(Path(__file__).resolve()),'--root',str(root),'--site',site,'--once']
+            if runner_upload:command.append('--runner-upload')
+            if single_fetch:command.append('--single-fetch')
+            try:code=subprocess.run(command,stdin=subprocess.DEVNULL,check=False).returncode
+            except OSError as error:
+                code=None;print('archive fresh launch failed',site,type(error).__name__,flush=True)
+            print('archive fresh pass exit',site,code,flush=True)
+            if stop.wait(interval if code==0 else max(interval,300)):break
+
+
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',default='archive');parser.add_argument('--site',action='append');parser.add_argument("--runner-upload",action="store_true",help="opt selected sources into bounded delegated uploads");parser.add_argument("--single-fetch",action="store_true",help="fetch eligible fresh source bodies once on the runner");args=parser.parse_args()
-    if (args.runner_upload or args.single_fetch) and not args.site:parser.error("delegated transfers require explicit --site")
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',default='archive');parser.add_argument('--site',action='append');parser.add_argument("--runner-upload",action="store_true",help="opt selected sources into bounded delegated uploads");parser.add_argument("--single-fetch",action="store_true",help="fetch eligible fresh source bodies once on the runner");mode=parser.add_mutually_exclusive_group();mode.add_argument('--fresh-processes',action='store_true');mode.add_argument('--once',action='store_true');args=parser.parse_args()
+    if (args.runner_upload or args.single_fetch or args.fresh_processes or args.once) and not args.site:parser.error("this mode requires explicit --site")
     sites=args.site or [key for key,source in m.definitions().items() if source['adapter']!='native']
     invalid=set(sites)-set(m.definitions())-{'official'}
     if invalid:parser.error('unregistered source: '+','.join(sorted(invalid)))
+    if args.once:
+        if len(sites)!=1:parser.error('--once requires exactly one --site')
+        once(args.root,sites[0],runner_upload=args.runner_upload,single_fetch=args.single_fetch)
+        raise SystemExit(0)
+    target=watch_fresh if args.fresh_processes else watch
     stop=threading.Event();pool=ThreadPoolExecutor(max_workers=max(1,len(sites)),thread_name_prefix='archive-watch')
-    jobs=[pool.submit(watch,args.root,site,stop,runner_upload=args.runner_upload,single_fetch=args.single_fetch) for site in dict.fromkeys(sites)]
+    jobs=[pool.submit(target,args.root,site,stop,runner_upload=args.runner_upload,single_fetch=args.single_fetch) for site in dict.fromkeys(sites)]
     try:
         for job in jobs:job.result()
     except KeyboardInterrupt:
