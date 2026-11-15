@@ -388,3 +388,29 @@ cleanup. End-to-end observation including queue/control/read-back took
 2,813.525 s. Host peak RSS was 82,384 KiB; final swap was 15,544 KiB. This is
 real evidence at 4,849,670,669 bytes, not a live test of every size through the
 5,000,000,000-byte boundary. Its Pages link is a separate pending generation.
+
+
+## Finite passes across remaining sources
+
+`delegated_sources.py` runs explicit source keys through the existing bounded
+per-source acquisition in at most two fresh child processes. It visits all
+selected sources once before its next round; each child handles a finite pass
+without `--watch`, so later sources are not trapped behind permanent watchers.
+SQLite scan cursors, per-source pass locks, primary/alias/object claims, partial
+file preservation and normal-route fallback remain in `delegated_archive.py`.
+
+```sh
+uv run python delegated_sources.py --site kokoron --site multi_inside --site d_station --site getchu --site moepedia --site official --workers 2 --limit 2 --watch
+```
+
+The source coordinator uses one lock per archive root. A failed child or launch
+is recorded by source and exception type, and does not prevent later sources
+from being visited. Round success means passes finished, not that every body is
+archived. Body proof and publication retain their existing independent gates.
+
+Independent permanent watchers for every remaining source would add process
+load. Putting permanent watchers into a two-thread pool would starve sources
+after the first two. Finite fresh children keep memory bounded and pick up host
+code fixes on later visits. Large public read-backs can still occupy a slot for
+a while; existing collectors continue in parallel. No timeout kills a child
+with unaccepted body work, and no JSON manifest is generated on the host.
