@@ -32,13 +32,35 @@ class DelegatedArchiveTests(unittest.TestCase):
         delegated.advance(self.store,'lathercraft',2,'zzz')
         self.assertEqual(delegated.candidates(self.store,'lathercraft',1),[(0,'target')])
 
-    def test_ineligible_first_row_does_not_starve_following_candidate(self):
+    def test_metadata_only_candidate_does_not_consume_transfer_limit(self):
         self.add('zzz')
         with patch.object(delegated.bulk,'reuse_verified',return_value=False),patch.object(delegated.bulk,'equivalent_upload_active',return_value=False),patch.object(controller,'archive_candidate',side_effect=[None,{'accepted_id':'zzz'}]) as run:
-            first=delegated.archive_pass(self.store,self.fetcher,site='lathercraft',limit=1)
-            second=delegated.archive_pass(self.store,self.fetcher,site='lathercraft',limit=1)
-        self.assertEqual((first['ineligible'],second['published']),(1,1))
+            stats=delegated.archive_pass(self.store,self.fetcher,site='lathercraft',limit=1)
+        self.assertEqual((stats['ineligible'],stats['published'],stats['attempted']),(1,1,1))
         self.assertEqual([call.args[1]['id'] for call in run.call_args_list],['target','zzz'])
+
+    def test_metadata_deadline_keeps_next_candidate_for_following_pass(self):
+        self.add('zzz')
+        with patch.object(delegated.bulk,'reuse_verified',return_value=False),patch.object(delegated.bulk,'equivalent_upload_active',return_value=False),patch.object(controller,'archive_candidate',return_value=None) as run,patch.object(delegated.time,'monotonic',side_effect=[0,61]):
+            stats=delegated.archive_pass(self.store,self.fetcher,site='lathercraft',limit=1)
+        self.assertEqual((stats['scanned'],stats['attempted'],stats['metadata_probes']),(1,0,1))
+        self.assertEqual(run.call_count,1)
+        reopened=a.Store(self.store.root)
+        try:self.assertEqual(delegated.candidates(reopened,'lathercraft',1),[(0,'zzz')])
+        finally:reopened.db.close()
+
+    def test_slow_transfer_does_not_spend_metadata_scan_budget(self):
+        self.add('zzz')
+        with patch.object(delegated.bulk,'reuse_verified',return_value=False),patch.object(delegated.bulk,'equivalent_upload_active',return_value=False),patch.object(controller,'archive_candidate',side_effect=[{'accepted_id':'target'},{'accepted_id':'zzz'}]),patch.object(delegated.time,'monotonic',side_effect=[0,4000,4000,8000]):
+            stats=delegated.archive_pass(self.store,self.fetcher,site='lathercraft',limit=2)
+        self.assertEqual((stats['published'],stats['attempted'],stats['metadata_probes']),(2,2,0))
+
+    def test_metadata_misses_remain_bounded_by_scan_limit(self):
+        self.add('yyy');self.add('zzz')
+        with patch.object(delegated.bulk,'reuse_verified',return_value=False),patch.object(delegated.bulk,'equivalent_upload_active',return_value=False),patch.object(controller,'archive_candidate',return_value=None) as run:
+            stats=delegated.archive_pass(self.store,self.fetcher,site='lathercraft',limit=1,scan_limit=2)
+        self.assertEqual((stats['scanned'],stats['attempted'],run.call_count),(2,0,2))
+        self.assertEqual(delegated.candidates(self.store,'lathercraft',1),[(0,'zzz')])
 
     def test_busy_primary_claim_advances_cursor_without_new_job(self):
         self.add('zzz')

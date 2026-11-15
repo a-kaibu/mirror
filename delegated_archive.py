@@ -77,13 +77,17 @@ def host_route(store,row):
     return True
 
 
-def archive_pass(store,fetcher,*,site,limit=4,scan_limit=100,profile='hf'):
+def archive_pass(store,fetcher,*,site,limit=4,scan_limit=100,profile='hf',metadata_budget=60):
     _site(site)
     if type(limit) is not int or limit<=0:raise ValueError('positive transfer limit required')
-    stats=dict(scanned=0,attempted=0,published=0,reused=0,busy=0,ineligible=0,failed=0,host_routes=0)
+    if type(metadata_budget) is not int or metadata_budget<=0:raise ValueError('positive metadata budget required')
+    metadata_elapsed=0.0
+    stats=dict(scanned=0,attempted=0,published=0,reused=0,busy=0,ineligible=0,failed=0,host_routes=0,metadata_probes=0)
     with exclusive_file(_claim(store,site,'pass'),blocking=False):
         for tier,ident in candidates(store,site,scan_limit):
-            if stats['attempted']>=limit:break
+            # The budget stops another metadata-only probe; it never interrupts
+            # a running transfer or charges its body/read-back time to scanning.
+            if stats['attempted']>=limit or metadata_elapsed>=metadata_budget:break
             # A crash or busy claim delays this ID until the next sweep. Any
             # dispatched job is also handled by single_fetch_recovery.
             advance(store,site,tier,ident);stats['scanned']+=1
@@ -108,9 +112,17 @@ def archive_pass(store,fetcher,*,site,limit=4,scan_limit=100,profile='hf'):
                     if bulk.equivalent_upload_active(store,row,'vn-archive','mirrors'):
                         stats['busy']+=1;continue
                     stats['attempted']+=1
+                    started=time.monotonic()
                     result=transfer.archive_candidate(store,row,profile=profile,probe=fetcher.head,
                         range_probe=lambda url,headers:a.open_archive_page(fetcher,url,headers))
-                    if result is None:stats['ineligible']+=1
+                    elapsed=time.monotonic()-started
+                    if result is None:
+                        # No transfer was started. Keep looking within the row
+                        # and elapsed metadata budgets instead of spending one
+                        # of the pass's bounded transfer slots on a dead URL.
+                        stats['attempted']-=1
+                        stats['ineligible']+=1;stats['metadata_probes']+=1
+                        metadata_elapsed+=elapsed
                     elif result.get('accepted_id'):
                         stats['reused' if result.get('reused') else 'published']+=1
                 except transfer.SourceTransferFailed:
