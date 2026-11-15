@@ -41,7 +41,7 @@ def apply(store, record):
     except (OSError,ValueError):return record
     for row in rows:
         if row['fingerprint']!=stamp:continue
-        correction=json.loads(row['correction'])
+        correction=json.loads(row['correction']);evidence=json.loads(row['evidence'])
         if set(correction)!={'expected_size','expected_sha256'} or type(correction['expected_size']) is not int or correction['expected_size']<=0:
             raise ValueError('invalid stored size correction')
         import re
@@ -49,17 +49,18 @@ def apply(store, record):
         return {**record,**correction,'fields':{**record.get('fields',{}),
             'publisher_expected_size':record.get('expected_size'),
             'size_review':{'id':row['id'],'reviewed_at':row['reviewed_at'],
-                           'basis':'matching full historical copy and ZIP CRC',
-                           'evidence':json.loads(row['evidence'])}}}
+                           'basis':'matching full historical copy and '+('RAR CRC' if evidence.get('rar_crc')=='ok' else 'ZIP CRC'),
+                           'evidence':evidence}}}
     return record
 
 
 def review(store, record, current_path, historical_path, capture):
-    """Correct a size only after independently fetching an identical archived ZIP."""
+    """Correct a size only after matching an independently fetched, checked archive."""
     import archiver as a
     import mirror_sources as m
     if Path(current_path).resolve()==Path(historical_path).resolve():raise ValueError('two independent copies are required')
-    if not str(record.get('filename','')).lower().endswith('.zip'):raise ValueError('size review currently requires a ZIP archive')
+    suffix=Path(record.get('filename','')).suffix.lower()
+    if suffix not in {'.zip','.rar'}:raise ValueError('size review requires ZIP or RAR4')
     current=a.digest(current_path);historical=a.digest(historical_path)
     if not current['size'] or current!=historical:raise ValueError('historical copy differs from observed source file')
     if record.get('expected_size') is None or record['expected_size']==current['size']:
@@ -80,14 +81,22 @@ def review(store, record, current_path, historical_path, capture):
         sha1=hashlib.file_digest(stream,'sha1').digest()
     if base64.b32encode(sha1).decode()!=capture.get('index_digest'):
         raise ValueError('historical index digest differs from the complete file')
-    with zipfile.ZipFile(current_path) as archive:
-        entries=archive.infolist();uncompressed=sum(i.file_size for i in entries)
-        if len(entries)>10000 or uncompressed>128*1024*1024:raise ValueError('ZIP review decompression bound exceeded')
-        if archive.testzip() is not None:raise ValueError('ZIP CRC failed')
+    if suffix=='.zip':
+        with zipfile.ZipFile(current_path) as archive:
+            entries=archive.infolist();uncompressed=sum(i.file_size for i in entries)
+            if len(entries)>10000 or uncompressed>128*1024*1024:raise ValueError('ZIP review decompression bound exceeded')
+            if archive.testzip() is not None:raise ValueError('ZIP CRC failed')
+        integrity={'zip_crc':'ok','uncompressed_size':uncompressed,'members':len(entries)}
+    else:
+        from rar_integrity import verify
+        checked=verify(current_path)
+        if (checked.get('sha256'),checked.get('size'))!=(current['sha256'],current['size']):
+            raise ValueError('RAR validator content identity changed')
+        integrity={k:checked[k] for k in ('rar_crc','uncompressed_size','members','library','extracted','executed')}
     original=metadata(record,page_digest(store,record));stamp=fingerprint(original)
     correction={'expected_size':current['size'],'expected_sha256':current['sha256']}
-    evidence={'capture':capture,'observed':current,'historical':historical,'zip_crc':'ok',
-              'uncompressed_size':uncompressed,'members':len(entries),'source_html_sha256':original['source_html_sha256']}
+    evidence={'capture':capture,'observed':current,'historical':historical,**integrity,
+              'source_html_sha256':original['source_html_sha256']}
     ident=hashlib.sha256(('size-review\n'+record['id']+'\n'+stamp+'\n'+current['sha256']+'\n'+capture['url']).encode()).hexdigest()
     try:
         store.db.execute('BEGIN IMMEDIATE')
