@@ -272,8 +272,8 @@ class FiveGBWorkerBoundsTests(unittest.TestCase):
 
 class RetainedWorkerReleaseTests(unittest.TestCase):
     def test_all_retained_worker_releases_keep_saved_run_and_commit_identity(self):
-        self.assertEqual(r.RUNNER_REF,'archive-runner-v4')
-        for ref in ['archive-runner','archive-runner-v2','archive-runner-v3',r.RUNNER_REF]:
+        self.assertEqual(r.RUNNER_REF,'archive-runner-v5')
+        for ref in ['archive-runner','archive-runner-v2','archive-runner-v3','archive-runner-v4',r.RUNNER_REF]:
             with self.subTest(ref=ref),tempfile.TemporaryDirectory() as tmp:
                 state=dict(nonce='retained',head_sha='a'*40,dispatch_ref=ref,run_id=123,dispatch_attempted_at='2026-11-14T00:00:00+00:00')
                 calls=[]

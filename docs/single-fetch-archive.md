@@ -519,3 +519,21 @@ binary was captured on that date and must not add a metadata GET for every dead
 replay link. This keeps large historical queues from gaining extra requests for
 unconfirmed captures. Native HEAD 405/501 and missing-length responses retain
 their bounded method/metadata fallback.
+
+## Public Dropbox downloads
+
+The host size probe and the delegated worker share the existing public-download
+adapter. Dropbox file shares use the documented `dl=1` transport, preserving
+other public access parameters. The publisher's original shared URL remains in
+the item, job specification and accepted provenance. Metadata requests close at
+headers; measured transport size does not become a publisher size claim. The
+worker still validates the complete body before uploading, and promotion still
+requires the canonical public body proof.
+
+The worker is pinned at `archive-runner-v5`, commit
+`ee5dc951b348eb1d0a0302b20b772ca2f1356868`. This ref was created after 925 local
+tests, wheel packaging and CI passed. Existing v1 through v4 refs and saved jobs
+retain their original identities; only new jobs select v5.
+
+Dropbox's documented public link mechanism:
+https://help.dropbox.com/share/force-download

@@ -207,6 +207,37 @@ class SingleFetchTests(unittest.TestCase):
         state=controller._load(self.store,'target');self.assertIsNone(state['spec']['published_size'])
         self.assertEqual(state['size'],len(PAYLOAD))
 
+    def test_dropbox_head_uses_direct_transport_but_retains_published_source(self):
+        url='https://www.dropbox.com/s/public-id/demo.zip?dl=0&rlkey=a%2Bb'
+        self.store.add({**self.record,'expected_size':None,'expected_md5':None,'mirrors':[url]})
+        response=Response();response.headers['Content-Length']=str(len(PAYLOAD))
+        response.read=Mock(side_effect=AssertionError('metadata body read'));head=Mock(return_value=response)
+        result=controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,readback=self.readback,probe=head)
+        self.assertEqual(result['accepted_id'],'target')
+        self.assertEqual(head.call_args.args[0],'https://www.dropbox.com/s/public-id/demo.zip?rlkey=a%2Bb&dl=1')
+        response.read.assert_not_called();self.assertTrue(response.closed)
+        state=controller._load(self.store,'target');self.assertEqual(state['spec']['source_url'],url)
+        self.assertIsNone(state['spec']['published_size']);self.assertIsNone(state['spec']['md5'])
+        self.assertEqual(self.row()['source_url'],url)
+
+    def test_dropbox_range_size_probe_uses_same_direct_file_without_body_read(self):
+        url='https://www.dropbox.com/scl/fi/public-id/demo.zip?dl=0&rlkey=a%2Bb'
+        self.store.add({**self.record,'expected_size':None,'mirrors':[url]})
+        response=Response(status=206);response.headers.update({'Content-Range':f'bytes 0-0/{len(PAYLOAD)}','Content-Length':'1'})
+        response.read=Mock(side_effect=AssertionError('metadata body read'));ranged=Mock(return_value=response)
+        result=controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,readback=self.readback,probe=Mock(return_value=Response()),range_probe=ranged)
+        self.assertEqual(result['accepted_id'],'target');self.assertTrue(response.closed);response.read.assert_not_called()
+        self.assertEqual(ranged.call_args.args[0],'https://www.dropbox.com/scl/fi/public-id/demo.zip?rlkey=a%2Bb&dl=1')
+        self.assertEqual(ranged.call_args.kwargs['headers']['Range'],'bytes=0-0')
+        self.assertEqual(self.row()['source_url'],url)
+
+    def test_dropbox_denial_does_not_add_range_probe_or_dispatch(self):
+        url='https://www.dropbox.com/s/public-id/demo.zip?dl=0'
+        self.store.add({**self.record,'expected_size':None,'mirrors':[url]})
+        error=HTTPError(url,403,'denied',{},None);ranged=Mock()
+        result=controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,probe=Mock(side_effect=error),range_probe=ranged)
+        self.assertIsNone(result);self.assertTrue(error.closed);ranged.assert_not_called();self.assertEqual(self.client.created,0)
+
     def test_range_metadata_resolves_refused_wayback_head_without_changing_source_transport(self):
         capture='https://web.archive.org/web/20150326205535id_/http://source.test/demo.zip'
         self.store.add({**self.record,'site':'getchu','expected_size':None,'expected_md5':None,'mirrors':[capture]})

@@ -199,6 +199,8 @@ def run_claimed(store,ident,source_url=None,size=None,*,profile='hf',client=None
 
 def probe_transport_size(probe,range_probe,url,headers,*,confirmed_capture=False):
     """A transport bound only: neither a publisher claim nor a file proof."""
+    from drive_download import direct_download_url
+    transport_url=direct_download_url(url)
     def bounded_length(value):
         if not isinstance(value,str) or not re.fullmatch('[0-9]{1,20}',value.strip()):return None
         size=int(value)
@@ -207,7 +209,7 @@ def probe_transport_size(probe,range_probe,url,headers,*,confirmed_capture=False
         return (response.headers.get('Content-Encoding','identity')=='identity'
                 and 'html' not in response.headers.get('Content-Type','').lower())
     try:
-        with probe(url,headers=headers) as response:
+        with probe(transport_url,headers=headers) as response:
             if response.status not in {405,501}:
                 if response.status!=200 or not binary_identity(response):return None
                 length=response.headers.get('Content-Length','').strip()
@@ -222,8 +224,9 @@ def probe_transport_size(probe,range_probe,url,headers,*,confirmed_capture=False
     if range_probe is None:return None
     try:
         # Close at headers even when the server ignores Range. A later worker
-        # must fetch the original URL and verify its complete body normally.
-        with range_probe(url,headers={**headers,'Range':'bytes=0-0'}) as response:
+        # must fetch the original source through the same public download adapter
+        # and verify its complete body normally.
+        with range_probe(transport_url,headers={**headers,'Range':'bytes=0-0'}) as response:
             if not binary_identity(response):return None
             if response.status==200:return bounded_length(response.headers.get('Content-Length',''))
             if response.status!=206:return None
