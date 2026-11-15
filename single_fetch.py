@@ -208,7 +208,8 @@ def _archive_candidate_once(store,row,*,profile='hf',client=None,execute=None,re
     if directory.exists() and any(directory.iterdir()):return None
     urls=_observed_urls(store,row,record)
     from urllib.parse import urlsplit
-    urls.sort(key=lambda url:urlsplit(url).hostname!='storage1.lathercraft.net')
+    healthy=set(a.healthy_source_mirrors(store,row['site'],urls))
+    urls.sort(key=lambda url:(urlsplit(url).hostname!='storage1.lathercraft.net',url not in healthy))
     eligible=[]
     for url in urls:
         try:public_source(url)

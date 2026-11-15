@@ -271,3 +271,51 @@ class SingleFetchTests(unittest.TestCase):
         result=controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,readback=self.readback)
         self.assertEqual(result['accepted_id'],'target');self.assertEqual(self.row()['source_url'],self.url)
         self.assertEqual(self.client.aborts,1)
+
+
+class HealthyObservedProbeTests(unittest.TestCase):
+    setUp=SingleFetchTests.setUp
+    row=SingleFetchTests.row
+    execute=SingleFetchTests.execute
+    readback=SingleFetchTests.readback
+    def healthy_candidate(self,*,stale=False,listed=True,storage=False):
+        from datetime import datetime,timedelta,timezone
+        healthy='http://suezou.dyndns.org/trial.zip'
+        archives=['https://web.archive.org/web/20181025223313id_/http://suezou.dyndns.org/trial.zip']
+        archives+=['https://web.archive.org/web/20181025223313id_/http://dead.test/'+str(n)+'.zip' for n in range(2)]
+        mirrors=archives+([healthy] if listed else [])
+        if storage:mirrors.append('https://storage1.lathercraft.net/trial.zip')
+        self.store.add({**self.record,'expected_size':None,'mirrors':mirrors})
+        self.store.db.execute('CREATE TABLE source_health(site TEXT PRIMARY KEY,checked_at TEXT,healthy INTEGER,data TEXT)')
+        import json
+        stamp=(datetime.now(timezone.utc)-timedelta(hours=4 if stale else 0)).isoformat()
+        self.store.db.execute('INSERT INTO source_health VALUES(?,?,?,?)',('suezou',stamp,1,json.dumps({'url':'http://suezou.dyndns.org/'})));self.store.db.commit()
+        return healthy
+
+    def test_fresh_healthy_observed_mirror_precedes_dead_archives_within_probe_budget(self):
+        healthy=self.healthy_candidate();seen=[]
+        def probe(url,headers=None):
+            seen.append(url)
+            if url!=healthy:raise OSError('dead archived mirror')
+            response=Response(PAYLOAD);response.headers['Content-Length']=str(len(PAYLOAD));return response
+        result=controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,readback=self.readback,probe=probe)
+        self.assertEqual(result['accepted_id'],'target');self.assertEqual(seen,[healthy]);self.assertEqual(self.row()['source_url'],healthy)
+        self.assertEqual((self.origins,self.jobs,self.reads),(1,1,1))
+
+    def test_stale_health_does_not_displace_archived_candidates_or_expand_probe_budget(self):
+        healthy=self.healthy_candidate(stale=True);probe=Mock(side_effect=OSError('HEAD unavailable'))
+        self.assertIsNone(controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,probe=probe))
+        self.assertEqual(probe.call_count,3);self.assertNotIn(healthy,[c.args[0] for c in probe.call_args_list]);self.assertEqual(self.client.created,0)
+
+    def test_healthy_source_does_not_authorize_unlisted_live_urls(self):
+        healthy=self.healthy_candidate(listed=False);probe=Mock(side_effect=OSError('HEAD unavailable'))
+        self.assertIsNone(controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,probe=probe))
+        self.assertEqual(probe.call_count,3);self.assertNotIn(healthy,controller._observed_urls(self.store,self.row(),self.record))
+        with self.assertRaisesRegex(ValueError,'not observed'):
+            controller.run(self.store,'target',healthy,len(PAYLOAD),client=self.client,execute=self.execute,readback=self.readback)
+        self.assertEqual(self.client.created,0)
+
+    def test_primary_storage_preference_is_preserved(self):
+        self.healthy_candidate(storage=True);probe=Mock(return_value=Response(PAYLOAD));probe.return_value.headers['Content-Length']=str(len(PAYLOAD))
+        result=controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,readback=self.readback,probe=probe)
+        self.assertEqual(result['accepted_id'],'target');self.assertEqual(probe.call_args.args[0],'https://storage1.lathercraft.net/trial.zip')

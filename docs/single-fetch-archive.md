@@ -361,3 +361,30 @@ Boundary-test result: a synthetic real-SigV4 specification for exactly
 decoded JSON bytes. Its round-trip succeeded within the existing 60,000 /
 1,048,576 limits. Both old pinned branch heads were independently checked before
 creating v3; neither is moved as part of this rollout.
+
+
+## Bounded probes and recovered mirrors
+
+A Holyseal candidate had 22 observed mirror URLs. Three archived URLs occupied
+the entire unknown-size HEAD budget while an already observed Suezo URL, whose
+host passed the existing three-hour health check, was last. Delegate selection
+now applies the same fresh-health evidence as ordinary acquisition before
+spending that unchanged three-probe budget; primary LatherCraft storage keeps
+its existing preference. Only the order of already observed URLs changes.
+Healthy host state neither adds new live URLs nor proves the body exists or
+its content. Stale health cannot promote a mirror. All published constraints,
+full worker checks, canonical public read-back and source claims still apply.
+Increasing the probe budget would spend more time on dead historical URLs;
+using unlisted live URLs would change the source authorization contract.
+Neither is required to fix the observed scheduling gap.
+
+The 4,849,670,669-byte pilot subsequently completed on `archive-runner-v3`
+(commit `86505bddb699b7736f2aa58a9e2da711cbcdd085`, run `43657944663`).
+Origin download took 230.066 s and upload 528.028 s. Complete/copy and an
+independent full canonical public read-back passed; SQLite accepted SHA-256
+`cb63cd0c5d8e578206070e6c01e263dc9c1f924b10f7f2009aabb359c53de6a2`
+at 2026-11-15T01:10:26.902859Z, with matching publisher constraints and staging
+cleanup. End-to-end observation including queue/control/read-back took
+2,813.525 s. Host peak RSS was 82,384 KiB; final swap was 15,544 KiB. This is
+real evidence at 4,849,670,669 bytes, not a live test of every size through the
+5,000,000,000-byte boundary. Its Pages link is a separate pending generation.
