@@ -32,6 +32,8 @@ def candidates(store,site,limit):
     with store.db:
         store.db.execute("""CREATE TABLE IF NOT EXISTS delegated_scan_cursor(
             site TEXT PRIMARY KEY,tier INTEGER NOT NULL,item_id TEXT NOT NULL,updated_at TEXT NOT NULL)""")
+        store.db.execute("""CREATE TABLE IF NOT EXISTS delegated_host_routes(
+            item_id TEXT PRIMARY KEY,data_sha256 TEXT NOT NULL,failed_at TEXT NOT NULL,run_id INTEGER,error TEXT NOT NULL)""")
     saved=store.db.execute('SELECT tier,item_id FROM delegated_scan_cursor WHERE site=?',(site,)).fetchone()
     start=tuple(saved) if saved else (-1,'')
     sql="""SELECT CASE WHEN c.kind IN ('trial','patch') THEN 0 WHEN c.kind='movie' THEN 1 ELSE 2 END tier,i.id
@@ -53,10 +55,32 @@ def advance(store,site,tier,ident):
             (site,tier,ident,a.now()))
 
 
+def host_route(store,row):
+    """Retain terminal runner evidence and let the ordinary host collector try."""
+    state=transfer._load(store,row['id'])
+    fingerprint=hashlib.sha256(row['data'].encode()).hexdigest()
+    current=store.db.execute('SELECT status,error,data,path,remote_verified_at FROM items WHERE id=?',(row['id'],)).fetchone()
+    if (not state or state['phase']!='aborted' or state.get('conclusion') in (None,'success')
+        or type(state.get('run_id')) is not int or state['run_id']<=0 or not state.get('dispatch_attempted_at')
+        or state.get('data_sha256')!=fingerprint or not current or current['data']!=row['data']
+        or current['status']!='failed' or current['path'] or current['remote_verified_at']
+        or current['error']!='All eligible observed mirrors failed in delegated transfer'):
+        return False
+    with store.db:
+        changed=store.db.execute("UPDATE items SET status='pending' WHERE id=? AND data=? AND status='failed' AND error=? AND path IS NULL AND remote_verified_at IS NULL",
+            (row['id'],row['data'],current['error'])).rowcount
+        if not changed:return False
+        store.db.execute("""INSERT INTO delegated_host_routes VALUES(?,?,?,?,?)
+            ON CONFLICT(item_id) DO UPDATE SET data_sha256=excluded.data_sha256,
+            failed_at=excluded.failed_at,run_id=excluded.run_id,error=excluded.error""",
+            (row['id'],fingerprint,a.now(),state.get('run_id'),current['error']))
+    return True
+
+
 def archive_pass(store,fetcher,*,site,limit=4,scan_limit=100,profile='hf'):
     _site(site)
     if type(limit) is not int or limit<=0:raise ValueError('positive transfer limit required')
-    stats=dict(scanned=0,attempted=0,published=0,reused=0,busy=0,ineligible=0,failed=0)
+    stats=dict(scanned=0,attempted=0,published=0,reused=0,busy=0,ineligible=0,failed=0,host_routes=0)
     with exclusive_file(_claim(store,site,'pass'),blocking=False):
         for tier,ident in candidates(store,site,scan_limit):
             if stats['attempted']>=limit:break
@@ -70,6 +94,9 @@ def archive_pass(store,fetcher,*,site,limit=4,scan_limit=100,profile='hf'):
                     stats['busy']+=1;continue
                 row=store.db.execute('SELECT * FROM items WHERE id=?',(ident,)).fetchone()
                 if not row or row['status']!='pending' or row['path']:continue
+                saved=store.db.execute('SELECT data_sha256 FROM delegated_host_routes WHERE item_id=?',(ident,)).fetchone()
+                if saved and saved[0]==hashlib.sha256(row['data'].encode()).hexdigest():
+                    stats['ineligible']+=1;continue
                 record=json.loads(row['data'])
                 folder=store.root/'files'/row['site']/ident
                 if ((record.get('fields') or {}).get('source_association_quarantined')
@@ -85,6 +112,10 @@ def archive_pass(store,fetcher,*,site,limit=4,scan_limit=100,profile='hf'):
                     if result is None:stats['ineligible']+=1
                     elif result.get('accepted_id'):
                         stats['reused' if result.get('reused') else 'published']+=1
+                except transfer.SourceTransferFailed:
+                    stats['failed']+=1
+                    stats['host_routes']+=int(host_route(store,row))
+                    print('delegated archive terminal; ordinary route retained',ident,flush=True)
                 except (BlockingIOError,TimeoutError):stats['busy']+=1
                 except Exception as error:
                     if store.db.in_transaction:store.db.rollback()

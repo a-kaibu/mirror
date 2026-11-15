@@ -78,3 +78,29 @@ class DelegatedArchiveTests(unittest.TestCase):
         with exclusive_file(delegated._claim(self.store,'lathercraft','pass'),blocking=False):
             with self.assertRaises(BlockingIOError):delegated.archive_pass(self.store,self.fetcher,site='lathercraft')
         self.assertIsNone(self.store.db.execute("SELECT name FROM sqlite_master WHERE name='delegated_scan_cursor'").fetchone())
+
+    def test_terminal_runner_failure_preserves_host_route_and_prevents_repeat_jobs(self):
+        original=controller.archive_candidate
+        def failed(state,*args,**kwargs):
+            state.update(run_id=123,conclusion='failure',dispatch_attempted_at=a.now())
+            controller._save(self.store,state);raise RuntimeError('terminal')
+        with patch.object(delegated.bulk,'reuse_verified',return_value=False),patch.object(delegated.bulk,'equivalent_upload_active',return_value=False),patch.object(controller,'archive_candidate',side_effect=lambda store,row,**kwargs:original(store,row,client=self.f.client,execute=failed)),patch.object(a,'download',side_effect=AssertionError('inline host fallback')):
+            stats=delegated.archive_pass(self.store,self.fetcher,site='lathercraft')
+        self.assertEqual((stats['failed'],stats['host_routes']),(1,1));self.assertEqual(self.f.row()['status'],'pending')
+        state=controller._load(self.store,'target');self.assertEqual((state['phase'],state['run_id'],self.f.client.aborts),('aborted',123,1))
+        attempts=self.store.db.execute("SELECT count(*) FROM attempts WHERE item_id='target'").fetchone()[0];self.assertGreater(attempts,0)
+        with patch.object(controller,'archive_candidate',side_effect=AssertionError('repeat runner')):
+            skipped=delegated.archive_pass(self.store,self.fetcher,site='lathercraft')
+        self.assertEqual((skipped['ineligible'],skipped['attempted']),(1,0))
+        self.assertEqual(self.store.db.execute("SELECT count(*) FROM attempts WHERE item_id='target'").fetchone()[0],attempts)
+        self.store.add({**self.f.record,'release_name':'体験版 ver2'})
+        with patch.object(delegated.bulk,'reuse_verified',return_value=False),patch.object(delegated.bulk,'equivalent_upload_active',return_value=False),patch.object(controller,'archive_candidate',return_value=None) as run:
+            delegated.archive_pass(self.store,self.fetcher,site='lathercraft')
+        self.assertEqual(run.call_count,1)
+
+    def test_uncertain_job_cannot_be_requeued_as_a_host_route(self):
+        delegated.candidates(self.store,'lathercraft',1)
+        controller._prepare(self.store,dict(self.f.row()),self.f.url,len(fixtures.PAYLOAD),self.f.client)
+        with self.store.db:self.store.db.execute("UPDATE items SET status='failed',error='All eligible observed mirrors failed in delegated transfer' WHERE id='target'")
+        self.assertFalse(delegated.host_route(self.store,self.f.row()))
+        self.assertEqual(self.f.row()['status'],'failed');self.assertEqual(controller._load(self.store,'target')['phase'],'job')
