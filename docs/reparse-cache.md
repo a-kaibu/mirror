@@ -35,3 +35,28 @@ links and captured HTML are kept. The 1,232 pending review targets were marked
 `excluded_navigation`; product pages and review query parameters on product URLs
 remain eligible. This reduces traversal work without narrowing the distribution
 file archive or deleting source evidence.
+
+## Legacy HTML Windows extensions (2026-11-15)
+
+The saved Lapistan publisher document for `fq4demo.avi` contains CP932 bytes
+`87 57` for the Roman numeral in `ファーストクイーンⅣ`. Python's strict
+`shift_jis` decoder rejected that extension; the replacement fallback produced
+`ファーストクイーン�W`. A Fuzzy2 observation explicitly inherited the title
+from that source ID, so the damaged text also affected its product association.
+The original cached HTML bytes remain intact and permit a source-based repair.
+
+`decode_html` maps the HTML Shift_JIS label family, including `windows-31j`, to
+CP932 before both strict decoding and the mixed-Wayback replacement fallback.
+The label set follows the [Encoding Standard](https://encoding.spec.whatwg.org/#names-and-labels).
+Other encodings and the existing script-charset exclusion remain unchanged.
+Regression cases cover all eight labels in HTTP and HTML declarations, Windows
+extension characters, browser character mapping, and mixed replay text.
+
+Reparsing the actual saved document retained the same item ID, filename, posted
+MD5 and size while recovering the complete title. The original document and
+its directly linked Fuzzy2 observation were updated in SQLite. The existing
+source-upsert behavior can wake a failed row when descriptive metadata changes;
+this is a retry, not evidence that the file has become downloadable. Full public
+byte verification is still required before a download URL is exposed. Parser
+fingerprints include the decoder source, so ordinary fresh reparse passes also
+pick up this correction without deleting raw HTML or archived file objects.

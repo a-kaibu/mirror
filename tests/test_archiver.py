@@ -105,6 +105,25 @@ class ParserTests(unittest.TestCase):
         html = '<meta charset="Shift_JIS">体験版'
         self.assertEqual(a.decode_html(html.encode("cp932")), html)
 
+    def test_html_shift_jis_labels_preserve_windows_extension_characters(self):
+        for label in ['Shift_JIS','shift-jis','sjis','csshiftjis','ms_kanji','ms932','windows-31j','x-sjis']:
+            with self.subTest(label=label):
+                html=f'<meta charset="{label}"><h1>ファーストクイーンⅣ ① 髙﨑</h1>'
+                self.assertEqual(a.decode_html(html.encode('cp932')),html)
+                body='<h1>ファーストクイーンⅣ ① 髙﨑</h1>'
+                self.assertEqual(a.decode_html(body.encode('cp932'),label),body)
+
+    def test_mixed_replay_shift_jis_replacement_preserves_publisher_extensions(self):
+        html='<meta charset="Shift_JIS"><a href="trial.zip">ファーストクイーンⅣ ① 髙﨑</a>'
+        raw=html.encode('cp932')+'<aside>☃</aside>'.encode('utf-8')
+        with self.assertRaises(UnicodeError):raw.decode('cp932')
+        decoded=a.decode_html(raw,'utf-8')
+        self.assertIn(html,decoded);self.assertNotIn('クイーン�W',decoded)
+
+    def test_shift_jis_labels_use_browser_windows_character_mapping(self):
+        html='<meta charset="Shift_JIS"><h1>～∥－￠￡￢</h1>'
+        self.assertEqual(a.decode_html(html.encode('cp932')),html)
+
     def test_replay_scripts_do_not_override_publisher_encoding(self):
         prefix = b'<script charset="utf-8" src="wombat.js"></script>' + b' ' * 9000
         publisher = '<meta http-equiv="Content-Type" content="text/html; charset=EUC-JP"><a href="demo.zip">体験版をダウンロード</a>'.encode('euc_jp')

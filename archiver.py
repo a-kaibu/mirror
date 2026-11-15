@@ -182,7 +182,14 @@ def decode_html(data, charset=None):
     # Replay injections can also push the publisher's declaration past 8 KiB.
     meta = next((match for tag in re.finditer(br"<meta\b[^>]*>", data[:256*1024], re.I)
                  if (match := re.search(br"charset\s*=\s*[\"']?([A-Za-z0-9_-]+)", tag[0], re.I))), None)
-    declared = meta[1].decode() if meta else None
+    def html_encoding(label):
+        # HTML's Shift_JIS labels include Windows-31J extensions. Python's
+        # strict shift_jis codec loses characters such as ①, Ⅳ and 髙.
+        # https://encoding.spec.whatwg.org/#names-and-labels
+        aliases={'csshiftjis','ms932','ms_kanji','shift-jis','shift_jis','sjis','windows-31j','x-sjis'}
+        return 'cp932' if label and label.strip().lower() in aliases else label
+    declared = html_encoding(meta[1].decode() if meta else None)
+    charset = html_encoding(charset)
     for encoding in dict.fromkeys([charset, declared]):
         if encoding:
             try:
