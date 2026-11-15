@@ -579,3 +579,32 @@ class WaffleSharedSupportTests(unittest.TestCase):
         html='<div class="article"><h5>Game A</h5><h5>Game B</h5><a href="/s_file/update.zip">修正パッチ</a></div>'
         rows,unknown=o.parse(html,self.PAGE,GAME,self.BRAND,scoped=False)
         self.assertEqual(rows,[]);self.assertEqual(unknown,['http://www.waffle1999.com/s_file/update.zip'])
+
+
+class WaffleDetailedSupportTests(unittest.TestCase):
+    PAGE='http://www.waffle1999.com/official/patch_.html'
+    BRAND={'id':10,'brandname':'Waffle'}
+
+    def test_h6_cards_keep_independent_products_and_do_not_inherit_requested_game(self):
+        html=('<div class="patch_list" id="61"><h6>Other Game 修正パッチ</h6>'
+            '<div class="right"><p><a href="/s_file/other_patch.zip">Other Game 修正パッチ ダウンロード</a></p></div></div>'
+            '<div class="patch_list" id="99"><h6>anemoi 修正パッチ</h6>'
+            '<a href="/s_file/new_patch4.zip">修正パッチ ダウンロード</a></div>')
+        rows,unknown=o.parse(html,self.PAGE,GAME,self.BRAND,scoped=False)
+        self.assertEqual(unknown,[])
+        self.assertEqual([(r['filename'],r['title']) for r in rows],[('other_patch.zip','Other Game'),('new_patch4.zip','anemoi')])
+        self.assertNotIn('erogamescape_game_id',rows[0]['fields'])
+        self.assertEqual(rows[1]['fields']['erogamescape_game_id'],GAME['id'])
+        self.assertTrue(all(r['release_name']=='パッチ' for r in rows))
+        other,_=o.parse(html,self.PAGE,{**GAME,'gamename':'Unrelated'},self.BRAND,scoped=False)
+        self.assertEqual([(r['filename'],r['title']) for r in other],[(r['filename'],r['title']) for r in rows])
+
+    def test_ambiguous_h6_and_foreign_publishers_are_not_scoped(self):
+        html='<div class="patch_list"><h6>Game A</h6><h6>Game B</h6><a href="/s_file/new_patch4.zip">修正パッチ</a></div>'
+        rows,unknown=o.parse(html,self.PAGE,GAME,self.BRAND,scoped=False)
+        self.assertEqual(rows,[]);self.assertEqual(unknown,['http://www.waffle1999.com/s_file/new_patch4.zip'])
+        valid='<div class="patch_list"><h6>Other Game 修正パッチ</h6><a href="/s_file/new_patch4.zip">修正パッチ</a></div>'
+        for page,brand in [('https://other.test/official/patch_.html',self.BRAND),(self.PAGE,{'id':10,'brandname':'Other'})]:
+            with self.subTest(page=page,brand=brand):
+                rows,_=o.parse(valid,page,GAME,brand,scoped=False)
+                self.assertEqual(rows,[])

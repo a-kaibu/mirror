@@ -60,3 +60,12 @@ this is a retry, not evidence that the file has become downloadable. Full public
 byte verification is still required before a download URL is exposed. Parser
 fingerprints include the decoder source, so ordinary fresh reparse passes also
 pick up this correction without deleting raw HTML or archived file objects.
+
+
+Waffle's shared support index uses `div.article > h5` on
+`/official/patch.html`; its detailed support page uses
+`div.patch_list > h6` on `/official/patch_.html`. Both are scoped to Waffle's
+publisher host and brand. Parse each file against its own product heading,
+independently of the game that reached the page. Detailed support can publish
+an additional file URL absent from the index. Retain old differently named
+patch records; a newer link does not prove their byte identity.

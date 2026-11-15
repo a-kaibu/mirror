@@ -182,13 +182,15 @@ def alicesoft_support_details(link,page,brand):
 def waffle_support_details(link,page,brand):
     """Use the product heading on Waffle's shared publisher patch cards."""
     parts=urlsplit(page)
+    layout={'/official/patch.html':('article','h5'),'/official/patch_.html':('patch_list','h6')}.get(parts.path)
     if (parts.hostname not in {'www.waffle1999.com','waffle1999.com'}
-            or parts.path!='/official/patch.html' or normalized(brand.get('brandname',''))!='waffle'):
+            or layout is None or normalized(brand.get('brandname',''))!='waffle'):
         return None
+    card_class,heading_tag=layout
     node=link.parent
     while node is not None:
-        if node.tag=='div' and 'article' in node.attrs.get('class','').split():
-            headings=[child.text().strip() for child in node.children if isinstance(child,a.Node) and child.tag=='h5']
+        if node.tag=='div' and card_class in node.attrs.get('class','').split():
+            headings=[child.text().strip() for child in node.children if isinstance(child,a.Node) and child.tag==heading_tag]
             if len(headings)!=1:return {'ambiguous':True}
             title=re.sub(r'\s*修正パッチ\s*$','',headings[0]).strip()
             if not title:return {'ambiguous':True}
