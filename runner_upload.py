@@ -14,9 +14,9 @@ from runner_file_upload import MAX_BYTES,encode_spec,validate_spec
 from transfer_probe import gh,save,now,REPO
 
 WORKFLOW='runner-upload.yml'
-RUNNER_REF='archive-runner-v3'
+RUNNER_REF='archive-runner-v4'
 # Retained journals keep their exact saved release and commit identity.
-TRUSTED_RUNNER_REFS=frozenset({'main','archive-runner','archive-runner-v2',RUNNER_REF})
+TRUSTED_RUNNER_REFS=frozenset({'main','archive-runner','archive-runner-v2','archive-runner-v3',RUNNER_REF})
 
 
 class RunnerIdentityMismatch(ValueError):

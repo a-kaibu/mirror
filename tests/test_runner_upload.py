@@ -255,6 +255,22 @@ class FiveGBWorkerBoundsTests(unittest.TestCase):
 
 
 class RetainedWorkerReleaseTests(unittest.TestCase):
+    def test_all_retained_worker_releases_keep_saved_run_and_commit_identity(self):
+        self.assertEqual(r.RUNNER_REF,'archive-runner-v4')
+        for ref in ['archive-runner','archive-runner-v2','archive-runner-v3',r.RUNNER_REF]:
+            with self.subTest(ref=ref),tempfile.TemporaryDirectory() as tmp:
+                state=dict(nonce='retained',head_sha='a'*40,dispatch_ref=ref,run_id=123,dispatch_attempted_at='2026-11-14T00:00:00+00:00')
+                calls=[]
+                def api(arguments):
+                    calls.append(arguments)
+                    if arguments[:2]==['run','download']:
+                        (Path(arguments[arguments.index('--dir')+1])/'runner-upload.json').write_text('{}');return None
+                    return dict(status='completed',conclusion='success',head_sha='a'*40)
+                with patch.object(r,'gh',side_effect=api):
+                    self.assertEqual(r.execute_job(state,specification(),Path(tmp)/'job.json'),{})
+                self.assertEqual(state['dispatch_ref'],ref);self.assertEqual(state['head_sha'],'a'*40)
+                self.assertFalse(any('/dispatches' in call[1] for call in calls))
+
     def test_saved_legacy_release_is_observed_without_redispatch_or_head_rewrite(self):
         with tempfile.TemporaryDirectory() as tmp:
             journal=Path(tmp)/'job.json';state=dict(nonce='legacy',head_sha='a'*40,dispatch_ref='archive-runner',run_id=123,dispatch_attempted_at='2026-11-14T00:00:00+00:00');calls=[]
