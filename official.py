@@ -14,7 +14,7 @@ import erogamescape as e
 BINARY = re.compile(r"\.(?:zip|exe|7z|rar|lzh|cab|msi|xp3|mp4|wmv|mpg|mpeg)(?:$|[?#])",re.I)
 NAVIGATION = re.compile(r"download|trial|taiken|special|support|patch|体験|ダウンロード|だうんろーど|修正|アップデート|アップデータ|サポート",re.I)
 SUPPORT_NAVIGATION = re.compile(r"support|patch|修正|アップデート|アップデータ|サポート",re.I)
-ASSET_LABEL = re.compile(r"フライヤー|チラシ|バナー|壁紙|アイコン|ポスター|説明書|マニュアル|楽譜|歌詞|セーブ|banner|wallpaper|flyer|manual",re.I)
+ASSET_LABEL = re.compile(r"フライヤー|チラシ|パンフレット|アートワーク|バナー|壁紙|アイコン|ポスター|説明書|マニュアル|楽譜|歌詞|セーブ|banner|wallpaper|flyer|manual|artwork|pamphlet",re.I)
 
 
 def initialize(store):
@@ -192,7 +192,7 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
         def describe(n):
             images=list(n.all({"img"}))
             marker=" ".join((element.attrs.get(key) or "") for element in [n,*images] for key in ["id","class"])
-            marker=re.sub(r'(?<![a-z])trial[_-]table[_-]style[0-9]*(?![a-z0-9])','',marker,flags=re.I)
+            marker=re.sub(r'(?<![a-z])trial[_-]table(?:[_-]style[0-9]*)?(?![a-z0-9])','',marker,flags=re.I)
             # Container classes are often reused for unrelated layouts (for
             # example op_movie_t around a patch). New image hints belong only
             # to this link; retain the existing trial-container interpretation.

@@ -501,6 +501,27 @@ class ExplicitResourceLabelTests(unittest.TestCase):
         html='<table><tr><td class="trial_table_style4">体験版 <a href="trial.zip">Download</a></td></tr></table>'
         self.assertEqual(o.parse(html,PAGE,GAME,BRAND)[0][0]['release_name'],'体験版')
 
+    def test_official_pamphlet_cannot_borrow_trial_container(self):
+        html='<div class="trial"><a href="LLLJ_pamph.zip">オフィシャルパンフレット（PDF版）をダウンロードする</a></div>'
+        self.assertEqual(o.parse(html,PAGE,GAME,BRAND,hint='trial')[0],[])
+
+    def test_trial_table_layout_does_not_reclassify_artwork(self):
+        html=('<div><h2>体験版＋（演出強化・シーン追加版）</h2>'
+            '<div class="trial_table"><table><tr><td><a href="trial.zip">DOWNLOAD</a></td></tr></table></div>'
+            '<h2>特典CDアートワーク</h2>'
+            '<div class="trial_table"><table><tr><td><a href="artworks.zip">DOWNLOAD</a></td></tr></table></div></div>')
+        rows,_=o.parse(html,PAGE,GAME,BRAND,hint='trial')
+        self.assertEqual([row['filename'] for row in rows],['trial.zip'])
+        self.assertEqual(rows[0]['release_name'],'体験版')
+
+    def test_real_trial_in_shared_layout_and_artwork_bundle_is_kept(self):
+        for html in ('<div class="trial_table">体験版<a href="demo.zip">DOWNLOAD</a></div>',
+                     '<div class="trial"><a href="demo.zip">アートワーク付き体験版</a></div>'):
+            with self.subTest(html=html):
+                rows,_=o.parse(html,PAGE,GAME,BRAND)
+                self.assertEqual([row['filename'] for row in rows],['demo.zip'])
+                self.assertEqual(rows[0]['release_name'],'体験版')
+
     def test_explicit_resource_image_label_cannot_borrow_trial_container(self):
         for label in ('楽譜','壁紙','取扱説明書'):
             with self.subTest(label=label):
