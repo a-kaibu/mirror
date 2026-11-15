@@ -459,3 +459,17 @@ exact wire bytes, Content-Length framing, rewind and stream closure. Existing
 parallel-resume tests still require successful sibling ACKs to survive a failure.
 Live network improvement remains to be measured on the same paused snapshot;
 this change cannot guarantee against an independent remote connection failure.
+
+
+## Explicit historical lookup for paused items
+
+A source may remain pending with a protected partial file even when its live URL
+now returns 403. The default Wayback discovery still selects failed items only.
+Use `uv run python wayback_recovery.py --site official --id ITEM_ID --limit 1`
+to investigate an explicitly selected pending or failed item without fabricating
+a failed status or touching its partial body. Repeat `--id` for multiple items.
+Completed and verified-local items are skipped, unknown/out-of-site IDs fail
+before network access, and only observed source URLs enter the CDX query. The
+existing network-query limit, cached-index evidence, exact URL matching and
+per-capture timestamps remain unchanged. Source rows are selected in SQLite
+without first materializing the entire JSON catalogue.

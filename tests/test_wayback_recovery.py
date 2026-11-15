@@ -213,3 +213,47 @@ class FtpArchiveRecoveryTests(unittest.TestCase):
         self.assertEqual(captures(wrong,ftp),[])
         http=self.payload(TARGET)
         self.assertEqual(captures(http,TARGET),[])
+
+
+class ExplicitWaybackRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.store=a.Store(self.tmp.name);self.addCleanup(self.store.db.close)
+        self.record=a.parse_detail(HTML,'https://source.test/item','kokoron')[0]
+        self.record['mirrors']=[TARGET];self.store.add(self.record)
+
+    def test_explicit_pending_item_adds_dates_without_changing_metadata_or_partial(self):
+        from urllib.parse import parse_qs,urlsplit
+        folder=self.store.root/'files'/'kokoron'/self.record['id'];folder.mkdir(parents=True)
+        part=folder/'demo.zip.part';part.write_bytes(b'keep original prefix')
+        before=self.store.db.execute('SELECT data,status FROM items WHERE id=?',(self.record['id'],)).fetchone()
+        other={**self.record,'id':'other','mirrors':['http://mirror.test/other.zip']}
+        self.store.add(other);self.store.update('other',status='failed')
+        fetch=Fetch([Response(json.dumps(ROWS).encode())])
+        self.assertEqual(discover(self.store,fetch,limit=1,item_ids=[self.record['id'],self.record['id']]),(1,2))
+        self.assertEqual(parse_qs(urlsplit(fetch.requests[0][0]).query)['url'],[TARGET])
+        after=self.store.db.execute('SELECT data,status FROM items WHERE id=?',(self.record['id'],)).fetchone()
+        self.assertEqual(tuple(before),tuple(after));self.assertEqual(after['status'],'pending')
+        self.assertEqual(part.read_bytes(),b'keep original prefix')
+        self.assertEqual(self.store.db.execute("SELECT count(*) FROM wayback_candidates WHERE item_id='other'").fetchone()[0],0)
+
+    def test_default_skips_pending_without_materializing_all_catalogue_rows(self):
+        never=Mock()
+        with patch.object(self.store,'rows',side_effect=AssertionError('full catalogue list')):
+            self.assertEqual(discover(self.store,never),(0,0))
+        never.open.assert_not_called()
+
+    def test_unknown_or_wrong_site_scope_fails_before_any_lookup(self):
+        for ids,site in [([self.record['id'],'missing'],'both'),([self.record['id']],'official'),([], 'both'),('not-a-list','both')]:
+            fetch=Mock()
+            with self.subTest(ids=ids,site=site),self.assertRaises(ValueError):
+                discover(self.store,fetch,site=site,item_ids=ids)
+            fetch.open.assert_not_called()
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM wayback_lookups').fetchone()[0],0)
+
+    def test_explicit_verified_and_archived_items_do_not_trigger_network(self):
+        for status in ('verified','archived'):
+            self.store.update(self.record['id'],status=status);fetch=Mock()
+            self.assertEqual(discover(self.store,fetch,item_ids=[self.record['id']]),(0,0))
+            fetch.open.assert_not_called()
+            self.assertEqual(self.store.db.execute('SELECT status FROM items').fetchone()[0],status)

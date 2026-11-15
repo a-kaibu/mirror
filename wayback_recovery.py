@@ -44,11 +44,29 @@ def captures(payload, target, scheme="https"):
     return result
 
 
-def discover(store, fetcher, limit=None, refresh=False, site="both"):
+def _recovery_rows(store,site,item_ids):
+    if item_ids is None:
+        query="SELECT * FROM items WHERE status='failed'"
+        if site=='both':yield from store.db.execute(query)
+        else:yield from store.db.execute(query+' AND site=?',(site,))
+        return
+    if not isinstance(item_ids,(list,tuple)) or not item_ids or any(not isinstance(ident,str) or not ident for ident in item_ids):
+        raise ValueError('explicit item IDs must be a nonempty list')
+    ids=list(dict.fromkeys(item_ids))
+    # Validate the complete requested scope before querying any CDX target.
+    for ident in ids:
+        row=store.db.execute('SELECT site FROM items WHERE id=?',(ident,)).fetchone()
+        if not row or site!='both' and row['site']!=site:
+            raise ValueError('requested item missing or outside selected site')
+    for ident in ids:
+        row=store.db.execute("SELECT * FROM items WHERE id=? AND status IN ('pending','failed')",(ident,)).fetchone()
+        if row:yield row
+
+
+def discover(store, fetcher, limit=None, refresh=False, site="both", *, item_ids=None):
     attempted = found = 0
     targets={}
-    for item in store.rows(site):
-        if item['status']!='failed':continue
+    for item in _recovery_rows(store,site,item_ids):
         record=json.loads(item['data'])
         urls=record['mirrors']+record.get('fields',{}).get('recovery_urls',[])
         # Legacy parsers retain the exact FTP href as provenance. Query its
@@ -124,9 +142,10 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=a.positive)
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--site", default="both", help="source key, or both for all registered records")
+    parser.add_argument("--id", action="append", help="explicit item ID; includes pending items without changing their status")
     args = parser.parse_args()
     store = a.Store(args.root)
     try:
-        print("CDX discovery:", discover(store, a.Fetcher(delay=10, timeout=30, retries=2), args.limit, args.refresh, args.site))
+        print("CDX discovery:", discover(store, a.Fetcher(delay=10, timeout=30, retries=2), args.limit, args.refresh, args.site,item_ids=args.id))
     finally:
         store.db.close()
