@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 from html import escape
 import json
 from pathlib import Path
@@ -56,6 +57,40 @@ def initialize(store):
       CREATE TABLE IF NOT EXISTS manufacturer_aliases(alias TEXT PRIMARY KEY, manufacturer_id TEXT NOT NULL REFERENCES manufacturers(id));
       CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY, manufacturer_id TEXT NOT NULL REFERENCES manufacturers(id), title TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS item_catalog(item_id TEXT PRIMARY KEY REFERENCES items(id), product_id TEXT NOT NULL REFERENCES products(id), kind TEXT NOT NULL, version TEXT, platform TEXT, requirements TEXT);
+      CREATE TABLE IF NOT EXISTS product_aliases(
+        alias_id TEXT PRIMARY KEY REFERENCES products(id),
+        product_id TEXT NOT NULL REFERENCES products(id),
+        evidence TEXT NOT NULL, reviewed_at TEXT NOT NULL,
+        CHECK(alias_id != product_id));
+      CREATE INDEX IF NOT EXISTS product_aliases_product ON product_aliases(product_id);
+      CREATE TRIGGER IF NOT EXISTS product_alias_scope BEFORE INSERT ON product_aliases BEGIN
+        SELECT CASE WHEN NOT EXISTS(
+          SELECT 1 FROM products a JOIN products p ON p.id=NEW.product_id
+          JOIN manufacturers m ON m.id=a.manufacturer_id
+          WHERE a.id=NEW.alias_id AND a.manufacturer_id=p.manufacturer_id
+            AND m.name!='ブランド未確認')
+          THEN RAISE(ABORT,'product alias requires the same known manufacturer') END;
+        SELECT CASE WHEN EXISTS(SELECT 1 FROM product_aliases
+          WHERE alias_id=NEW.product_id OR product_id=NEW.alias_id)
+          THEN RAISE(ABORT,'product alias chains are not supported') END;
+      END;
+      CREATE TRIGGER IF NOT EXISTS product_alias_identity BEFORE UPDATE ON product_aliases
+        WHEN OLD.alias_id!=NEW.alias_id OR OLD.product_id!=NEW.product_id BEGIN
+          SELECT RAISE(ABORT,'conflicting product alias review');
+      END;
+      CREATE TRIGGER IF NOT EXISTS product_alias_apply AFTER INSERT ON product_aliases BEGIN
+        UPDATE item_catalog SET product_id=NEW.product_id WHERE product_id=NEW.alias_id;
+      END;
+      CREATE TRIGGER IF NOT EXISTS product_alias_item_insert AFTER INSERT ON item_catalog
+        WHEN EXISTS(SELECT 1 FROM product_aliases WHERE alias_id=NEW.product_id) BEGIN
+          UPDATE item_catalog SET product_id=(SELECT product_id FROM product_aliases
+            WHERE alias_id=NEW.product_id) WHERE item_id=NEW.item_id;
+      END;
+      CREATE TRIGGER IF NOT EXISTS product_alias_item_update AFTER UPDATE OF product_id ON item_catalog
+        WHEN EXISTS(SELECT 1 FROM product_aliases WHERE alias_id=NEW.product_id) BEGIN
+          UPDATE item_catalog SET product_id=(SELECT product_id FROM product_aliases
+            WHERE alias_id=NEW.product_id) WHERE item_id=NEW.item_id;
+      END;
       CREATE TABLE IF NOT EXISTS wayback_lookups(url TEXT PRIMARY KEY,queried_at TEXT NOT NULL,status TEXT NOT NULL,data TEXT,error TEXT);
       CREATE TABLE IF NOT EXISTS wayback_candidates(item_id TEXT NOT NULL,url TEXT NOT NULL,original_url TEXT NOT NULL,captured_at TEXT NOT NULL,index_digest TEXT,PRIMARY KEY(item_id,url));
       CREATE TABLE IF NOT EXISTS published_objects(key TEXT PRIMARY KEY, sha256 TEXT NOT NULL, size INTEGER NOT NULL, verified_at TEXT NOT NULL);
@@ -138,6 +173,32 @@ def index_record(store, record):
         (CLASSIFICATION_REVISION,record["id"],json.dumps(record,ensure_ascii=False)))
 
 
+def _store_product_alias(store, alias_id, product_id, evidence, reviewed_at):
+    if not isinstance(evidence,dict) or not evidence:
+        raise ValueError('nonempty product identity evidence required')
+    pair=store.db.execute("""SELECT a.manufacturer_id,p.manufacturer_id,m.name
+        FROM products a JOIN products p ON p.id=?
+        JOIN manufacturers m ON m.id=a.manufacturer_id WHERE a.id=?""",
+        (product_id,alias_id)).fetchone()
+    if not pair or pair[0]!=pair[1] or pair[2]=='ブランド未確認' or alias_id==product_id:
+        raise ValueError('product alias requires distinct products of the same known manufacturer')
+    if store.db.execute('SELECT 1 FROM product_aliases WHERE alias_id=? OR product_id=?',
+                        (product_id,alias_id)).fetchone():
+        raise ValueError('product alias chains are not supported')
+    existing=store.db.execute('SELECT product_id FROM product_aliases WHERE alias_id=?',(alias_id,)).fetchone()
+    if existing and existing[0]!=product_id:
+        raise ValueError('conflicting product alias review')
+    store.db.execute("""INSERT INTO product_aliases VALUES(?,?,?,?)
+        ON CONFLICT(alias_id) DO UPDATE SET evidence=excluded.evidence,reviewed_at=excluded.reviewed_at""",
+        (alias_id,product_id,json.dumps(evidence,ensure_ascii=False),reviewed_at))
+
+
+def alias_product(store, alias_id, product_id, *, evidence):
+    """Review product identity only; never rewrite sources or reuse file bytes."""
+    with store.db:
+        _store_product_alias(store,alias_id,product_id,evidence,datetime.now(timezone.utc).isoformat())
+
+
 def alias_maker(store, alias, name):
     """An explicit curator decision. Never fuzzy-merge unrelated brands."""
     with store.db:
@@ -148,6 +209,16 @@ def alias_maker(store, alias, name):
         affected=[]
         if old and old[0] != target_id:
             affected=[r[0] for r in store.db.execute("SELECT c.item_id FROM item_catalog c JOIN products p ON p.id=c.product_id WHERE p.manufacturer_id=? ORDER BY c.item_id",(old[0],))]
+            reviews=store.db.execute("""SELECT a.alias_id,a.evidence,a.reviewed_at,s.title,p.title
+                FROM product_aliases a JOIN products s ON s.id=a.alias_id
+                JOIN products p ON p.id=a.product_id WHERE s.manufacturer_id=?""",(old[0],)).fetchall()
+            for review in reviews:
+                source_id=identity(target_id,normalized(review[3]),'')
+                product_id=identity(target_id,normalized(review[4]),'')
+                store.db.executemany('INSERT OR IGNORE INTO products VALUES(?,?,?)',
+                    [(source_id,target_id,review[3]),(product_id,target_id,review[4])])
+                _store_product_alias(store,source_id,product_id,json.loads(review[1]),review[2])
+                store.db.execute('DELETE FROM product_aliases WHERE alias_id=?',(review[0],))
             store.db.execute("UPDATE manufacturer_aliases SET manufacturer_id=? WHERE manufacturer_id=?", (target_id, old[0]))
         for value in [alias, name]:
             store.db.execute("INSERT OR REPLACE INTO manufacturer_aliases VALUES(?,?)", (normalized(value), target_id))
@@ -156,7 +227,9 @@ def alias_maker(store, alias, name):
         for ident in affected:
             row=store.db.execute("SELECT data FROM items WHERE id=?",(ident,)).fetchone()
             if row:index_record(store,json.loads(row[0]))
-        store.db.execute("DELETE FROM products WHERE id NOT IN (SELECT product_id FROM item_catalog)")
+        store.db.execute("""DELETE FROM products WHERE id NOT IN (SELECT product_id FROM item_catalog)
+            AND id NOT IN (SELECT alias_id FROM product_aliases)
+            AND id NOT IN (SELECT product_id FROM product_aliases)""")
         store.db.execute("DELETE FROM manufacturers WHERE id NOT IN (SELECT manufacturer_id FROM products) AND id NOT IN (SELECT manufacturer_id FROM manufacturer_aliases)")
 
 
