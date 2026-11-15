@@ -58,3 +58,26 @@ class FilenameRecoveryTests(unittest.TestCase):
         with patch.object(f,'exclusive_file',side_effect=BlockingIOError('busy')):
             self.assertEqual(f.recover(self.store),{'recovered':0,'unresolved':0,'deferred':1})
         self.assertEqual(f.recover(self.store)['recovered'],1)
+
+    def historical(self,links):
+        self.target['fields']['historical_mirror_links']=links
+        self.store.db.execute("UPDATE items SET data=? WHERE id='target'",(json.dumps(self.target),));self.store.db.commit()
+
+    def test_historical_direct_name_requires_matching_published_digest(self):
+        self.historical([dict(url='https://old.test/%E4%BD%93%E9%A8%93%E7%89%88.zip',page_url='https://old.test/page',expected_md5=hashlib.md5(PAYLOAD).hexdigest())])
+        self.assertEqual(f.recover(self.store)['recovered'],1)
+        row=self.store.db.execute("SELECT * FROM items WHERE id='target'").fetchone()
+        self.assertEqual(json.loads(row['data'])['filename'],'体験版.zip')
+        self.assertEqual(row['sha256'],self.sha)
+
+    def test_historical_unbound_mismatched_endpoint_and_unsafe_names_rejected(self):
+        base=dict(page_url='https://old.test/page',expected_md5=hashlib.md5(PAYLOAD).hexdigest())
+        self.historical([dict(url='https://old.test/no-proof.zip',page_url=base['page_url']),
+            dict(base,url='https://old.test/wrong.zip',expected_sha256='0'*64),
+            dict(base,url='https://old.test/download.php?id=1'),
+            dict(base,url='https://old.test/bad%2fname.zip')])
+        self.assertEqual(f.recover(self.store)['recovered'],0)
+
+    def test_historical_conflicting_names_remain_unresolved(self):
+        self.historical([dict(url='https://old.test/'+name,page_url='https://old.test/page',expected_sha256=self.sha) for name in ('a.zip','b.zip')])
+        self.assertEqual(f.recover(self.store)['unresolved'],1)

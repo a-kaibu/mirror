@@ -1,4 +1,4 @@
-"""Restore missing names only from same-maker, SHA-256-bound observations."""
+"""Restore missing names from checksum-bound historical or same-maker observations."""
 import argparse
 import hashlib
 import json
@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from urllib.parse import unquote, urlsplit
 import archiver as a
 import catalog
 from archive_lock import exclusive_file
@@ -27,6 +28,24 @@ def candidates(store,row,record):
       AND (i.sha256=? OR json_extract(i.data,'$.expected_sha256')=?)""",
       (row['id'],row['id'],row['sha256'],row['sha256'])).fetchall()
     result=[]
+    # Historical HTML can bind a direct filename to the same published digest.
+    # A bare mirror URL or a rounded size alone is insufficient evidence.
+    for link in (record.get('fields') or {}).get('historical_mirror_links',[]):
+        if not isinstance(link,dict):continue
+        md5,sha=link.get('expected_md5'),link.get('expected_sha256')
+        if not (md5 or sha):continue
+        if md5 and md5!=row['md5']:continue
+        if sha and sha!=row['sha256']:continue
+        url=link.get('url');page=link.get('page_url')
+        if not isinstance(url,str) or not isinstance(page,str):continue
+        try:
+            parts=urlsplit(a.original(url))
+            if parts.scheme not in {'http','https','ftp'} or not parts.hostname:continue
+            name=unquote(parts.path.rsplit('/',1)[-1],errors='strict')
+        except (ValueError,UnicodeError):continue
+        if not safe_name(name) or not a.EXT.search(name):continue
+        result.append(dict(item_id=row['id'],page_url=page,url=url,filename=name,
+            sha256=row['sha256'],evidence='historical-publisher-digest'))
     for donor in rows:
         data=json.loads(donor['data']);name=data.get('filename')
         if not data.get('brand') or not safe_name(name):continue
