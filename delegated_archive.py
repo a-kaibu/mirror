@@ -108,7 +108,8 @@ def archive_pass(store,fetcher,*,site,limit=4,scan_limit=100,profile='hf'):
                     if bulk.equivalent_upload_active(store,row,'vn-archive','mirrors'):
                         stats['busy']+=1;continue
                     stats['attempted']+=1
-                    result=transfer.archive_candidate(store,row,profile=profile,probe=fetcher.head)
+                    result=transfer.archive_candidate(store,row,profile=profile,probe=fetcher.head,
+                        range_probe=lambda url,headers:a.open_archive_page(fetcher,url,headers))
                     if result is None:stats['ineligible']+=1
                     elif result.get('accepted_id'):
                         stats['reused' if result.get('reused') else 'published']+=1

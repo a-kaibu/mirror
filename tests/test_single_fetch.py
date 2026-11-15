@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
+from urllib.error import HTTPError,URLError
+import ssl
 import archiver as a
 import runner_file_upload as worker
 import runner_upload as jobs
@@ -204,6 +206,62 @@ class SingleFetchTests(unittest.TestCase):
         self.assertEqual((self.origins,self.jobs),(1,1));self.assertIsNone(self.row()['path'])
         state=controller._load(self.store,'target');self.assertIsNone(state['spec']['published_size'])
         self.assertEqual(state['size'],len(PAYLOAD))
+
+    def test_range_metadata_resolves_refused_wayback_head_without_changing_source_transport(self):
+        capture='https://web.archive.org/web/20150326205535id_/http://source.test/demo.zip'
+        self.store.add({**self.record,'site':'getchu','expected_size':None,'expected_md5':None,'mirrors':[capture]})
+        with self.store.db:self.store.db.execute('INSERT INTO wayback_candidates VALUES(?,?,?,?,?)',('target',capture,self.url,'20150326205535','A'*32))
+        response=Response(status=206);response.headers.update({'Content-Range':f'bytes 0-0/{len(PAYLOAD)}','Content-Length':'1','Content-Type':'application/zip'})
+        response.read=Mock(side_effect=AssertionError('metadata probe read body'))
+        head=Mock(side_effect=URLError(ConnectionRefusedError('refused')));ranged=Mock(return_value=response)
+        result=controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,readback=self.readback,probe=head,range_probe=ranged)
+        self.assertEqual(result['accepted_id'],'target');self.assertTrue(response.closed);response.read.assert_not_called()
+        self.assertEqual(ranged.call_args.kwargs['headers']['Range'],'bytes=0-0')
+        state=controller._load(self.store,'target');self.assertEqual(state['spec']['source_url'],capture)
+        self.assertIsNone(state['spec']['published_size']);self.assertIsNone(state['spec']['md5'])
+        self.assertEqual((self.origins,self.jobs,self.reads),(1,1,1))
+
+    def test_unconfirmed_replay_does_not_add_range_request_after_connection_refusal(self):
+        capture='https://web.archive.org/web/20150326205535id_/http://source.test/demo.zip'
+        self.store.add({**self.record,'expected_size':None,'mirrors':[capture]})
+        ranged=Mock(side_effect=AssertionError('unconfirmed replay triggered extra request'))
+        result=controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,
+            probe=Mock(side_effect=URLError(ConnectionRefusedError('refused'))),range_probe=ranged)
+        self.assertIsNone(result);ranged.assert_not_called();self.assertEqual(self.client.created,0)
+
+    def test_head_method_denial_can_use_closed_range_ignored_size_response(self):
+        self.store.add({**self.record,'expected_size':None})
+        response=Response();response.headers['Content-Length']=str(len(PAYLOAD));response.read=Mock(side_effect=AssertionError('metadata body'))
+        error=HTTPError(self.url,405,'unsupported',{},None)
+        result=controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,readback=self.readback,probe=Mock(side_effect=error),range_probe=Mock(return_value=response))
+        self.assertEqual(result['accepted_id'],'target');self.assertTrue(error.closed);self.assertTrue(response.closed);response.read.assert_not_called()
+
+    def test_invalid_range_metadata_does_not_dispatch_or_read_body(self):
+        self.store.add({**self.record,'expected_size':None})
+        for headers in [{},{'Content-Range':'bytes 1-1/17'},{'Content-Range':'bytes 0-0/*'},{'Content-Range':f'bytes 0-0/{worker.MAX_BYTES+1}'},{'Content-Range':'bytes 0-0/17','Content-Type':'text/html'},{'Content-Range':'bytes 0-0/17','Content-Encoding':'gzip'}]:
+            with self.subTest(headers=headers):
+                head=Response();response=Response(status=206);response.headers.update(headers);response.read=Mock(side_effect=AssertionError('metadata body'))
+                self.assertIsNone(controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,probe=Mock(return_value=head),range_probe=Mock(return_value=response)))
+                self.assertTrue(response.closed);response.read.assert_not_called()
+        self.assertEqual(self.client.created,0)
+
+    def test_range_metadata_does_not_retry_http_denials_or_certificate_failures(self):
+        self.store.add({**self.record,'expected_size':None})
+        errors=[HTTPError(self.url,code,'denied',{},None) for code in [403,404,429,503]]
+        errors += [URLError(ssl.SSLCertVerificationError('certificate')),TimeoutError('slow'),URLError(ConnectionRefusedError('native source refused'))]
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                ranged=Mock(side_effect=AssertionError('unexpected extra probe'))
+                self.assertIsNone(controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,probe=Mock(side_effect=error),range_probe=ranged))
+                ranged.assert_not_called()
+                if isinstance(error,HTTPError):self.assertTrue(error.closed)
+
+    def test_optional_range_metadata_keeps_three_candidate_budget(self):
+        self.store.add({**self.record,'expected_size':None,'mirrors':['https://source.test/'+str(i)+'.zip' for i in range(7)]})
+        def unsupported(*args,**kwargs):raise HTTPError(self.url,405,'unsupported',{},None)
+        head=Mock(side_effect=unsupported);ranged=Mock(side_effect=lambda *a,**k:Response(status=206))
+        self.assertIsNone(controller.archive_candidate(self.store,self.row(),client=self.client,execute=self.execute,probe=head,range_probe=ranged))
+        self.assertEqual(head.call_count,3);self.assertEqual(ranged.call_count,3);self.assertEqual(self.client.created,0)
 
     def test_invalid_or_unsupported_head_keeps_normal_host_route(self):
         self.store.add({**self.record,'expected_size':None})

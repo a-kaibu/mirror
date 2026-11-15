@@ -1,10 +1,12 @@
 """Archive an observed public source on Actions without a host origin-body copy."""
 import argparse
+import http.client
 from contextlib import ExitStack
 import hashlib
 import json
 import re
 import uuid
+from urllib.error import HTTPError,URLError
 
 import archiver as a
 from archive_lock import exclusive_file
@@ -195,7 +197,47 @@ def run_claimed(store,ident,source_url=None,size=None,*,profile='hf',client=None
         return staged.promote(store,client,source,state,state['receipt'],readback=readback)
 
 
-def _archive_candidate_once(store,row,*,profile='hf',client=None,execute=None,readback=None,excluded=(),probe=None):
+def probe_transport_size(probe,range_probe,url,headers,*,confirmed_capture=False):
+    """A transport bound only: neither a publisher claim nor a file proof."""
+    def bounded_length(value):
+        if not isinstance(value,str) or not re.fullmatch('[0-9]{1,20}',value.strip()):return None
+        size=int(value)
+        return size if 0<size<=MAX_BYTES else None
+    def binary_identity(response):
+        return (response.headers.get('Content-Encoding','identity')=='identity'
+                and 'html' not in response.headers.get('Content-Type','').lower())
+    try:
+        with probe(url,headers=headers) as response:
+            if response.status not in {405,501}:
+                if response.status!=200 or not binary_identity(response):return None
+                length=response.headers.get('Content-Length','').strip()
+                if length:return bounded_length(length)
+    except HTTPError as error:
+        allowed=error.code in {405,501};error.close()
+        if not allowed:return None
+    except (URLError,ConnectionRefusedError) as error:
+        reason=error.reason if isinstance(error,URLError) else error
+        if not (confirmed_capture and a.binary_archive_capture(url) and isinstance(reason,ConnectionRefusedError)):return None
+    except (OSError,http.client.HTTPException,ValueError):return None
+    if range_probe is None:return None
+    try:
+        # Close at headers even when the server ignores Range. A later worker
+        # must fetch the original URL and verify its complete body normally.
+        with range_probe(url,headers={**headers,'Range':'bytes=0-0'}) as response:
+            if not binary_identity(response):return None
+            if response.status==200:return bounded_length(response.headers.get('Content-Length',''))
+            if response.status!=206:return None
+            match=re.fullmatch(r'bytes 0-0/([0-9]{1,20})',response.headers.get('Content-Range',''))
+            if not match:return None
+            length=response.headers.get('Content-Length')
+            if length is not None and length!='1':return None
+            return bounded_length(match[1])
+    except HTTPError as error:
+        error.close();return None
+    except (OSError,http.client.HTTPException,ValueError):return None
+
+
+def _archive_candidate_once(store,row,*,profile='hf',client=None,execute=None,readback=None,excluded=(),probe=None,range_probe=None):
     """Return None for the host route; never fall back while a job can still run."""
     state=_load(store,row['id'])
     if state and state['phase'] not in {'aborted','cleaned'}:
@@ -226,19 +268,12 @@ def _archive_candidate_once(store,row,*,profile='hf',client=None,execute=None,re
         eligible=eligible[offset:]+eligible[:offset]
     if size is None:
         if probe is None:return None
-        import http.client
         referer=a.original(record.get('page_url') or '')
         headers={'Referer':referer} if referer else {}
+        confirmed={r[0] for r in store.db.execute('SELECT url FROM wayback_candidates WHERE item_id=?',(row['id'],))}
         for url in eligible[:3]:
-            try:
-                with probe(url,headers=headers) as response:
-                    length=response.headers.get('Content-Length','').strip()
-                    if (response.status!=200 or response.headers.get('Content-Encoding','identity')!='identity'
-                        or 'html' in response.headers.get('Content-Type','').lower()
-                        or not re.fullmatch('[0-9]{1,20}',length)):continue
-                    observed=int(length)
-                    if not 0<observed<=MAX_BYTES:continue
-            except (OSError,http.client.HTTPException,ValueError):continue
+            observed=probe_transport_size(probe,range_probe,url,headers,confirmed_capture=url in confirmed)
+            if observed is None:continue
             # This is a transport bound, not a publisher size or a body proof.
             return run_claimed(store,row['id'],url,observed,profile=profile,client=client,execute=execute,readback=readback)
         return None

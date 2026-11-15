@@ -483,3 +483,39 @@ Content-Length semantics stay intact for signing and retries. The regression
 uses botocore.httpsession.BUFFER_SIZE and fails without this short-read bound.
 Live throughput and any remaining independent connection failures remain under
 observation; no receive ACK or public-body verification is inferred from tests.
+
+## Header-only Range size discovery (2026-11-15)
+
+A Getchu trial capture returned `bytes 0-0/173277013` for a Range GET. Selecting
+the exact observed HTTPS capture with that size let the existing runner fetch
+the complete ZIP and the host verify the canonical HF object. A later live check
+also obtained the size through HEAD; this evidence does not establish a permanent
+HEAD restriction for that source. The Range fallback is a bounded alternative
+for unsupported or incomplete HEAD responses, not a requirement for every capture.
+The source's missing publisher MD5 remains missing; observed size and measured
+hashes are not retroactively publisher claims.
+
+Unknown-size selection still considers at most three observed candidate URLs.
+A valid HEAD response is sufficient. Missing Content-Length, HEAD 405/501, or a
+connection-refused Wayback capture confirmed in this item's exact-target CDX
+candidates may additionally use one `Range: bytes=0-0`
+metadata request. The shared Wayback helper may try the same capture on its other
+public port after connection refusal, but this applies only to the metadata
+probe. The original source URL is retained unchanged in the runner specification.
+HEAD 403/404/429/5xx, certificate errors, generic timeouts, HTML, encoded responses,
+malformed lengths and oversized bodies do not trigger the extra request.
+
+A Range response must be binary identity encoding and either an exact `bytes
+0-0/TOTAL` 206 response (Content-Length 1 when present), or a 200 response with a
+bounded complete Content-Length when Range was ignored. Responses close at their
+headers; the host never reads their bodies. The normal worker size and publisher
+checksum checks, source quarantine, canonical full public read-back, source CAS,
+claims and legacy-job resume rules remain unchanged. Range discovery does not
+create an available download or waive publisher constraints.
+
+The connection-refused fallback is restricted to the item's registered CDX
+candidate URLs. A date copied from a publisher HTML page is not proof that its
+binary was captured on that date and must not add a metadata GET for every dead
+replay link. This keeps large historical queues from gaining extra requests for
+unconfirmed captures. Native HEAD 405/501 and missing-length responses retain
+their bounded method/metadata fallback.

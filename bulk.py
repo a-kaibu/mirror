@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 from urllib.parse import urlsplit
 
-from archiver import download, now, publish, publish_metadata
+from archiver import download, now, publish, publish_metadata, open_archive_page
 from archive_lock import exclusive_file
 
 
@@ -188,7 +188,8 @@ def archive_batch(store, fetcher, namespace="vn-archive", bucket="mirrors", prof
                 if single_fetch:
                     from single_fetch import archive_candidate,SourceTransferFailed
                     try:
-                        result=archive_candidate(store,row,profile=profile,probe=getattr(fetcher,"head",None))
+                        result=archive_candidate(store,row,profile=profile,probe=getattr(fetcher,"head",None),
+                            range_probe=lambda url,headers:open_archive_page(fetcher,url,headers))
                     except SourceTransferFailed:
                         stats['failed']+=1
                         print('single-fetch exhausted observed mirrors',row['id'],flush=True)
