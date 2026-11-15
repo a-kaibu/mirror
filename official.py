@@ -178,6 +178,25 @@ def alicesoft_support_details(link,page,brand):
     return dict(title=target,version=next(iter(versions)) if len(versions)==1 else None,conditions=list(dict.fromkeys(conditions)))
 
 
+
+def waffle_support_details(link,page,brand):
+    """Use the product heading on Waffle's shared publisher patch cards."""
+    parts=urlsplit(page)
+    if (parts.hostname not in {'www.waffle1999.com','waffle1999.com'}
+            or parts.path!='/official/patch.html' or normalized(brand.get('brandname',''))!='waffle'):
+        return None
+    node=link.parent
+    while node is not None:
+        if node.tag=='div' and 'article' in node.attrs.get('class','').split():
+            headings=[child.text().strip() for child in node.children if isinstance(child,a.Node) and child.tag=='h5']
+            if len(headings)!=1:return {'ambiguous':True}
+            title=re.sub(r'\s*修正パッチ\s*$','',headings[0]).strip()
+            if not title:return {'ambiguous':True}
+            return dict(title=title,version=None,conditions=[],patch=bool(re.search(r'パッチ|修正|バージョンアップ|アップデー(?:ト|タ)',node.text())))
+        node=node.parent
+    return None
+
+
 def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
     root=a.DOM(html).root
     records={}
@@ -227,6 +246,8 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
             node=node.parent
         label=context+" "+filename
         kind=release_info({"title":label,"filename":filename})[0] if group is None else group[0]
+        waffle_support=waffle_support_details(link,page,brand)
+        if waffle_support and waffle_support.get('patch') and kind in {'other','trial'}:kind='patch'
         if kind=="other" and ASSET_LABEL.search(label):
             continue  # Publisher scan targets trials, patches and movies.
         if kind=="other" and hint in KINDS and hint!="other" and len(filenames)==1:
@@ -236,7 +257,7 @@ def parse(html, page, game, brand, scoped=True, hint=None, requested_page=None):
         product_link=a.canonical(page) if published_kind else labelled_product(context_node,page)
         linked=bool(published_kind or (game.get('shoukai') and product_link==a.canonical(game['shoukai'])))
         common_scope=publisher_patch_scope(context_node,brand) if kind=='patch' else None
-        support=alicesoft_support_details(link,page,brand) if kind=='patch' else None
+        support=(alicesoft_support_details(link,page,brand) if kind=='patch' else None) or waffle_support
         if support and support.get('ambiguous'):
             unsupported.append(target);continue
         if kind=="other" or (not scoped and not product_title_present(game,product_identity_text(context_node)) and not linked and not common_scope and not support):

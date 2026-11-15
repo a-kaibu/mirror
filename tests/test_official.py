@@ -533,3 +533,49 @@ class ExplicitManualPatchTests(unittest.TestCase):
     def test_manual_application_patch_is_kept_as_a_patch(self):
         html='<a href="manual_update.zip">Manual patch</a>'
         self.assertEqual(o.parse(html,PAGE,GAME,BRAND)[0][0]['release_name'],'パッチ')
+
+
+class WaffleSharedSupportTests(unittest.TestCase):
+    PAGE='http://www.waffle1999.com/official/patch.html'
+    BRAND={'id':10,'brandname':'Waffle'}
+    HTML=('<div class="content"><h3>修正・追加パッチ</h3>'
+        '<div class="article"><h5>Other Game プラグイン小説版</h5>'
+        '<ul><li><p><a href="/s_file/other_nov.zip">バージョンアップ ダウンロード</a></p></li></ul></div>'
+        '<div class="article"><h5>anemoi 修正パッチ</h5>'
+        '<a href="/s_file/own_patch.zip">修正パッチ ダウンロード</a></div></div>')
+
+    def test_publisher_card_titles_override_the_game_that_reached_shared_page(self):
+        rows,_=o.parse(self.HTML,self.PAGE,GAME,self.BRAND,scoped=False)
+        files={r['filename']:r for r in rows}
+        self.assertEqual(files['other_nov.zip']['title'],'Other Game プラグイン小説版')
+        self.assertNotIn('erogamescape_game_id',files['other_nov.zip']['fields'])
+        self.assertEqual(files['own_patch.zip']['title'],'anemoi')
+        self.assertEqual(files['own_patch.zip']['fields']['erogamescape_game_id'],GAME['id'])
+        self.assertTrue(all(r['release_name']=='パッチ' for r in rows))
+        other,_=o.parse(self.HTML,self.PAGE,{**GAME,'gamename':'Unrelated Game'},self.BRAND,scoped=False)
+        self.assertEqual([(r['filename'],r['title']) for r in other],[(r['filename'],r['title']) for r in rows])
+
+    def test_trial_patch_and_split_legacy_update_keep_publisher_scope(self):
+        html=('<div class="content"><h3>修正・追加パッチ</h3>'
+            '<div class="article"><h5>Trial Game 体験版Ver2 修正パッチ</h5>'
+            '<a href="/s_file/try2_s.lzh">修正パッチ ダウンロード</a></div>'
+            '<div class="article"><h5>Legacy Game バージョンアップ</h5>'
+            '<a href="/s_file/data01.lzh">ダウンロード1/3</a>'
+            '<a href="/s_file/data02.lzh">ダウンロード2/3</a>'
+            '<a href="/s_file/fix011107.lzh">ダウンロード3/3</a></div></div>')
+        rows,_=o.parse(html,self.PAGE,GAME,self.BRAND,scoped=False,hint='trial')
+        self.assertEqual([r['filename'] for r in rows],['try2_s.lzh','data01.lzh','data02.lzh','fix011107.lzh'])
+        self.assertEqual(rows[0]['title'],'Trial Game 体験版Ver2')
+        self.assertTrue(all(r['release_name']=='パッチ' for r in rows))
+        self.assertTrue(all('erogamescape_game_id' not in r['fields'] for r in rows))
+
+    def test_other_publishers_do_not_gain_waffle_title_evidence(self):
+        for page,brand in [('https://other.test/official/patch.html',self.BRAND),(self.PAGE,{'id':10,'brandname':'Other'})]:
+            with self.subTest(page=page,brand=brand):
+                rows,_=o.parse(self.HTML,page,{**GAME,'gamename':'Unrelated Game'},brand,scoped=False)
+                self.assertEqual(rows,[])
+
+    def test_ambiguous_publisher_card_is_left_unassociated(self):
+        html='<div class="article"><h5>Game A</h5><h5>Game B</h5><a href="/s_file/update.zip">修正パッチ</a></div>'
+        rows,unknown=o.parse(html,self.PAGE,GAME,self.BRAND,scoped=False)
+        self.assertEqual(rows,[]);self.assertEqual(unknown,['http://www.waffle1999.com/s_file/update.zip'])
